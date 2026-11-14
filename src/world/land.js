@@ -118,8 +118,15 @@ export function createLand(shared) {
           float lit = woodSunAt(vWorld + vec3(0.0, 0.15, 0.0));
           float patches = texture(tNoise, vWorld.xz / 13.0).r;
           vec3 c = uGrass * mix(0.9, 1.08, smoothstep(0.3, 0.7, patches));
-          c = mix(c, uPath, smoothstep(0.14, 0.85, m.r));
+          // pavement in slabs, then the road, wet enough to hold streaks of the district's neon
+          vec2 slab = abs(fract(vWorld.xz / 3.2) - 0.5);
+          c *= 1.0 - 0.3 * step(0.475, max(slab.x, slab.y));
+          float road = smoothstep(0.14, 0.85, m.r);
+          c = mix(c, uPath, road);
+          c += uFoliage * 0.12 * road * smoothstep(0.5, 0.8, texture(tNoise, vWorld.xz / vec2(1.6, 11.0)).g);
           c *= mix(0.68, 1.0, lit);
+          // the road's edge takes a soft wash of neon; a hard line would show every tooth of the way's mask
+          c = mix(c, uFoliage, smoothstep(0.12, 0.42, m.r) * (1.0 - smoothstep(0.42, 0.78, m.r)) * 0.3);
           float fig = figSunAt(vWorld);
           c = mix(c * uGlazeMul + uGlazeAdd, c, fig);
           outC = vec4(hazed(c, vWorld), 1.0);

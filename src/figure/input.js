@@ -1,6 +1,6 @@
 // Keyboard, mouse and gamepad, read once a frame into one plain state.
 //   move: {x, y} (x right, y forward, length 0..1), walk, sprint, strafe (held),
-//   jump, attack, heavy, power, dash, flare (pressed this frame),
+//   jump, attack, heavy, power, dash, flare, whirl (pressed this frame),
 //   look: {x, y} (radians this frame), zoom (wheel steps)
 export class Input {
   constructor(el, { pads = true } = {}) {
@@ -10,7 +10,7 @@ export class Input {
     this.pressed = new Set();
     this.mouse = { x: 0, y: 0, wheel: 0, right: false, drag: false, attack: false };
     this.walkToggle = false;
-    this.pad = { a: false, l3: false, sprint: false, x: false, y: false, b: false, lb: false, start: false };
+    this.pad = { a: false, l3: false, sprint: false, x: false, y: false, b: false, lb: false, start: false, r3: false };
     this.sensitivity = 0.0022;
     this.override = null; // scripted input for captures
     this.lockable = true;
@@ -101,6 +101,7 @@ export class Input {
       power: this.pressed.has('KeyQ'),
       dash: this.pressed.has('KeyE'),
       flare: this.pressed.has('KeyR'),
+      whirl: this.pressed.has('KeyC'),
       look: { x: this.mouse.x * this.sensitivity, y: this.mouse.y * this.sensitivity },
       zoom: this.mouse.wheel,
       device: 'keyboard',
@@ -132,11 +133,12 @@ export class Input {
       if (btn(4) && !this.pad.lb) s.heavy = true;
       if (btn(1) && !this.pad.b) s.dash = true;
       if (btn(9) && !this.pad.start) s.flare = true;
+      if (btn(11) && !this.pad.r3) s.whirl = true;
       if ((pad.buttons[6]?.value ?? 0) > 0.4) s.strafe = true;
       if (btn(12)) s.zoom -= 4 * dt;
       if (btn(13)) s.zoom += 4 * dt;
       this.pad.a = btn(0); this.pad.l3 = btn(10); this.pad.x = btn(2); this.pad.y = btn(3);
-      this.pad.b = btn(1); this.pad.lb = btn(4); this.pad.start = btn(9);
+      this.pad.b = btn(1); this.pad.lb = btn(4); this.pad.start = btn(9); this.pad.r3 = btn(11);
       if (rx || ry || pl > 0.01 || btn(0)) s.device = 'pad';
     }
     return s;

@@ -11,3 +11,4 @@ shots/*
 .test/
 dist-night/
 .night-build.log
+.firebase/

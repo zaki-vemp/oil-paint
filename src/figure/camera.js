@@ -16,6 +16,9 @@ export class Follow {
     this.pivot = new THREE.Vector3();
     this.free = null; // { position, target }: a fixed view, for stills
     this.sink = 0; // when the ground lifts the eye, how far the look comes down with it to keep him in the picture (0..1)
+    this.shake = 0;
+    this.shakeTime = 0;
+    this.reducedMotion = globalThis.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false;
   }
 
   update(dt, target, look, zoom, castRay, groundAt) {
@@ -47,5 +50,10 @@ export class Follow {
     let raised = 0;
     if (cam.position.y < floor) { raised = floor - cam.position.y; cam.position.y = floor; }
     cam.lookAt(from.x - back.x * 6, from.y - back.y * 6 + this.lift * k - raised * this.sink, from.z - back.z * 6);
+    this.shakeTime += dt;
+    if (!this.reducedMotion && this.shake > 0) {
+      cam.position.x += Math.sin(this.shakeTime * 85) * this.shake * 0.3;
+      cam.position.y += Math.cos(this.shakeTime * 71) * this.shake * 0.2;
+    }
   }
 }

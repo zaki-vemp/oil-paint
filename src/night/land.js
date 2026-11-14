@@ -158,8 +158,9 @@ export function createLand(shared) {
         if (vWorld.y < -3.0) discard;
         vec4 m = texture(tLand, landUv(vWorld.xz));
         vec3 Nn = normalAt(vWorld.xz);
-        // near the eye it is asked square by ragged square, so that it is in touches; far off, point by point
-        float near = 1.0 - smoothstep(25.0, 110.0, distance(vWorld, cameraPosition));
+        // near the eye it is asked square by ragged square, so that it is in touches; far off, point by point.
+        // Drawn (anime) it is clean everywhere: flat cel snow, no touches.
+        float near = (1.0 - uAnime) * (1.0 - smoothstep(25.0, 110.0, distance(vWorld, cameraPosition)));
         vec4 n = texture(tNoise, vWorld.xz / 3.1);
         vec2 sq = mix(vWorld.xz, floor(vWorld.xz / 0.7 + (n.rg - 0.5) * 1.8) * 0.7, near);
         vec3 P = vec3(sq.x, vWorld.y, sq.y);

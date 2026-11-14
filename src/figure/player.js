@@ -2,7 +2,9 @@
 // (steps, slopes, ground snap), turning and speeding up like a person, and choosing what the
 // animator plays: the locomotion blend, starts and stops, turns in place, jumps.
 // Responsive movement can interrupt starts and stops; jumps have a small input buffer and coyote
-// window. Dashes go through the same capsule sweep as walking, never through a teleport.
+// window. Dashes go through the same capsule sweep as walking, never through a teleport; one dash
+// is allowed in the air and holds his height while it lasts. Knockback is a decaying push added to
+// the same sweep, so a hit can shove him but never through a wall.
 import * as THREE from 'three';
 import { rootAt } from './man.js';
 
@@ -54,6 +56,8 @@ export class Player {
     this.jumpBuffer = 0;
     this.dashTime = 0;
     this.dashDir = new THREE.Vector3();
+    this.push = new THREE.Vector3();
+    this.airDashed = false;
   }
 
   halfHeight() { return this.t.height / 2 - this.t.radius; }
@@ -83,13 +87,15 @@ export class Player {
     this.feet.set(x, y, z); this.prevFeet.copy(this.feet); this.visualY = y;
     this.vel.set(0, 0, 0); this.speed = 0; this.mode = 'move'; this.grounded = true;
     this.airTime = this.dashTime = this.jumpBuffer = 0;
+    this.push.set(0, 0, 0); this.airDashed = false;
     this.coyote = this.t.coyoteTime;
     this.turnRate = this.accelF = this.prevSpeed = 0;
     this.lastYaw = this.yaw;
   }
 
   startDash(dir = this.facing()) {
-    if (!this.grounded || this.dashTime > 0) return false;
+    if (this.dashTime > 0 || (!this.grounded && this.airDashed)) return false;
+    if (!this.grounded) { this.airDashed = true; this.vel.y = Math.max(this.vel.y, 0); }
     this.dashDir.copy(dir).setY(0).normalize();
     this.dashTime = 0.24;
     this.mode = 'move';
@@ -123,6 +129,7 @@ export class Player {
     if (this.dashTime > 0) {
       this.dashTime = Math.max(0, this.dashTime - dt);
       this.speed = this.dashTime > 0 ? 17 : A.setup.speeds.run;
+      if (!this.grounded) this.vel.y = Math.max(this.vel.y, 0); // an air dash holds its height
       return this.step(dt, this.dashDir.clone().multiplyScalar(this.speed));
     }
     if (this.jumpBuffer > 0 && this.coyote > 0 && this.mode !== 'jump') return this.jump(dt, want);
@@ -343,6 +350,19 @@ export class Player {
     }
   }
 
+  /** A shove of `strength` m/s away along (x, z), fading in about a third of a second. */
+  knock(x, z, strength) {
+    const l = Math.hypot(x, z);
+    if (l < 1e-6) return;
+    this.push.set((x / l) * strength, 0, (z / l) * strength);
+  }
+
+  /** Drops him straight down at `speed` m/s while he is in the air (the plunge), shedding most of his drift. */
+  slam(speed) {
+    if (this.grounded) return;
+    this.vel.set(this.vel.x * 0.3, -speed, this.vel.z * 0.3);
+  }
+
   /** Moves the capsule by velocity `v` (world, horizontal) for this frame, with gravity. */
   step(dt, v, rootMotion = false, airborne = false) {
     const R = this.R, t = this.t;
@@ -362,7 +382,8 @@ export class Player {
     }
     if (!(this.grounded && !airborne)) this.vel.y -= (this.vel.y < 0 ? t.fallGravity : t.gravity) * dt;
     this.vel.y = Math.max(this.vel.y, -40);
-    const d = { x: this.vel.x * dt, y: this.vel.y * dt, z: this.vel.z * dt };
+    const d = { x: (this.vel.x + this.push.x) * dt, y: this.vel.y * dt, z: (this.vel.z + this.push.z) * dt };
+    this.push.multiplyScalar(Math.exp(-9 * dt));
     this.kcc.computeColliderMovement(this.collider, d);
     const mv = this.kcc.computedMovement();
     const was = this.grounded;
@@ -375,6 +396,7 @@ export class Player {
     this.prevFeet.copy(this.feet);
     this.feet.set(p.x + mv.x, p.y + mv.y - this.halfHeight() - t.radius - 0.02, p.z + mv.z);
     if (!this.grounded) { this.airTime += dt; this.lastFallSpeed = -this.vel.y; } else if (!was || this.airTime) { this.airTime = 0; }
+    if (this.grounded) this.airDashed = false;
     if (this.grounded && airborne && this.vel.y > 0) this.grounded = false;
     // actual horizontal speed, for the blend (walls slow him down)
     const hs = Math.hypot(mv.x, mv.z) / Math.max(dt, 1e-4);

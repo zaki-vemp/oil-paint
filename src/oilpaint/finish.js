@@ -20,6 +20,12 @@ export function createFrame(renderer, shared, { samples = 4 } = {}) {
     uSteps: { value: 22 },
     uCanvas: { value: 1 },
     uSize: { value: size.clone() },
+    // the anime finish: ink lines where depth breaks (0: none), a darkening toward the corners, and how
+    // far the ink reaches before the air swallows it
+    uInk: { value: 0 },
+    uInkColor: { value: new THREE.Color(0.02, 0.03, 0.06) },
+    uInkFar: { value: 140 },
+    uVignette: { value: 0 },
   };
   const material = new THREE.ShaderMaterial({
     glslVersion: THREE.GLSL3,
@@ -39,7 +45,17 @@ export function createFrame(renderer, shared, { samples = 4 } = {}) {
       uniform float uSteps;
       uniform float uCanvas;
       uniform vec2 uSize;
+      uniform float uInk;
+      uniform vec3 uInkColor;
+      uniform float uInkFar;
+      uniform float uVignette;
       in vec2 vUv;
+
+      float distAt(vec2 uv) {
+        float d = texture(tDepth, uv).r;
+        vec4 h = uInvViewProj * vec4(uv * 2.0 - 1.0, d * 2.0 - 1.0, 1.0);
+        return d >= 1.0 ? 1e5 : length(h.xyz / h.w - uEye);
+      }
       layout(location = 0) out vec4 outC;
 
       float weave(vec2 p) {
@@ -84,6 +100,19 @@ export function createFrame(renderer, shared, { samples = 4 } = {}) {
           float w = weave(px);
           float dx = weave(px + vec2(1.0, 0.0)) - w, dy = weave(px + vec2(0.0, 1.0)) - w;
           col *= 1.0 + (0.6 * dx - 0.8 * dy) * 0.022 * uCanvas + w * 0.006 * uCanvas;
+        }
+        if (uInk > 0.0) {
+          // a step in distance between neighbours, relative to how far it is: silhouettes, not slopes
+          vec2 px = 1.25 / uSize;
+          float c0 = depth >= 1.0 ? 1e5 : far;
+          float n = max(max(distAt(vUv + vec2(px.x, 0.0)), distAt(vUv - vec2(px.x, 0.0))), max(distAt(vUv + vec2(0.0, px.y)), distAt(vUv - vec2(0.0, px.y))));
+          float edge = smoothstep(0.05, 0.14, (n - c0) / max(c0, 0.5));
+          edge *= 1.0 - smoothstep(uInkFar * 0.4, uInkFar, c0);
+          col = mix(col, uInkColor, edge * uInk);
+        }
+        if (uVignette > 0.0) {
+          vec2 v = (vUv - 0.5) * vec2(uSize.x / uSize.y, 1.0);
+          col *= 1.0 - uVignette * smoothstep(0.25, 1.05, length(v));
         }
         if (uAnime > 0.5) { outC = vec4(col, 1.0); return; }
         // the brightest passages roll off toward the white of the paint and never past it

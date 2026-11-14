@@ -1,5 +1,5 @@
-// The spirit trail: five cel-shaded chapters with one shared wanderer, terrain and physics world.
-// Dogs and wolves on the way (src/game/hunt.js): click or F swings, Q throws a spark, cairns mark the way to the clearing.
+// The spirit trail: six cel-shaded chapters with one shared wanderer, terrain and physics world.
+// Street crews on the way (src/game/hunt.js): click or F swings, Q throws a spark, cairns mark the way to the clearing.
 // Shown with ?scene=autumn (src/scenes.js).
 //   ?capture       no clock: window.lab.step(dt, n) advances it (for stills and films)
 //   ?quality=low   fewer leaves in the air, no sun in the mist
@@ -52,9 +52,10 @@ document.getElementById('view').appendChild(renderer.domElement);
 const shared = createShared();
 shared.uAnime.value = 1;
 shared.uImpasto.value = 0;
-shared.uHazeDensity.value = 0.006;
+shared.uHazeDensity.value = 0.008; // smog: the towers a street back already sit in it
 shared.uBounce.value.setRGB(0.06, 0.1, 0.05);
 shared.uGlazeMul.value.setRGB(0.65, 0.72, 0.75);
+shared.uRim.value.setRGB(0.3, 0.26, 0.14); // warm back light on figures, the cel look's separation
 shared.tBrush.value = createBrushSheet();
 if (q.has('impasto')) shared.uImpasto.value = +q.get('impasto');
 const scene = new THREE.Scene();
@@ -79,7 +80,7 @@ const turn = () => new Promise((resolve) => setTimeout(resolve, 0));
 await prepareLand((done) => { say(0.03 + 0.07 * done, 'Laying the ground'); return turn(); });
 const land = createLand(shared);
 lap('land');
-say(0.1, 'Growing the wood');
+say(0.1, 'Raising the city');
 await turn();
 const forest = createAnimeWorld(shared);
 lap('forest');
@@ -97,6 +98,7 @@ const physics = new RAPIER.World({ x: 0, y: -9.81, z: 0 });
   physics.createCollider(RAPIER.ColliderDesc.heightfield(f.cells, f.cells, f.heights, { x: 2 * f.half, y: 1, z: 2 * f.half }));
   for (const t of forest.colliders) {
     const shape = t.rock ? RAPIER.ColliderDesc.ball(t.r).setTranslation(t.x, t.y, t.z)
+      : t.box ? RAPIER.ColliderDesc.cuboid(...t.box).setTranslation(t.x, t.y, t.z).setRotation({ x: 0, y: Math.sin(t.ry / 2), z: 0, w: Math.cos(t.ry / 2) })
       : RAPIER.ColliderDesc.cylinder(t.h / 2, t.r).setTranslation(t.x, t.y + t.h / 2, t.z);
     physics.createCollider(shape);
   }
@@ -118,6 +120,11 @@ lap('figure');
 const frame = createFrame(renderer, shared);
 fitFrame = () => frame.resize();
 frame.uniforms.uCanvas.value = 0;
+// light ink round near silhouettes (figures, crews, towers); the haze takes it beyond ~90 m
+frame.uniforms.uInk.value = 0.7;
+frame.uniforms.uInkColor.value.setRGB(0.02, 0.02, 0.04);
+frame.uniforms.uInkFar.value = 90;
+if (q.has('ink')) frame.uniforms.uInk.value = +q.get('ink'); // ?ink=0 to compare
 /** Low quality drops the sun in the mist and most of the falling leaves. */
 function applyQuality() {
   const low = lowQuality();
@@ -147,12 +154,14 @@ function respawn() {
 const size = new THREE.Vector2();
 function tick(dt, draw = true) {
   dt = Math.min(dt, 1 / 20);
+  const realDt = dt;
+  dt *= hunt?.timeScale ?? 1;
   time += dt;
-  const inp = input.read(dt);
+  const inp = input.read(realDt);
   player.update(dt, inp, follow.yaw);
   // the wood has no wall: far from the way he is turned gently back, and under the world he starts again
   if (player.feet.y < heightAt(player.feet.x, player.feet.z) - 6 || wayDist(player.feet.x, player.feet.z) > 78) respawn();
-  hunt?.update(dt, inp);
+  hunt?.update(dt, inp, realDt);
   forest.update(dt, player.feet.z, hunt?.seg, hunt?.roam);
   const root = player.visualRoot(dt);
   man.object.position.copy(root);
@@ -174,7 +183,8 @@ function tick(dt, draw = true) {
   man.object.updateMatrixWorld(true);
   figure.updateCloak(dt, air, heightAt);
 
-  follow.update(dt, root, inp.look, inp.zoom, (o, d, max) => player.castRay(o, d, max), heightAt);
+  follow.shake = hunt?.cameraKick ?? 0;
+  follow.update(realDt, root, inp.look, inp.zoom, (o, d, max) => player.castRay(o, d, max), heightAt);
   if (draw) renderScene();
 }
 
@@ -190,7 +200,7 @@ function renderScene() {
 
 window.lab = {
   THREE, player, follow, camera, input, animator, figure, shared, frame, renderer, timings, counts: forest.counts, heightAt, respawn, way, scene,
-  step(dt = 1 / 60, n = 1) { for (let i = 0; i < n; i++) tick(dt, i === n - 1); },
+  step(dt = 1 / 60, n = 1, draw = true) { for (let i = 0; i < n; i++) tick(dt, draw && i === n - 1); },
   setInput(fn) { input.override = fn; },
   /** Puts him at (x, z) on the ground, facing (fx, fz), with the eye behind him. */
   teleport(x, z, fx, fz) {

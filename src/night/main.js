@@ -2,7 +2,7 @@
 // as the wood (src/oilpaint), using flat cel marks. It is the optional Snowbound side story (src/scenes.js).
 //   ?capture       no clock: window.lab.step(dt, n) advances it (for stills and films)
 //   ?quality=low   for slower machines: fewer pixels, no veil behind the aurora, less snow in the air
-//   ?canvas=0 ?impasto=0..2    parts of the finish, for comparing
+//   ?canvas=0 ?impasto=0..2 ?ink=0..1    parts of the finish, for comparing
 import * as THREE from 'three';
 import { patchBlock } from 'patch-block';
 import recipe from '../../recipe.json';
@@ -57,10 +57,12 @@ shared.uAnime.value = 1;
 shared.uImpasto.value = 0;
 shared.tBrush.value = createBrushSheet();
 shared.uSunDir.value.copy(MOON);
-shared.uHaze.value.setRGB(0.035, 0.12, 0.17);
-shared.uHazeSun.value.setRGB(0.06, 0.16, 0.2);
-shared.uHazeGlow.value.setRGB(0.03, 0.045, 0.05);
-shared.uHazeDensity.value = 0.00046;
+// a darker, closer night than before: thick blue air swallows the far ridges, so the eye stays near the lantern
+shared.uHaze.value.setRGB(0.018, 0.04, 0.07);
+shared.uHazeSun.value.setRGB(0.04, 0.08, 0.12);
+shared.uHazeGlow.value.setRGB(0.03, 0.045, 0.06);
+shared.uHazeDensity.value = 0.0021;
+shared.uRim.value.setRGB(0.22, 0.55, 0.62); // the aurora's light catching the edge of figures
 shared.uShadeBias.value = 0.0004;
 shared.uBounce.value.setRGB(0.015, 0.06, 0.07);
 shared.uLampCol.value.setRGB(1.0, 0.6, 0.24);
@@ -135,6 +137,8 @@ lap('physics');
 
 const figure = await figureComing;
 const { man } = figure;
+// the drawn traveler's day colours dimmed and cooled for the night, so the aurora rim is what picks him out
+for (const m of figure.avatar?.materials.values() ?? []) m.uniforms.uTint.value.multiply(new THREE.Color(0.6, 0.66, 0.84));
 scene.add(man.object, figure.cloakMesh, figure.dabs);
 const animator = new Animator(man);
 const spawn = new THREE.Vector3(START.x, heightAt(START.x, START.z), START.z);
@@ -155,6 +159,12 @@ const frame = createFrame(renderer, shared);
 fitFrame = () => frame.resize();
 frame.uniforms.uCanvas.value = 0;
 frame.uniforms.uShafts.value = 0; // no sun stands in this air
+// drawn, not painted: ink round every silhouette near him, and the corners lost in the dark
+frame.uniforms.uInk.value = 1;
+frame.uniforms.uInkColor.value.setRGB(0.008, 0.014, 0.035);
+frame.uniforms.uInkFar.value = 170;
+frame.uniforms.uVignette.value = 0.62;
+if (q.has('ink')) frame.uniforms.uInk.value = +q.get('ink'); // ?ink=0 to compare
 // ?quality wins; otherwise Patch's performance mode, where there is one. Low draws at the screen's own pixels,
 // without the veil behind the aurora and with less snow in the air.
 function applyQuality() {
@@ -229,8 +239,10 @@ const outlook = new THREE.Vector3(), eyeAt = new THREE.Vector3(), gaze = new THR
 addEventListener('keydown', (e) => { if (e.code === 'KeyV') firstKey = !firstKey; });
 function tick(dt, draw = true) {
   dt = Math.min(dt, 1 / 20);
+  const realDt = dt;
+  dt *= hunt?.timeScale ?? 1;
   time += dt;
-  const inp = input.read(dt);
+  const inp = input.read(realDt);
   const isIn = cabin.inside(player.feet);
   first += ((firstKey || cabin.threshold(player.feet) ? 1 : 0) - first) * (1 - Math.exp(-6 * dt));
   const fp = first * first * (3 - 2 * first);
@@ -255,15 +267,22 @@ function tick(dt, draw = true) {
   animator.placeFeet(dt, (x, z, from) => player.ground(x, z, from, 1.4), root.y, onGround ? 1 : 0);
   man.object.updateMatrixWorld(true);
   holdLantern();
-  hunt?.update(dt, inp);
+  hunt?.update(dt, inp, realDt);
   hunt?.pose();
   man.object.updateMatrixWorld(true);
   figure.updateCloak(dt, air, heightAt);
+  if (man.appearance) {
+    const fingers = ['index_01_r', 'ring_01_r', 'index_02_r', 'ring_02_r'];
+    grip.set(0, 0, 0);
+    for (const name of fingers) grip.add(man.appearance.bindings.find(b => b.from.name === name).to.getWorldPosition(v1));
+    grip.multiplyScalar(0.25);
+  }
   lantern.update(dt, grip, player.yaw);
   if (!isIn) tracks.update(root, player.yaw, player.speed, onGround);
 
   // a trunk between the eye and him brings the eye in; over the ground it rises instead
-  follow.update(dt, root, inp.look, inp.zoom, (o, d, max) => {
+  follow.shake = hunt?.cameraKick ?? 0;
+  follow.update(realDt, root, inp.look, inp.zoom, (o, d, max) => {
     let hit = player.castRay(o, d, max);
     if (hit != null && o.y + d.y * hit - heightAt(o.x + d.x * hit, o.z + d.z * hit) < 0.5) hit = null;
     const tree = pines.block(o, d, max);
@@ -295,7 +314,7 @@ function renderScene() {
   shared.uPixel.value = (2 * Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2)) / size.y;
   shared.uFocus.value.copy(player.feet);
   // the aurora breathes: brighter and dimmer over a minute or so, and the snow under it with it
-  shared.uGlow.value.x = 1.0 + 0.2 * Math.sin(time * 0.11) + 0.1 * Math.sin(time * 0.37 + 1.0) + 0.07 * Math.sin(time * 1.1 + 2.0);
+  shared.uGlow.value.x = 0.58 + 0.16 * Math.sin(time * 0.11) + 0.08 * Math.sin(time * 0.37 + 1.0) + 0.05 * Math.sin(time * 1.1 + 2.0);
   snow.follow(camera.position.x, camera.position.z);
   shade.update(scene, player.feet);
   frame.render(scene, camera);
@@ -303,7 +322,7 @@ function renderScene() {
 
 window.lab = {
   THREE, player, follow, camera, input, animator, figure, shared, frame, renderer, timings, counts: { ...snow.counts, ...pines.counts, ...cabin.counts }, cabin, heightAt, crestX, tracks, sky,
-  step(dt = 1 / 60, n = 1) { for (let i = 0; i < n; i++) tick(dt, i === n - 1); },
+  step(dt = 1 / 60, n = 1, draw = true) { for (let i = 0; i < n; i++) tick(dt, draw && i === n - 1); },
   setInput(fn) { input.override = fn; },
   /** Puts him at (x, z) on the ground, facing (fx, fz), with the eye behind him. */
   teleport(x, z, fx, fz) {
@@ -322,7 +341,7 @@ window.lab = {
 };
 
 if (!capture) {
-  const kinds = ['dog', 'dog', 'wolf', 'dog', 'wolf', 'dog', 'wolf'];
+  const kinds = ['punk', 'punk', 'enforcer', 'punk', 'gunner', 'enforcer', 'blade'];
   hunt = await createHunt({
     scene, shared, man, animator, player, heightAt,
     moveSpawn: (x, z) => spawn.set(x, heightAt(x, z), z),

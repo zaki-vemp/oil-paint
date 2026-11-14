@@ -1,12 +1,17 @@
-// Solid, reusable scenery for the spirit trail: clustered tree crowns, tapered trunks, grass tufts,
-// wildflowers and mossy rocks. Instancing keeps the whole wood to a handful of draws. Every placement
-// uses the land's heightAt, and every colour comes from the active chapter's shared palette.
+// Solid, reusable scenery for the trail, now a night city: towers with lit windows, neon signs on their
+// walls, street lamps and lane studs along the way, crates, weeds in the cracks and a smog-lit sky.
+// Instancing keeps the whole district to a handful of draws. Every placement uses the land's heightAt,
+// and every colour comes from the active chapter's shared palette: `foliage` and `leafLight` are the
+// district's two neons, `grass` its pavement, `path` its road. Light is paint here too: a lit window or a
+// sign is simply drawn in its own colour, never added as lighting.
 import * as THREE from 'three';
-import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { COMMON } from '../oilpaint/common.js';
-import { heightAt, wayDist, clearingAt, rng } from './land.js';
+import { heightAt, wayDist, clearingAt, rng, way } from './land.js';
 import { CHAPTERS, chapterAt } from '../game/chapters.js';
+import { LEVELS, GOAL } from '../game/levels.js';
+import { DUELS } from '../game/duel.js';
 
+// Roles: 0 tower, 1 sign, 2 weeds, 3 crate, 4 lamp head / lane stud, 5 smog, 6 pole.
 function cel(shared, role, sway = 0) {
   return new THREE.ShaderMaterial({
     glslVersion: THREE.GLSL3, side: THREE.DoubleSide,
@@ -14,10 +19,13 @@ function cel(shared, role, sway = 0) {
     vertexShader: /* glsl */ `
       ${COMMON}
       uniform float uSway;
-      out vec3 vWorld; out vec3 vNormal; out float vSeed;
+      out vec3 vWorld; out vec3 vNormal; out float vSeed; out vec3 vObj; out vec3 vObjN; flat out vec3 vSize;
       void main() {
         vec4 w = instanceMatrix * vec4(position, 1.0);
         vSeed = fract(sin(instanceMatrix[3].x * 17.3 + instanceMatrix[3].z * 31.7) * 43758.5);
+        // the thing's own metres, whichever way it is turned: windows and stripes are drawn in these
+        vSize = vec3(length(instanceMatrix[0].xyz), length(instanceMatrix[1].xyz), length(instanceMatrix[2].xyz));
+        vObj = position * vSize; vObjN = normal;
         float wave = sin(uTime * 1.8 + w.x * 0.28 + w.z * 0.31);
         w.x += wave * max(position.y, 0.0) * uSway;
         w.z += cos(uTime * 1.4 + w.z * 0.24) * max(position.y, 0.0) * uSway * 0.4;
@@ -28,24 +36,51 @@ function cel(shared, role, sway = 0) {
     fragmentShader: /* glsl */ `
       ${COMMON}
       uniform float uRole;
-      in vec3 vWorld; in vec3 vNormal; in float vSeed;
+      in vec3 vWorld; in vec3 vNormal; in float vSeed; in vec3 vObj; in vec3 vObjN; flat in vec3 vSize;
       layout(location = 0) out vec4 outC;
+      float hash(vec2 p) { return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453); }
       void main() {
         vec3 n = normalize(vNormal);
-        vec3 base = uFoliage;
-        if (uRole < 0.5) base = mix(vec3(0.27, 0.23, 0.18), vec3(0.48, 0.40, 0.28), vSeed);
-        else if (uRole < 1.5) base = mix(uFoliage, uLeafLight, vSeed * 0.45);
-        else if (uRole < 2.5) base = mix(uGrass * 0.8, uLeafLight, vSeed * 0.65);
-        else if (uRole < 3.5) base = mix(vec3(0.38, 0.47, 0.43), uGrass * 0.8, max(n.y, 0.0) * 0.7);
-        else if (uRole < 4.5) base = mix(vec3(1.0, 0.92, 0.64), vec3(1.0, 0.63, 0.51), step(0.65, vSeed));
-        else base = mix(vec3(0.84, 0.90, 0.87), vec3(1.0, 0.98, 0.87), max(n.y, 0.0));
+        vec3 base = vec3(0.09, 0.10, 0.13), glow = vec3(0.0);
+        float own = 0.0; // how much of this spot is its own light rather than a lit surface
+        if (uRole < 0.5) {
+          base = mix(vec3(0.07, 0.08, 0.11), vec3(0.14, 0.15, 0.20), vSeed);
+          float side = step(abs(vObjN.y), 0.5);
+          float u = abs(vObjN.x) > 0.5 ? vObj.z : vObj.x;
+          vec2 cell = vec2(u / 1.15, vObj.y / 1.7), f = fract(cell);
+          float pane = step(0.16, f.x) * step(f.x, 0.84) * step(0.24, f.y) * step(f.y, 0.80) * side;
+          float h = hash(floor(cell) + vSeed * 91.7);
+          // most lit rooms are the district's pale light, a few its neon; the rest are dark glass
+          glow = mix(uLeafLight, uFoliage, step(0.9, h)) * (0.7 + 0.3 * h);
+          own = pane * step(0.64, h);
+          base = mix(base, base * 1.7 + 0.02, pane * (1.0 - own));
+          // a line of neon under the roof
+          float trim = step(vSize.y * 0.5 - 0.28, vObj.y) * side;
+          glow = mix(glow, uFoliage, trim); own = max(own, trim);
+        } else if (uRole < 1.5) {
+          // a sign: bars of its colour that read as characters, with a tired flicker
+          float bars = step(0.42, fract(vObj.y * 1.25 + vSeed * 7.0)) * step(abs(vObj.z), vSize.z * 0.38);
+          float flick = 0.86 + 0.14 * step(0.12, fract(sin(floor(uTime * 9.0) + vSeed * 40.0) * 91.3));
+          glow = mix(uFoliage, uLeafLight, step(0.5, vSeed)) * mix(0.42, 1.0, bars) * flick; own = 1.0;
+        } else if (uRole < 2.5) {
+          base = mix(uGrass * 1.5, uFoliage * 0.3, vSeed * 0.6);
+        } else if (uRole < 3.5) {
+          base = mix(vec3(0.10, 0.11, 0.15), vec3(0.17, 0.18, 0.22), vSeed);
+          glow = vec3(0.99, 0.87, 0.08);
+          own = step(abs(vObj.y - vSize.y * 0.12), vSize.y * 0.07) * step(0.5, fract((vObj.x + vObj.z) * 2.2));
+        } else if (uRole < 4.5) {
+          glow = mix(uFoliage, uLeafLight, step(0.5, vSeed)); own = 1.0;
+        } else if (uRole < 5.5) {
+          base = mix(uSkyHigh * 2.2 + 0.02, uHaze * 1.25, max(-n.y, 0.0)); // smog, lit from the streets below
+        }
         float light = dot(n, uSunDir) * 0.5 + 0.5;
-        float shade = uRole > 4.5 ? 1.0 : woodSunAt(vWorld + n * 0.1);
+        float shade = uRole > 4.5 && uRole < 5.5 ? 1.0 : woodSunAt(vWorld + n * 0.1);
         float band = mix(0.65, 0.85, smoothstep(0.28, 0.31, light));
         band = mix(band, 1.12, smoothstep(0.65, 0.68, light));
         vec3 c = base * band * mix(0.79, 1.0, shade);
         float rim = abs(dot(n, normalize(cameraPosition - vWorld)));
-        if (uRole < 4.5 && uRole != 2.0) c *= mix(0.72, 1.0, smoothstep(0.02, 0.16, rim));
+        if (uRole < 0.5 || uRole > 2.5 && uRole < 3.5 || uRole > 5.5) c *= mix(0.72, 1.0, smoothstep(0.02, 0.16, rim));
+        c = mix(c, glow, own);
         outC = vec4(hazed(c, vWorld), 1.0);
       }`,
   });
@@ -70,32 +105,48 @@ export function createAnimeWorld(shared) {
     return mesh;
   }
 
-  const trunks = [], crowns = [], branches = [], roots = [];
-  // Keep the trail open to the sky. Trees frame its bends instead of hiding the next encounter.
-  for (let i = 0; i < 1900; i++) {
-    const x = (rand() - 0.5) * 205, z = (rand() - 0.5) * 300;
-    if (wayDist(x, z) < 5.6 || clearingAt(x, z) > 0.4) continue;
-    if (trunks.some(p => Math.hypot(p.x - x, p.z - z) < 5.5)) continue;
-    const y = heightAt(x, z), h = 6.8 + rand() * 5.4, r = 0.26 + rand() * 0.23, a = rand() * Math.PI * 2;
-    trunks.push(record(x, y + h / 2, z, r, h, r, a));
-    colliders.push({ x, y, z, r: r * 1.1, h });
-    for (let j = 0; j < 3; j++) {
-      const t = a + j * Math.PI * 2 / 3;
-      const spread = 1.1 + rand() * 0.8;
-      crowns.push(record(x + Math.sin(t) * spread, y + h - 0.2 + rand() * 1.4, z + Math.cos(t) * spread,
-        2.5 + rand() * 1.3, 1.7 + rand() * 1.2, 2.4 + rand() * 1.2, t));
-      branches.push(record(x + Math.sin(t) * 0.65, y + h * 0.71, z + Math.cos(t) * 0.65, r * 0.45, h * 0.4, r * 0.45, t, 0.7));
-      roots.push(record(x + Math.sin(t) * 0.3, y + 0.12, z + Math.cos(t) * 0.3, r * 0.7, 0.9, r * 0.7, t, 0.95));
+  // Nothing is built where a fight happens: every spawn, duel, cairn and gate keeps its room.
+  const keep = [GOAL, ...DUELS, ...LEVELS.flatMap((L) => [L.checkpoint, ...L.spots, ...(L.gate ? [L.gate] : [])])];
+  const SINK = 3; // metres a tower goes into the ground, so a slope never shows under it
+  const towers = [], signs = [];
+  // The street stays open to the sky: low blocks front it and the towers rise behind them.
+  for (let i = 0; i < 2600; i++) {
+    const x = (rand() - 0.5) * 230, z = (rand() - 0.5) * 320, wd = wayDist(x, z);
+    const w = 3.5 + rand() * 3.5, d = 3.5 + rand() * 3.5, reach = Math.max(w, d) * 0.75;
+    if (wd < 7 + reach || clearingAt(x, z) > 0.4) continue;
+    if (keep.some((p) => Math.hypot(p.x - x, p.z - z) < 7.5 + reach)) continue;
+    if (towers.some((p) => Math.hypot(p.x - x, p.z - z) < 8.5)) continue;
+    const y = heightAt(x, z), h = 6 + rand() * 8 + Math.min(24, Math.max(0, wd - 10) * 0.8) * rand(), ry = (rand() - 0.5) * 0.6;
+    towers.push(record(x, y + (h - SINK) / 2, z, w, h + SINK, d, ry));
+    colliders.push({ x, y: y + (h - SINK) / 2, z, box: [w / 2, (h + SINK) / 2, d / 2], ry });
+    for (let j = rand() < 0.45 ? 2 : 1; j > 0; j--) {
+      // a wall of the four, and a slab standing just off it
+      const k = Math.floor(rand() * 4), alongX = k % 2 === 0, out = (k < 2 ? 1 : -1) * ((alongX ? w : d) / 2 + 0.16);
+      const nx = alongX ? Math.cos(ry) : Math.sin(ry), nz = alongX ? -Math.sin(ry) : Math.cos(ry);
+      const sh = Math.min(h * 0.5, 2.4 + rand() * 4), sw = Math.min((alongX ? d : w) * 0.4, 0.8 + rand() * 1.2);
+      signs.push(record(x + nx * out, y + sh / 2 + 2.4 + rand() * Math.max(0, h - sh - 3.2), z + nz * out, 0.2, sh, sw, alongX ? ry : ry + Math.PI / 2));
     }
   }
-  const trunkGeo = new THREE.CylinderGeometry(0.65, 1.1, 1, 7);
-  const crownGeo = new THREE.IcosahedronGeometry(1, 1);
-  const bark = cel(shared, 0);
-  instances(trunkGeo, bark, [...trunks, ...branches, ...roots]);
-  instances(crownGeo, cel(shared, 1, 0.022), crowns);
-  const casterMat = new THREE.MeshBasicMaterial();
-  instances(trunkGeo, casterMat, trunks, shade);
-  instances(crownGeo, casterMat, crowns, shade);
+  const boxGeo = new THREE.BoxGeometry(1, 1, 1);
+  instances(boxGeo, cel(shared, 0), towers);
+  instances(boxGeo, cel(shared, 1), signs);
+  instances(boxGeo, new THREE.MeshBasicMaterial(), towers, shade);
+
+  // Lamps lean over the way from alternate sides; lit dashes mark both of its edges.
+  const poles = [], lights = [];
+  for (let i = 2; i < way.length - 1; i += 3) {
+    const [ax, az] = way[i], [bx, bz] = way[i + 1], l = Math.hypot(bx - ax, bz - az) || 1, nx = (bz - az) / l, nz = -(bx - ax) / l;
+    for (const s of [-1, 1]) {
+      const x = ax + nx * 2.5 * s, z = az + nz * 2.5 * s;
+      lights.push(record(x, heightAt(x, z) + 0.03, z, 0.12, 0.05, 0.6, Math.atan2(bx - ax, bz - az))); // a dash along the lane
+    }
+    if (i % 12 !== 2) continue;
+    const s = i % 24 === 2 ? 1 : -1, x = ax + nx * 4 * s, z = az + nz * 4 * s, y = heightAt(x, z);
+    poles.push(record(x, y + 2.1, z, 0.07, 4.2, 0.07));
+    lights.push(record(x - nx * 0.45 * s, y + 4.2, z - nz * 0.45 * s, 1.0, 0.12, 0.3, Math.atan2(-nz, nx)));
+  }
+  instances(new THREE.CylinderGeometry(1, 1, 1, 6), cel(shared, 6), poles);
+  instances(boxGeo, cel(shared, 4), lights);
 
   // A clump is six broad blades in one geometry, with a stable seed and a bend at its tip.
   const tuft = new THREE.BufferGeometry(), vertices = [];
@@ -105,39 +156,27 @@ export function createAnimeWorld(shared) {
   }
   tuft.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
   tuft.computeVertexNormals();
-  const grasses = [], flowers = [], rocks = [];
-  for (let i = 0; i < 25000; i++) {
+  const weeds = [], crates = [];
+  for (let i = 0; i < 7000; i++) {
     const x = (rand() - 0.5) * 100, z = -115 + rand() * 220, d = wayDist(x, z);
-    if (d < 1.9 || d > 46) continue;
-    const y = heightAt(x, z), s = 0.65 + rand() * 0.9;
-    grasses.push(record(x, y - 0.015, z, s, s, s, rand() * 6.28));
-    if (i % 19 === 0 && d < 20) flowers.push(record(x, y + 0.28, z, 0.15, 0.15, 0.15, rand() * 6.28));
+    if (d < 3.2 || d > 46) continue;
+    const s = 0.5 + rand() * 0.7;
+    weeds.push(record(x, heightAt(x, z) - 0.015, z, s, s, s, rand() * 6.28));
   }
   for (let i = 0; i < 160; i++) {
     const x = (rand() - 0.5) * 90, z = -110 + rand() * 215;
     if (wayDist(x, z) < 4) continue;
     const s = 0.5 + rand() * 1.0, y = heightAt(x, z);
-    rocks.push(record(x, y + s * 0.15, z, s, s * 0.7, s * 0.8, rand() * 6.28));
+    crates.push(record(x, y + s * 0.4, z, s * 1.5, s, s * 1.2, rand() * 6.28));
     colliders.push({ x, y: y + s * 0.15, z, r: s * 0.8, rock: true });
   }
-  const grass = instances(tuft, cel(shared, 2, 0.2), grasses);
-  instances(new THREE.IcosahedronGeometry(1, 0), cel(shared, 3), rocks);
-  const petals = [];
-  for (let i = 0; i < 5; i++) {
-    const a = i * Math.PI * 2 / 5;
-    const p = new THREE.SphereGeometry(1, 5, 3);
-    p.scale(0.62, 0.22, 0.45);
-    p.rotateY(-a);
-    p.translate(Math.cos(a) * 0.5, 0, Math.sin(a) * 0.5);
-    petals.push(p);
-  }
-  instances(mergeGeometries(petals), cel(shared, 4), flowers);
-  for (const p of petals) p.dispose();
+  const grass = instances(tuft, cel(shared, 2, 0.12), weeds);
+  instances(boxGeo, cel(shared, 3), crates);
 
-  // Clouds are real silhouettes, so the canopy always has a calm, legible backdrop.
+  // Smog banks are real silhouettes, lit from below, so the skyline always has a legible backdrop.
   const clouds = [];
   for (let i = 0; i < 28; i++) {
-    const x = (rand() - 0.5) * 1100, z = (rand() - 0.5) * 1100, y = 65 + rand() * 55;
+    const x = (rand() - 0.5) * 1100, z = (rand() - 0.5) * 1100, y = 75 + rand() * 55;
     for (let j = 0; j < 4; j++) clouds.push(record(x + j * 12, y + Math.sin(j * 1.8) * 3, z, 16 + rand() * 8, 5 + rand() * 4, 9 + rand() * 6));
   }
   instances(new THREE.IcosahedronGeometry(1, 2), cel(shared, 5), clouds);
@@ -146,11 +185,21 @@ export function createAnimeWorld(shared) {
     vertexShader: `out vec3 vDir; void main() { vDir = position; gl_Position = projectionMatrix * viewMatrix * vec4(position + cameraPosition, 1.0); }`,
     fragmentShader: `${COMMON}
       in vec3 vDir; layout(location = 0) out vec4 outC;
+      float hash(vec2 p) { return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453); }
       void main() {
         vec3 v = normalize(vDir);
-        vec3 c = mix(uHaze, uSkyHigh, smoothstep(-0.02, 0.65, v.y));
-        float sun = dot(v, uSunDir);
-        c = mix(c, vec3(1.0, 0.96, 0.76), smoothstep(0.9990, 0.9992, sun));
+        // the city's glow low down, night above it
+        vec3 c = mix(uHaze * 1.25, uSkyHigh, smoothstep(-0.02, 0.5, v.y));
+        vec2 star = floor(v.xz / max(v.y, 0.05) * 90.0);
+        c += vec3(0.75, 0.85, 1.0) * step(0.9975, hash(star)) * smoothstep(0.12, 0.4, v.y);
+        c = mix(c, vec3(0.86, 0.92, 1.0), smoothstep(0.9990, 0.9992, dot(v, uSunDir))); // the moon
+        // a far skyline: blocks against the glow, a few rooms still lit
+        float a = atan(v.x, v.z) * 46.0, top = 0.015 + 0.085 * hash(vec2(floor(a), 3.0)) * hash(vec2(floor(a * 0.31), 9.0));
+        if (v.y < top) {
+          vec2 room = vec2(fract(a) * 5.0, v.y * 420.0);
+          float on = step(0.86, hash(floor(room) + floor(a))) * step(0.25, fract(room.x)) * step(0.3, fract(room.y));
+          c = mix(mix(uSkyHigh * 0.7, uHaze, 0.45), mix(uLeafLight, uFoliage, step(0.7, hash(floor(room)))) * 0.8, on);
+        }
         outC = vec4(c, 1.0);
       }`,
   }));
@@ -173,8 +222,11 @@ export function createAnimeWorld(shared) {
     for (const [uniform, key] of [['uGrass', 'grass'], ['uFoliage', 'foliage'], ['uLeafLight', 'leafLight'], ['uPath', 'path'], ['uSkyHigh', 'sky'], ['uHaze', 'haze']]) {
       shared[uniform].value.lerp(targetColor.setRGB(...c[key]), blend);
     }
-    shared.uHazeSun.value.copy(shared.uHaze.value).lerp(targetColor.setRGB(1.0, 0.94, 0.75), 0.18);
+    shared.uHazeSun.value.copy(shared.uHaze.value).lerp(targetColor.setRGB(0.7, 0.8, 1.0), 0.18);
+    // figures take the district's neon as their back light, and its glow into their shade
+    shared.uRim.value.copy(shared.uFoliage.value).multiplyScalar(0.42);
+    shared.uBounce.value.copy(shared.uHaze.value).multiplyScalar(0.3);
   }
-  return { group, shade, colliders, counts: { trees: trunks.length, grass: grasses.length, flowers: flowers.length, rocks: rocks.length }, update,
-    setQuality(low) { grass.count = low ? Math.floor(grasses.length * 0.4) : grasses.length; } };
+  return { group, shade, colliders, counts: { trees: towers.length, grass: weeds.length, flowers: lights.length, rocks: crates.length }, update,
+    setQuality(low) { grass.count = low ? Math.floor(weeds.length * 0.4) : weeds.length; } };
 }

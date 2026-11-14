@@ -33,12 +33,12 @@ float auroraOn(vec2 xz, vec3 Nn) {
 // Snow: a blue white under the moon, mint where the aurora is on it. kind drifts slowly over the ground:
 // packed snow, wind crust (greyer), and now and then blue ice.
 vec3 snowPaint(float x, float r, float a, float kind) {
-  vec3 L = mix(vec3(0.42, 0.6, 0.74), vec3(0.3, 0.68, 0.64), a);
-  vec3 M = mix(vec3(0.16, 0.29, 0.46), vec3(0.1, 0.36, 0.42), a);
-  vec3 S = mix(vec3(0.05, 0.1, 0.25), vec3(0.035, 0.13, 0.23), a);
+  vec3 L = mix(vec3(0.27, 0.38, 0.55), vec3(0.2, 0.46, 0.5), a);
+  vec3 M = mix(vec3(0.085, 0.14, 0.28), vec3(0.06, 0.2, 0.27), a);
+  vec3 S = mix(vec3(0.02, 0.035, 0.1), vec3(0.015, 0.06, 0.1), a);
   float crust = smoothstep(0.52, 0.66, kind), ice = smoothstep(0.8, 0.9, kind);
   L = mix(L, L * vec3(0.84, 0.9, 0.9), crust); M = mix(M, M * vec3(0.9, 0.96, 0.92), crust);
-  L = mix(L, vec3(0.26, 0.58, 0.72), ice); M = mix(M, vec3(0.07, 0.28, 0.44), ice);
+  L = mix(L, vec3(0.18, 0.4, 0.55), ice); M = mix(M, vec3(0.04, 0.17, 0.3), ice);
   return paint3(L, M, S, x, r);
 }
 // Rock: nearly black, blue in the shade, a grey green where the moon finds it; kind moves it between a cold
@@ -54,6 +54,8 @@ vec3 rockPaint(float x, float r, float kind) {
 // greys it): the nearer the lamp, the more wholly a thing is its own colour in that light.
 vec3 lampOn(vec3 c, vec3 own, vec3 P, vec3 Nn) {
   float k = clamp((lampAt(P, Nn) + warmAt(P, Nn)) * 1.55, 0.0, 1.0);
+  // drawn, the pool of light falls in a few hard-edged bands instead of a soft wash
+  if (uAnime > 0.5) k = (floor(k * 4.0) + smoothstep(0.42, 0.58, fract(k * 4.0))) / 4.0;
   float whole = pow(k, 1.1);
   vec3 warm = own * vec3(1.0, 0.72, 0.38);
   // (the second part keeps the edge of the pool a warm light on the snow, where a plain mix of blue shade and
@@ -66,7 +68,7 @@ vec3 lampOn(vec3 c, vec3 own, vec3 P, vec3 Nn) {
 vec3 nightSky(vec3 v) {
   if (v.y < 0.0) return airColour(v);
   float up = pow(clamp(v.y, 0.0, 1.0), 0.5);
-  vec3 c = mix(vec3(0.04, 0.15, 0.2), vec3(0.01, 0.036, 0.09), up);
+  vec3 c = mix(vec3(0.03, 0.07, 0.12), vec3(0.006, 0.012, 0.04), up);
   float north = max(-v.z, 0.0) / max(length(v.xz), 1e-4);
   c += vec3(0.015, 0.11, 0.08) * north * north * exp(-pow((v.y - 0.24) / 0.3, 2.0)) * uGlow.x;
   float moon = max(dot(v, uSunDir), 0.0);

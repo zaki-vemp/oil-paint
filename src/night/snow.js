@@ -142,6 +142,8 @@ export function createSnow(shared) {
     minPx: [6, 14], maxPx: [150, 380], cells: [0, 8], depthWrite: false,
   }), 3);
   const group = new THREE.Group();
+  // Drawn (anime), the near snow is the ground's own flat cel surface: no touches laid over it.
+  rings.group.visible = shared.uAnime.value < 0.5;
   group.add(rings.group, scattered);
   return { group, follow: rings.follow, counts: { rock, snow } };
 }

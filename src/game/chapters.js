@@ -1,24 +1,28 @@
-// The trail's five art directions. Position selects a chapter, progression caps what is reachable,
-// and the same palette drives the scenery and the two HUD treatments. No visual setting is saved.
+// The trail's six art directions. Position selects a chapter, progression caps what is reachable,
+// and the same entry drives the scenery and the HUD (a neon accent and one of two treatments). No visual setting is saved.
+// grass: pavement, path: road, foliage / leafLight: the district's neon and its pale light.
 export const CHAPTERS = [
-  { name: 'Sunleaf Trail', subtitle: 'A small step into a wider world', style: 'field', color: '#34795b',
-    grass: [0.39, 0.65, 0.30], foliage: [0.25, 0.57, 0.32], leafLight: [0.64, 0.79, 0.34],
-    sky: [0.31, 0.67, 0.82], haze: [0.68, 0.82, 0.68], path: [0.88, 0.78, 0.53] },
-  { name: 'Petalwood', subtitle: 'Follow the falling blossoms', style: 'field', color: '#aa5069',
-    grass: [0.46, 0.67, 0.39], foliage: [0.84, 0.43, 0.52], leafLight: [1.0, 0.76, 0.72],
-    sky: [0.48, 0.71, 0.85], haze: [0.85, 0.78, 0.77], path: [0.92, 0.80, 0.66] },
-  { name: 'Jade Highlands', subtitle: 'The forest learns your name', style: 'spirit', color: '#429f9d',
-    grass: [0.24, 0.47, 0.42], foliage: [0.12, 0.38, 0.36], leafLight: [0.39, 0.66, 0.51],
-    sky: [0.25, 0.51, 0.62], haze: [0.49, 0.68, 0.65], path: [0.63, 0.66, 0.54] },
-  { name: 'Moonveil Grove', subtitle: 'Keep a little light with you', style: 'spirit', color: '#77c8cf',
-    grass: [0.18, 0.32, 0.37], foliage: [0.12, 0.27, 0.34], leafLight: [0.30, 0.52, 0.59],
-    sky: [0.08, 0.21, 0.34], haze: [0.26, 0.43, 0.53], path: [0.44, 0.53, 0.57] },
-  { name: 'Amber Sanctuary', subtitle: 'Every journey leaves a light', style: 'field', color: '#a56334',
-    grass: [0.62, 0.63, 0.30], foliage: [0.83, 0.45, 0.23], leafLight: [0.98, 0.75, 0.35],
-    sky: [0.53, 0.70, 0.76], haze: [0.88, 0.79, 0.60], path: [0.91, 0.79, 0.54] },
+  { name: 'Sunleaf Row', subtitle: 'A small step into a wider grid', style: 'field', color: '#00f0ff',
+    grass: [0.10, 0.13, 0.17], foliage: [0.0, 0.85, 0.95], leafLight: [1.0, 0.86, 0.45],
+    sky: [0.03, 0.05, 0.12], haze: [0.10, 0.22, 0.32], path: [0.20, 0.22, 0.27] },
+  { name: 'Petal Arcade', subtitle: 'Follow the falling signal', style: 'field', color: '#ff4fa3',
+    grass: [0.13, 0.10, 0.16], foliage: [1.0, 0.25, 0.6], leafLight: [1.0, 0.74, 0.86],
+    sky: [0.07, 0.03, 0.12], haze: [0.30, 0.12, 0.28], path: [0.22, 0.20, 0.26] },
+  { name: 'Jade Heights', subtitle: 'The city learns your name', style: 'spirit', color: '#19ffc6',
+    grass: [0.08, 0.14, 0.14], foliage: [0.1, 1.0, 0.75], leafLight: [0.68, 1.0, 0.6],
+    sky: [0.02, 0.08, 0.10], haze: [0.08, 0.26, 0.24], path: [0.18, 0.23, 0.24] },
+  { name: 'Moonveil Stacks', subtitle: 'Keep a little light with you', style: 'spirit', color: '#6fb7ff',
+    grass: [0.08, 0.10, 0.17], foliage: [0.35, 0.6, 1.0], leafLight: [0.78, 0.87, 1.0],
+    sky: [0.02, 0.03, 0.10], haze: [0.10, 0.16, 0.34], path: [0.17, 0.19, 0.27] },
+  { name: 'Ashen Hollow', subtitle: 'Embers remember every blade', style: 'spirit', color: '#ff5a4d',
+    grass: [0.14, 0.10, 0.11], foliage: [1.0, 0.3, 0.25], leafLight: [1.0, 0.62, 0.36],
+    sky: [0.08, 0.03, 0.05], haze: [0.30, 0.12, 0.12], path: [0.23, 0.20, 0.20] },
+  { name: 'Amber Sanctuary', subtitle: 'Every run leaves a light', style: 'field', color: '#ffb000',
+    grass: [0.15, 0.13, 0.10], foliage: [1.0, 0.7, 0.05], leafLight: [1.0, 0.9, 0.55],
+    sky: [0.09, 0.06, 0.03], haze: [0.34, 0.22, 0.10], path: [0.25, 0.22, 0.18] },
 ];
 
-const BOUNDARIES = [52, 29, 3, -31];
+const BOUNDARIES = [52, 29, 3, -31, -63];
 export function chapterAt(z, cleared = CHAPTERS.length, roam = false) {
   let i = 0;
   while (i < BOUNDARIES.length && z < BOUNDARIES[i]) i++;
@@ -26,8 +30,8 @@ export function chapterAt(z, cleared = CHAPTERS.length, roam = false) {
 }
 
 export function demoChapters() {
-  if (CHAPTERS.length !== 5 || new Set(CHAPTERS.map(c => c.style)).size !== 2) throw new Error('five chapters, two HUD styles');
-  if (chapterAt(78) !== 0 || chapterAt(-70) !== 4 || chapterAt(-70, 1) !== 1 || chapterAt(-70, 0, true) !== 4) throw new Error('chapter progression');
+  if (CHAPTERS.length !== BOUNDARIES.length + 1 || CHAPTERS.length < 6 || new Set(CHAPTERS.map(c => c.style)).size !== 2) throw new Error('six chapters, two HUD styles');
+  if (chapterAt(78) !== 0 || chapterAt(-50) !== 4 || chapterAt(-70) !== 5 || chapterAt(-70, 1) !== 1 || chapterAt(-70, 0, true) !== 5) throw new Error('chapter progression');
   for (const c of CHAPTERS) for (const key of ['grass', 'foliage', 'leafLight', 'sky', 'haze', 'path']) {
     if (c[key].length !== 3 || c[key].some(v => v < 0 || v > 1)) throw new Error('palette ' + c.name);
   }

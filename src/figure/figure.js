@@ -7,6 +7,8 @@ import { dabMaterial, dabGeometry, dabMesh } from '../oilpaint/dabs.js';
 import { loadMan } from './man.js';
 import { Cloak } from './cloak.js';
 import { pinDabs } from '../oilpaint/pins.js';
+import { clone } from 'three/addons/utils/SkeletonUtils.js';
+import { attachAvatar } from './avatar.js';
 
 const PAINT_FRAG = /* glsl */ `
 ${COMMON}
@@ -16,6 +18,7 @@ uniform vec3 uOwn; uniform vec3 uOwn2;
 uniform float uSplit;
 uniform float uGrain;
 uniform sampler2D tAlbedo; uniform float uAlbedo; uniform vec3 uTint;
+uniform float uCutoff;
 in vec3 vWorld; in vec3 vN; in vec3 vBind; in vec2 vUv;
 layout(location = 0) out vec4 outC;
 void main() {
@@ -28,7 +31,9 @@ void main() {
   bool lower = vBind.y < uSplit + (n - 0.5) * 0.05;
   vec3 c = lower ? paint3(uL2, uM2, uS2, lit, n) : paint3(uL, uM, uS, lit, n);
   if (uAlbedo > 0.5) {
-    vec3 base = texture(tAlbedo, vUv).rgb * uTint;
+    vec4 texel = texture(tAlbedo, vUv);
+    if (texel.a < uCutoff) discard;
+    vec3 base = texel.rgb * uTint;
     c = paint3(base * 1.12, base * 0.85, base * vec3(0.55, 0.62, 0.68), lit, 0.5);
   }
   // light thrown up by the ground (warm, off the leaves), cool light from the sky into the shade
@@ -38,10 +43,12 @@ void main() {
   if (uAnime > 0.5) {
     float edge = abs(dot(Nn, normalize(cameraPosition - vWorld)));
     c *= mix(0.45, 1.0, smoothstep(0.12, 0.22, edge));
+    // a hard rim of back light just inside that dark edge: the cel look's separation from the ground
+    c += uRim * smoothstep(0.4, 0.36, edge) * step(0.2, edge) * (0.55 + 0.45 * max(Nn.y, 0.0));
   }
   if (!gl_FrontFacing) c *= 0.62;
   c += (lower ? uOwn2 : uOwn) * uLampCol * lampAt(vWorld, Nn);
-  outC = vec4(hazed(c, vWorld), 1.0);
+  outC = vec4(hazed(c, vWorld), uAlbedo > 0.5 ? texture(tAlbedo, vUv).a : 1.0);
 }
 `;
 
@@ -52,7 +59,7 @@ export function paint(shared, [L, M, S, A = L], { skinned = false, lower = null,
   return new THREE.ShaderMaterial({
     glslVersion: THREE.GLSL3,
     side: THREE.DoubleSide,
-    uniforms: { ...shared, uL: col(L), uM: col(M), uS: col(S), uL2: col(L2), uM2: col(M2), uS2: col(S2), uOwn: col(A), uOwn2: col(A2), uSplit: { value: split }, uGrain: { value: grain }, tAlbedo: { value: map ?? shared.tNoise.value }, uAlbedo: { value: map ? 1 : 0 }, uTint: col(tint) },
+    uniforms: { ...shared, uL: col(L), uM: col(M), uS: col(S), uL2: col(L2), uM2: col(M2), uS2: col(S2), uOwn: col(A), uOwn2: col(A2), uSplit: { value: split }, uGrain: { value: grain }, tAlbedo: { value: map ?? shared.tNoise.value }, uAlbedo: { value: map ? 1 : 0 }, uTint: col(tint), uCutoff: { value: 0 } },
     vertexShader: skinned ? /* glsl */ `
       #include <common>
       #include <skinning_pars_vertex>
@@ -100,6 +107,13 @@ export async function createFigure(shared, onProgress, palettes = {}) {
   const { CLOAK, HAT, SHIRT, TROUSERS, SKIN, BOOTS, HAIR, EYES } = { ...DAY, ...palettes };
   const own = (p) => `vec3(${p[3] ?? p[0]})`;
   const man = await loadMan({ base: './figure/', onProgress });
+  if (shared.uAnime.value > 0.5) {
+    man.template = clone(man.object);
+    const avatar = await attachAvatar(man, shared);
+    man.appearance = avatar;
+    const cloakMesh = new THREE.Group(), dabs = new THREE.Group();
+    return { man, avatar, cloakMesh, dabs, updateCloak: () => avatar.update() };
+  }
   for (const mesh of man.meshes) {
     const name = mesh.name + ' ' + (mesh.material?.name ?? '');
     if (/eyebrow|eyelash/.test(name)) { mesh.visible = false; continue; }

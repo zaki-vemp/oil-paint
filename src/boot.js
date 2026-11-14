@@ -5,7 +5,7 @@ import { SCENE, showScene } from './scenes.js';
 const q = new URLSearchParams(location.search);
 const root = document.documentElement;
 root.dataset.scene = SCENE;
-if (SCENE === 'aurora') { root.dataset.style = 'spirit'; root.style.setProperty('--chapter-accent', '#8cd5cc'); }
+if (SCENE === 'aurora') { root.dataset.style = 'spirit'; root.style.setProperty('--chapter-accent', '#5ef2e0'); }
 const clean = q.has('capture') || q.has('clean');
 if (clean) root.dataset.clean = '';
 const menu = document.getElementById('menu');

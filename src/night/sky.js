@@ -73,12 +73,12 @@ float burn(Hang h, float s) {
   float crown = 0.24 * smoothstep(0.4, 0.75, s) * smoothstep(0.4, 0.85, h.I);
   return h.I * (exp(-s * 2.3) + crown) * (0.8 + 0.3 * sin(s * 7.0 - uTime * 1.7 + h.u * 55.0)) * h.edge;
 }
-// Yellow green where it burns hardest at the foot, emerald above that, then teal, then violet going to rose.
+// A cold sea green at the foot, teal above that, then a deep violet going to plum: an uneasy light, not a show.
 vec3 curtainColour(float s, float I) {
-  vec3 c = mix(vec3(0.05, 0.92, 0.45), vec3(0.03, 0.55, 0.62), smoothstep(0.18, 0.5, s));
-  c = mix(c, vec3(0.5, 0.2, 0.82), smoothstep(0.45, 0.8, s));
-  c = mix(c, vec3(0.78, 0.2, 0.55), smoothstep(0.8, 1.1, s));
-  return mix(c, vec3(0.38, 1.0, 0.36), (1.0 - smoothstep(0.0, 0.16, s)) * smoothstep(0.3, 0.85, I));
+  vec3 c = mix(vec3(0.05, 0.66, 0.58), vec3(0.04, 0.38, 0.6), smoothstep(0.18, 0.5, s));
+  c = mix(c, vec3(0.38, 0.16, 0.74), smoothstep(0.45, 0.8, s));
+  c = mix(c, vec3(0.55, 0.14, 0.48), smoothstep(0.8, 1.1, s));
+  return mix(c, vec3(0.34, 0.9, 0.72), (1.0 - smoothstep(0.0, 0.16, s)) * smoothstep(0.3, 0.85, I));
 }
 // Pins a stroke of the curtain to the sky by its foot: its place, the way it runs on the canvas (with the
 // leaning-together that distance gives things overhead) and its size as seen from here.
@@ -286,7 +286,7 @@ export function createSky(shared) {
           size = vec2(520.0 + 160.0 * r.y, h.len * tall);
         } else if (kind < 2.5) {
           power = smoothstep(0.28, 0.8, h.I) * 0.85 * h.edge;
-          c = mix(vec3(0.38, 1.0, 0.36), vec3(0.8, 1.0, 0.78), 0.35 + 0.4 * r.x);
+          c = mix(vec3(0.34, 0.9, 0.72), vec3(0.7, 0.95, 0.9), 0.35 + 0.4 * r.x);
           size = vec2(130.0 + 130.0 * r.y, h.len * (0.05 + 0.07 * r.z));
         } else {
           power = smoothstep(0.45, 0.9, h.I) * (0.45 + 0.5 * h.surge) * h.edge;
@@ -302,7 +302,7 @@ export function createSky(shared) {
         d.c2 = d.c1 * 1.4;
         d.seed = aC.z;
       }`,
-    uniforms: { uGain: { value: 0.075 }, uImpasto: { value: 0.3 } },
+    uniforms: { uGain: { value: 0.05 }, uImpasto: { value: 0.3 } },
     minPx: [3, 8], maxPx: [500, 1600], cells: [0, 3], depthTest: false, depthWrite: false,
   }), -7.8);
   glow.material.blending = THREE.AdditiveBlending; // drawn in its turn with the sky, not sorted with glass

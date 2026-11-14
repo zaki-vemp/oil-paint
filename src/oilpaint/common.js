@@ -79,6 +79,7 @@ export function createShared() {
     uGlazeAdd: { value: new THREE.Color(0.03, 0.02, 0.06) },
     uImpasto: { value: 1 },
     uAnime: { value: 0 },
+    uRim: { value: new THREE.Color(0, 0, 0) }, // anime mode: the hard back-light band round figures (black: none)
     uGrass: { value: new THREE.Color(0.39, 0.65, 0.30) },
     uFoliage: { value: new THREE.Color(0.25, 0.57, 0.32) },
     uLeafLight: { value: new THREE.Color(0.64, 0.79, 0.34) },
@@ -117,6 +118,7 @@ uniform vec3 uGlazeMul;
 uniform vec3 uGlazeAdd;
 uniform float uImpasto;
 uniform float uAnime;
+uniform vec3 uRim;
 uniform vec3 uGrass;
 uniform vec3 uFoliage;
 uniform vec3 uLeafLight;

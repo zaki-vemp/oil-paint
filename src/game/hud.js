@@ -1,10 +1,15 @@
-// The adventure HUD reads live game state: health, earned abilities, enemies and the next checkpoint.
-// Its small canvas is an actual local map of the trail, not a decorative radar. Chapter art direction
-// changes its treatment automatically; keyboard and touch buttons feed the same Input state.
+// The heads-up display reads live game state: health, earned abilities, hostiles and the next checkpoint.
+// Its small canvas is an actual local scan of the trail, not a decorative radar. Chapter art direction
+// changes its accent automatically; keyboard and touch buttons feed the same Input state.
+// The look is street-level cyberpunk (src/ui.css): cut plates, cell bars, one hot colour.
 import { CHAPTERS } from './chapters.js';
 import { POWERS, POWER_ORDER } from './levels.js';
+import { MOVES } from './duel.js';
 
-export const BEAST_NAMES = { dog: 'Bramble pup', wolf: 'Mist wolf', brute: 'Grove guardian' };
+/** Display name and threat tier for each enemy kind. */
+export const FOES = { punk: ['Street punk', 1], enforcer: ['Corp enforcer', 2], gunner: ['Hazmat gunner', 2], blade: ['Razor ronin', 3], brute: ['Siege mech', 4], rival: ['Mirror rival', 5] };
+const COOL = { dash: 2.5, flare: 20 }; // seconds, to draw the drain on a slot
+const pad = (n) => String(n).padStart(2, '0');
 const icon = name => `<svg aria-hidden="true" viewBox="0 0 24 24"><use href="#i-${name}"/></svg>`;
 
 export function createHUD({ levels, roam, marks, route }) {
@@ -12,28 +17,36 @@ export function createHUD({ levels, roam, marks, route }) {
   hud.id = 'hud';
   hud.innerHTML = `
     <section class="quest" aria-label="Current objective">
-      <div class="chapter-label">${levels ? 'Chapter 1 of 5' : 'Side story · Snowbound'}</div>
+      <div class="chapter-label">${levels ? `Sector 01 / ${pad(levels.length)}` : 'Side op · Snowbound'}</div>
       <h2>${levels ? CHAPTERS[0].name : 'Under the aurora'}</h2>
-      <p class="objective">Find your way through the wood.</p>
+      <p class="objective">Push through the district.</p>
       <div class="quest-count"><span class="count"></span><span class="distance"></span></div>
       ${levels ? '<div class="journey" aria-label="Chapter progress">' + levels.map((_, i) => `<i data-step="${i}"></i>`).join('') + '</div>' : ''}
     </section>
-    <div class="map-wrap"><canvas class="minimap" width="288" height="288" aria-label="Local trail map: your position, beasts and checkpoints"></canvas><span class="north">N</span><span class="map-label">${roam ? 'Free exploration' : levels ? 'The spirit trail' : 'Snowbound ridge'}</span></div>
+    <div class="map-wrap"><canvas class="minimap" width="288" height="288" aria-label="Local trail scan: your position, hostiles and checkpoints"></canvas><span class="north">N</span><span class="map-label">${roam ? 'Scan · free roam' : levels ? 'Scan · spirit trail' : 'Scan · snowbound'}</span></div>
     <section class="vitals" aria-label="Traveler status">
-      <div class="portrait" aria-hidden="true"><svg viewBox="0 0 64 74"><path fill="#243d48" d="M9 74 17 42 46 42 56 74Z"/><path fill="#478e9c" d="m31 41-14 4-8 29h45l-8-29Z"/><path fill="#e6b98b" d="M23 24h19v17l-10 7-9-8Z"/><path fill="#243d48" d="M22 26h22v8l-5-6-5 4-8-2-4 5Z"/><path fill="#ebce83" d="m7 26 15-8 4-14h12l6 14 14 8-24 6Z"/><path fill="#31594f" d="m22 18 22 0 2 5-26 0Z"/><path fill="#e88165" d="m27 44 7 3 10-4-5 10-12-4Z"/></svg></div>
-      <div class="vitals-data"><div class="player-name">Traveler <span class="hp-number">100 / 100</span></div>
+      <div class="portrait" aria-hidden="true"><img src="/characters/portrait.png" alt="" /></div>
+      <div class="vitals-data"><div class="player-name">Traveler // 01 <span class="hp-number">100 / 100</span></div>
         <div class="hp" role="meter" aria-label="Health" aria-valuemin="0" aria-valuemax="100"><span></span></div>
-        <div class="spark" aria-label="Spirit energy"><i><b></b></i><i><b></b></i><i><b></b></i><em>Spirit</em></div>
+        <div class="spark" aria-label="Spirit energy"><i><b></b></i><i><b></b></i><i><b></b></i><em>Charge</em></div>
       </div>
     </section>
     <div class="target" hidden><div><strong></strong><span></span></div><div class="target-hp"><i></i></div><p></p></div>
+    <section class="bossbar" hidden aria-label="Rival duel">
+      <div class="boss-heading"><span>Duel protocol</span><strong></strong><b></b></div>
+      <div class="boss-health" role="meter" aria-label="Rival health" aria-valuemin="0"><i></i></div>
+      <p class="boss-cue"></p><p class="boss-lesson"></p>
+      <div class="lesson-steps"><span>Read</span><span>Evade</span><span>Punish</span></div>
+    </section>
     <nav class="actions" aria-label="Abilities">
       <button data-action="attack" data-code="KeyJ" title="J or left click: sword strike">${icon('sword')}<kbd>J</kbd><span>Strike</span><small></small></button>
       ${(levels ? POWER_ORDER : ['spark']).map(k => `<button data-action="${k}" data-code="Key${POWERS[k].key}" title="${POWERS[k].hint}">${icon(k)}<kbd>${POWERS[k].key}</kbd><span>${k === 'heavy' ? 'Heavy' : k === 'flare' ? 'Flare' : POWERS[k].name}</span><small></small></button>`).join('')}
     </nav>
     <div class="toast" role="status" aria-live="polite"></div>
     <div class="chapter-banner" aria-hidden="true"><span></span><strong></strong><p></p></div>
-    <div class="hit-feedback" aria-hidden="true"></div>`;
+    <div class="hit-feedback" aria-hidden="true"></div>
+    <div class="combo" aria-hidden="true"><b></b><span>hits</span></div>
+    <div class="flash-text" aria-hidden="true"></div>`;
   document.body.appendChild(hud);
   const get = s => hud.querySelector(s);
   const els = {
@@ -50,7 +63,7 @@ export function createHUD({ levels, roam, marks, route }) {
   const banner = get('.chapter-banner');
   function showChapter(c) {
     chapter = c.index;
-    banner.querySelector('span').textContent = `Chapter ${chapter + 1} · ${c.style === 'field' ? 'Field journal' : 'Spirit watch'}`;
+    banner.querySelector('span').textContent = `Sector ${pad(chapter + 1)} // ${c.style === 'field' ? 'Day ops' : 'Night ops'}`;
     banner.querySelector('strong').textContent = c.name;
     banner.querySelector('p').textContent = c.subtitle;
     bannerTime = 4.5;
@@ -63,33 +76,56 @@ export function createHUD({ levels, roam, marks, route }) {
     const scale = 2.5, px = player.feet.x, pz = player.feet.z;
     const point = (x, z) => [144 + (x - px) * scale, 144 + (z - pz) * scale];
     map.clearRect(0, 0, 288, 288);
-    map.fillStyle = '#294c41'; map.fillRect(0, 0, 288, 288);
-    map.strokeStyle = '#52775a'; map.lineWidth = 24; map.lineCap = 'round';
+    const neon = getComputedStyle(document.documentElement).getPropertyValue('--chapter-accent').trim() || '#00f0ff';
+    map.fillStyle = '#070b10'; map.fillRect(0, 0, 288, 288);
+    // a world-fixed grid, so the ground is seen to move under him
+    map.strokeStyle = '#16232c'; map.lineWidth = 1; map.beginPath();
+    for (let g = -6; g <= 6; g++) {
+      const [gx] = point(Math.round(px / 10) * 10 + g * 10, 0), [, gz] = point(0, Math.round(pz / 10) * 10 + g * 10);
+      map.moveTo(gx, 0); map.lineTo(gx, 288); map.moveTo(0, gz); map.lineTo(288, gz);
+    }
+    map.stroke();
+    map.strokeStyle = neon + '2e'; map.lineWidth = 24; map.lineCap = 'round';
     map.beginPath();
     (route ?? marks.map(m => [m.x, m.z])).forEach(([x, z], i) => { const p = point(x, z); i ? map.lineTo(...p) : map.moveTo(...p); });
-    map.stroke(); map.strokeStyle = '#e9d6a0'; map.lineWidth = 5; map.stroke();
+    map.stroke(); map.strokeStyle = neon; map.lineWidth = 3; map.stroke();
     for (const m of marks) {
       const [x, z] = point(m.x, m.z);
-      map.fillStyle = m.used ? '#9dd6ae' : '#f4e8bd';
-      map.fillRect(x - 4, z - 4, 8, 8);
+      map.strokeStyle = map.fillStyle = '#fcee0a'; map.lineWidth = 2;
+      m.used ? map.strokeRect(x - 5, z - 5, 10, 10) : map.fillRect(x - 5, z - 5, 10, 10);
     }
     for (const e of enemies) {
-      if (e.dead || Math.hypot(e.x - px, e.z - pz) > 42) continue;
+      if (e.dead || e.duel && !e.ready || Math.hypot(e.x - px, e.z - pz) > 42) continue;
       const [x, z] = point(e.x, e.z);
-      map.beginPath(); map.arc(x, z, e.kind === 'brute' ? 5 : 3.5, 0, Math.PI * 2);
-      map.fillStyle = '#ee967b'; map.fill();
+      const r = e.kind === 'brute' ? 7 : 4.5;
+      map.beginPath(); map.moveTo(x, z - r); map.lineTo(x + r, z); map.lineTo(x, z + r); map.lineTo(x - r, z); map.closePath();
+      map.fillStyle = e.windup > 0 ? '#fcee0a' : '#ff2a6d'; map.fill();
     }
     map.save(); map.translate(144, 144); map.rotate(-player.yaw);
     map.beginPath(); map.moveTo(0, 10); map.lineTo(-7, -6); map.lineTo(0, -2); map.lineTo(7, -6); map.closePath();
-    map.fillStyle = '#fffdf0'; map.fill(); map.restore();
+    map.fillStyle = '#ffffff'; map.fill(); map.restore();
+  }
+  const comboEl = get('.combo'), flashEl = get('.flash-text');
+  /** The chain counter: shown from two hits, popped on each new one. */
+  function combo(n) {
+    comboEl.classList.toggle('visible', n >= 2);
+    if (n < 2) return;
+    comboEl.querySelector('b').textContent = n;
+    comboEl.classList.remove('pop'); void comboEl.offsetWidth; comboEl.classList.add('pop');
+  }
+  function flashText(text) {
+    flashEl.textContent = text;
+    flashEl.classList.remove('show'); void flashEl.offsetWidth; flashEl.classList.add('show');
   }
   function toast(message) { get('.toast').textContent = message; toastTime = 3.5; get('.toast').classList.add('visible'); }
-  function update(dt, { hp, power, cleared, won, enemies, player, has, dashCool, flareCool, invuln }) {
+  function update(dt, { hp, power, cleared, won, enemies, player, has, dashCool, flareCool, invuln, boss }) {
     bannerTime = Math.max(0, bannerTime - dt);
-    banner.classList.toggle('visible', bannerTime > 0);
+    banner.classList.toggle('visible', bannerTime > 0 && !boss);
+    hud.classList.toggle('in-duel', !!boss);
     toastTime = Math.max(0, toastTime - dt);
     get('.toast').classList.toggle('visible', toastTime > 0);
     hud.classList.toggle('hurt', hp < lastHp);
+    hud.classList.toggle('critical', hp > 0 && hp <= 30);
     if (hp < lastHp) {
       const feedback = get('.hit-feedback');
       feedback.classList.remove('flash'); void feedback.offsetWidth; feedback.classList.add('flash');
@@ -101,14 +137,15 @@ export function createHUD({ levels, roam, marks, route }) {
     els.fill.style.opacity = invuln > 0 ? '0.65' : '1';
     els.pips.forEach((el, i) => { el.style.transform = `scaleX(${Math.max(0, Math.min(1, power - i))})`; });
     const index = Math.min(chapter, (levels?.length ?? 1) - 1);
-    const alive = enemies.filter(e => !e.dead && (!levels || roam || e.seg === index));
+    const alive = enemies.filter(e => !e.dead && !e.duel && (!levels || roam || e.seg === index));
     const total = levels && !roam ? levels[index].spots.length : enemies.length;
     const next = marks.find(m => !m.used) ?? marks[marks.length - 1];
-    els.chapter.textContent = !levels ? 'Side story · Snowbound' : roam ? 'Free exploration · All abilities' : won ? 'Journey complete' : `Chapter ${chapter + 1} of ${levels.length}`;
+    els.chapter.textContent = !levels ? 'Side op · Snowbound' : roam ? 'Free roam · all systems' : won ? 'Run complete' : `Sector ${pad(chapter + 1)} / ${pad(levels.length)}`;
     els.title.textContent = levels ? CHAPTERS[chapter].name : 'Under the aurora';
-    els.objective.textContent = won ? 'The sanctuary is safe. Take a breath.' : cleared >= (levels?.length ?? Infinity) ? 'Follow the trail to the sanctuary.' : roam ? 'Explore freely. Shrines restore health.' : levels && cleared > chapter ? 'Chapter clear. Find the next shrine.' : levels ? 'Defeat the beasts to open the shrine.' : 'Follow the ridge to the lantern-lit cabin.';
-    els.count.textContent = won ? 'All chapters cleared' : levels && !roam ? `${total - alive.length} / ${total} beasts defeated` : `${alive.length} beasts on the trail`;
-    els.distance.textContent = `${Math.round(Math.hypot(player.feet.x - next.x, player.feet.z - next.z))} m to shrine`;
+    const waitingRival = levels && enemies.find(e => e.duel && e.seg === index && !e.dead);
+    els.objective.textContent = won ? 'The sanctuary is secure. Stand down.' : boss ? 'Read your rival. Punish the opening.' : cleared >= (levels?.length ?? Infinity) ? 'Follow the trail to the sanctuary.' : roam ? 'Roam freely. Shrines restore health.' : levels && cleared > chapter ? 'Sector clear. Reach the next shrine.' : waitingRival && alive.length === 0 ? 'Meet your mirror at the shrine. Win the duel to open the gate.' : levels ? 'Take down the crew, then face your mirror.' : 'Follow the ridge to the lantern-lit cabin.';
+    els.count.textContent = won ? 'All sectors clear' : levels && !roam ? `${pad(total - alive.length)} / ${pad(total)} hostiles down` : `${pad(alive.length)} hostiles active`;
+    els.distance.textContent = `${Math.round(Math.hypot(player.feet.x - next.x, player.feet.z - next.z))} m · shrine`;
     els.steps.forEach((el, i) => { el.className = i < cleared ? 'done' : i === cleared ? 'active' : ''; });
     for (const el of els.actions) {
       const key = el.dataset.action, unlocked = key === 'attack' || has(key);
@@ -117,18 +154,34 @@ export function createHUD({ levels, roam, marks, route }) {
       el.classList.toggle('locked', !unlocked);
       el.classList.toggle('cooling', unlocked && (cool > 0 || empty));
       el.setAttribute('aria-disabled', String(!unlocked || cool > 0 || empty));
-      el.querySelector('small').textContent = !unlocked ? `Ch. ${POWER_ORDER.indexOf(key) + 1}` : cool > 0 ? `${Math.ceil(cool)}s` : empty ? 'Recharging' : '';
+      el.style.setProperty('--cd', unlocked && cool > 0 ? Math.min(1, cool / COOL[key]) : 0);
+      el.querySelector('small').textContent = !unlocked ? `Sec ${pad(POWER_ORDER.indexOf(key) + 1)}` : cool > 0 ? `${Math.ceil(cool)}s` : empty ? 'No charge' : '';
     }
     const target = enemies.filter(e => !e.dead).sort((a, b) => Math.hypot(a.x - player.feet.x, a.z - player.feet.z) - Math.hypot(b.x - player.feet.x, b.z - player.feet.z))[0];
-    els.target.hidden = !target || Math.hypot(target.x - player.feet.x, target.z - player.feet.z) > 10;
+    els.target.hidden = !!boss || !target || target.duel || Math.hypot(target.x - player.feet.x, target.z - player.feet.z) > 10;
     if (!els.target.hidden) {
-      els.targetName.textContent = BEAST_NAMES[target.kind];
-      els.targetHp.textContent = `${Math.ceil(target.hp)} HP`;
+      const [name, tier] = FOES[target.kind];
+      els.targetName.textContent = name;
+      els.targetHp.textContent = `T${tier} · ${Math.ceil(target.hp)} HP`;
       els.targetFill.style.transform = `scaleX(${target.hp / target.maxHp})`;
-      els.tell.textContent = target.windup > 0 ? 'Incoming strike — move or dash!' : target.stagger > 0 ? 'Staggered — strike now' : 'Keep moving. Watch for the windup.';
+      els.tell.textContent = target.windup > 0 ? (target.shot ? 'Laser lock — sidestep, dash or cut the shot back' : 'Incoming — dodge, or strike now to parry') : target.air > 0 ? 'Airborne — keep the chain going' : target.stagger > 0 ? 'Staggered — strike now' : target.shot ? 'Close the gap. He backs off.' : 'Keep moving. Watch for the windup.';
       els.target.classList.toggle('warning', target.windup > 0);
+    }
+    const bar = get('.bossbar'); bar.hidden = !boss;
+    if (boss) {
+      bar.querySelector('strong').textContent = boss.name;
+      bar.querySelector('b').textContent = `${Math.max(0, Math.ceil(boss.hp))} / ${boss.maxHp}`;
+      bar.querySelector('.boss-health i').style.transform = `scaleX(${Math.max(0, boss.hp / boss.maxHp)})`;
+      bar.querySelector('.boss-health').setAttribute('aria-valuemax', boss.maxHp);
+      bar.querySelector('.boss-health').setAttribute('aria-valuenow', Math.max(0, Math.ceil(boss.hp)));
+      const open = boss.phase === 'recovery';
+      bar.classList.toggle('opening', open);
+      const keys = ['J', has('spark') ? 'Q' : null, has('heavy') ? 'F' : null].filter(Boolean).join(' / ');
+      bar.querySelector('.boss-cue').textContent = open ? `Opening — strike now!  ${keys}` : boss.phase === 'windup' || boss.phase === 'active' ? MOVES[boss.move].cue : boss.phase === 'intro' ? 'A familiar face. A new lesson.' : 'Watch the blade. Keep room to move.';
+      bar.querySelector('.boss-lesson').textContent = boss.lesson;
+      [...bar.querySelectorAll('.lesson-steps span')].forEach((el, i) => el.classList.toggle('done', i === 0 ? boss.phase !== 'intro' : i === 1 ? boss.evaded : boss.punishes > 0));
     }
     if ((mapTime -= dt) <= 0) { drawMap(player, enemies); mapTime = 0.1; }
   }
-  return { update, toast, element: hud };
+  return { update, toast, combo, flashText, element: hud };
 }

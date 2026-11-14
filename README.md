@@ -5,11 +5,12 @@ engine: three.js
 
 # Komorebi — A spirit trail
 
-An anime-inspired third-person adventure through five changing forests. Clear each chapter's beasts, open its shrine gate, learn a new ability and reach the sanctuary. The trail is the default world; **Snowbound** is a separate lantern-lit journey under the aurora.
+An anime-inspired third-person adventure through six changing forests. Defeat each chapter’s creatures and mirror rival to open its shrine, learn a new ability, and reach the sanctuary. The trail is the default world; **Snowbound** is a separate lantern-lit journey under the aurora.
 
 ## Play locally
 
 ```sh
+git lfs pull
 npm install
 npm run dev
 ```
@@ -27,6 +28,7 @@ Open [localhost:5406](http://127.0.0.1:5406). Click the world to look, then clic
 | Dash | E | B |
 | Heavy strike | F | LB |
 | Flare | R | Start |
+| Whirl | C | R3 |
 | Pause / controls | Escape / P / H | — |
 
 Touch devices have a movement stick, camera drag, jump and ability buttons. Snowbound also supports V for first person; the cabin switches to it automatically. F remains a normal strike in Snowbound.
@@ -39,9 +41,23 @@ Touch devices have a movement stick, camera drag, jump and ability buttons. Snow
 | Petalwood | Rose blossoms | Field journal | Dash |
 | Jade Highlands | Deep jade | Spirit watch | Heavy strike |
 | Moonveil Grove | Blue moonlight | Spirit watch | Flare |
+| Ashen Hollow | Smoky rose | Spirit watch | Whirl |
 | Amber Sanctuary | Golden foliage | Field journal | Sanctuary victory |
 
 The world palette blends as you cross chapter boundaries. HUD treatment follows the chapter automatically. The live trail map shows your position, checkpoints and nearby beasts; objectives and enemy health read actual game state.
+
+Each chapter ends in a **mirror duel against Ren**, a swordsman from the same anime character family as the traveler. Defeating the creatures reveals Ren at the shrine; the gate stays closed until the duel is won. The six lessons build in order:
+
+1. Read an orange sweep, jump or backstep, and strike during the green recovery window.
+2. Sidestep a committed thrust and punish it with Spark.
+3. Dash to evade the two-cut pattern; wait for the second cut before attacking.
+4. Evade the overhead slam or break the guard with two heavy strikes.
+5. Use the earlier lessons to win Whirl from the Ember Spiral rival.
+6. Combine Whirl guard breaks and Flare openings against your final mirror.
+
+The boss HUD shows the current cue, the lesson, health and the real “read / evade / punish” milestones. Guarded attacks deal chip damage; recovery hits deal extra damage. Duels start with full health and spirit energy and set a nearby retry point. Leaving the duel resets it. Losing resets the living rival, while cleared creatures stay defeated for that session. Existing cleared-chapter saves remain valid.
+
+The traveler has an authored three-strike sword chain (cut, backhand, thrust), an overhead heavy, casting and hit recoil. Sword grips use a two-bone arm solve; blade trails follow the actual weapon. Brief hit pauses, bounded sparks, impact rings and camera feedback make hits readable; reduced-motion mode disables camera shake. Projectiles sweep against world colliders. Flare is an expanding ring rather than an opaque sphere.
 
 Enemy strikes have a visible orange windup and commit to a direction. Step away, jump or dash to evade them. Sword hits stagger enemies, show impact sparks and restore a little spirit energy on defeat. Strikes are deliberate; proximity never attacks for you. Abilities unlock in order and show cooldowns or their required chapter.
 
@@ -51,9 +67,11 @@ Shrines heal and set the respawn point. Story progress remains compatible with `
 
 ## Rendering and assets
 
-The trail now uses solid cel-shaded geometry: instanced clustered trees, tapered trunks, grass tufts, five-petal flowers, mossy rocks, clouds and shrine gates. Chapter palettes live in `src/game/chapters.js`, scenery in `src/world/anime.js`, and HUD/layout in `src/game/hud.js` and `src/ui.css`. Everything sits on the existing `heightAt` terrain; no new packages are required.
+The trail is now a night city in solid cel-shaded geometry: instanced towers with lit windows, neon signs, street lamps, lane dashes, crates, smog banks and shrine gates, in six neon districts. Chapter palettes live in `src/game/chapters.js`, scenery in `src/world/anime.js`, and HUD/layout in `src/game/hud.js` and `src/ui.css`. Everything sits on the existing `heightAt` terrain; no new packages are required.
 
-The existing animated MakeHuman traveler and Quaternius animals are retained. Animals keep their original atlas textures for eyes, muzzles and fur markings, with shared cel materials. Snowbound retains the original world geometry but uses flat marks and clean character surfaces, without impasto or canvas grain. The original painter remains available in `src/oilpaint/`; its implementation notes follow below.
+The visible traveler is now **Seed-san by VirtualCast, Inc.**, a detailed textured anime model from the VRM Consortium samples. Rivals reuse it with a contrasting outfit. Its humanoid joints follow the existing hidden MakeHuman animation rig with rest-pose corrections, preserving locomotion and foot IK. Boots, scarf and katana are original geometry. No VRM runtime dependency was added; the model loads through the existing GLTFLoader.
+
+The enemies are now Quaternius CC0 people and a mech (`public/enemies/`, see its `SOURCE.md`): street punks, corp enforcers, hazmat gunners, razor ronin and a siege mech. Earlier builds used a textured animated Fox (PixelMannen/tomkranis/Asobo Studio/scurest, via Khronos) and Demon/BlueDemon from Quaternius Ultimate Monsters. They use their own locomotion, punch, hit-reaction and death clips where supplied. The original dog/wolf files remain for compatibility, but are no longer the active creature models. Snowbound retains the original world geometry but uses flat marks and clean character surfaces, without impasto or canvas grain. The original painter remains available in `src/oilpaint/`; its implementation notes follow below.
 
 ## Build and verify
 
@@ -63,11 +81,13 @@ npm run serve
 node src/game/hunt.js
 node src/game/levels.js
 node src/game/chapters.js
+node src/game/combat.js
+node src/game/duel.js
 CHROME=/path/to/chrome node tools/gameplay.mjs
 CHROME=/path/to/chrome node tools/fps.mjs --seconds 8
 ```
 
-`tools/gameplay.mjs` runs against the served build on port 5405 (pass another URL as its first argument). It exercises movement, short/held jumps, dash collision, enemy windup/dodging, deliberate attacks, all five chapter clears, victory, save restoration, pause and free-roam save isolation. The FPS tool chooses the native graphics backend on macOS/Windows.
+`tools/gameplay.mjs` runs against the served build on port 5405 (pass another URL as its first argument). It exercises movement, short/held jumps, dash collision, enemy windup/dodging, deliberate attacks, all rival lessons and chapter clears, victory, save restoration, pause and free-roam save isolation. The FPS tool chooses the native graphics backend on macOS/Windows.
 
 Useful URLs: `?scene=autumn&fresh` ignores the existing save, `?scene=autumn&mode=roam` explores all chapters, `?scene=aurora` opens Snowbound, and `?quality=low` reduces scenery. `?capture` is deterministic and disables enemies; `?clean` hides the HUD without disabling gameplay.
 
@@ -75,7 +95,11 @@ The existing `window.lab` debug handle exposes `player`, `hunt`, `teleport(x,z,f
 
 ## Credits
 
-Code MIT; art CC0. Original scenery and UI geometry are made in code. The traveler is Patch's MakeHuman starter character; animations and animals are from Quaternius (CC0). Rapier is Apache-2.0 and three.js is MIT. No Pokémon characters or other franchise assets are included. See [LICENCE-NOTES.md](LICENCE-NOTES.md) and [public/CREDITS.md](public/CREDITS.md).
+Code MIT; original scenery and procedural combat artwork CC0. Seed-san uses the VRM Public License 1.0 (required credit in the game menu); the Fox model is CC0 with CC BY 4.0 animation/conversion; Quaternius monsters and the hidden locomotion driver are CC0. Rapier is Apache-2.0 and three.js is MIT. No Pokémon characters or other franchise assets are included. See [LICENCE-NOTES.md](LICENCE-NOTES.md) and [public/CREDITS.md](public/CREDITS.md).
+
+## Model upgrade performance
+
+The detailed anime avatar, creature rigs and chapter rivals increase the complete build from about 9 MB to 22 MB. On the same local Chrome run at 1920×1080 over 8 seconds, the earlier models measured 139 fps and the upgraded models 105 fps. This is an intentional art-quality cost of the model replacement. Rivals share geometry/textures, appear only after their creature pack clears, and skip rendering/animation outside 36 m; there are no per-enemy render targets or shader variants. Low detail still reduces the grass budget and pixel ratio remains capped at 1.5.
 
 ## Original painter reference
 

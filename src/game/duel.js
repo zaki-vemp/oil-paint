@@ -1,0 +1,101 @@
+// Six mirror duels teach the same readable loop: see the committed attack, evade it, punish recovery.
+// This state machine is pure game logic. Rendering, collisions and damage stay with hunt.js, so a rival
+// uses the same terrain, capsule sweeps and save rules as the rest of the game.
+export const DUELS = [
+  { name: 'Ren, the Patient Blade', x: -7.5, z: 58, hp: 120, lesson: 'Jump or backstep the sweep. Strike when the blade falls.', moves: ['sweep'] },
+  { name: 'Ren, the Piercing Wind', x: 3.8, z: 35, hp: 150, lesson: 'Sidestep the thrust. Use your spark during the opening.', moves: ['thrust', 'sweep'] },
+  { name: 'Ren, the Twin Current', x: 10.5, z: 9, hp: 200, lesson: 'Dash through danger. Wait for both cuts before striking.', moves: ['double', 'thrust'] },
+  { name: 'Ren, the Iron Will', x: 0, z: -25, hp: 240, lesson: 'Two heavy strikes break the guard. Punish the overhead slam.', moves: ['slam', 'double'] },
+  { name: 'Ren, the Ember Spiral', x: -0.9, z: -57, hp: 270, lesson: 'Dash through the sweep. Punish recovery with heavy strikes to earn Whirl.', moves: ['sweep', 'double', 'slam'] },
+  { name: 'Ren, your Mirror', x: 10, z: -88, hp: 320, lesson: 'Combine your lessons. Whirl cracks the guard; Flare forces a finishing opening.', moves: ['thrust', 'double', 'slam'] },
+];
+export const MOVES = {
+  sweep: { windup: 1.0, active: 0.2, recover: 1.35, reach: 2.8, arc: 1.5, damage: 12, pose: 'cut', cue: 'Sweep — jump or step out of the ring' },
+  thrust: { windup: 0.95, active: 0.26, recover: 1.3, reach: 2.1, arc: 0.42, damage: 16, pose: 'thrust', cue: 'Thrust — sidestep the committed line' },
+  double: { windup: 0.9, active: 0.55, recover: 1.4, reach: 2.7, arc: 1.3, damage: 19, pose: 'backhand', cue: 'Two cuts — wait for the second one' },
+  slam: { windup: 1.15, active: 0.2, recover: 1.6, reach: 3.1, arc: 0.65, damage: 24, pose: 'heavy', cue: 'Overhead — move sideways, then punish' },
+};
+const angle = (x, z) => Math.atan2(x, z);
+export function createDuel(index) {
+  const d = DUELS[index];
+  return { kind: 'rival', duel: true, seg: index, name: d.name, lesson: d.lesson, x: d.x, z: d.z, homeX: d.x, homeZ: d.z,
+    hp: d.hp, maxHp: d.hp, phase: 'waiting', timer: 0, moveIndex: 0, move: 'sweep', attackYaw: 0, yaw: Math.PI,
+    windup: 0, recovery: 0, cool: 0, attackU: -1, going: 0, hitDone: false, evaded: false, punishes: 0, guard: 2, ready: false };
+}
+
+export function stepDuel(e, dt, { x, z, ready, move }) {
+  e.ready = ready; e.going = 0;
+  if (!ready) { e.phase = 'waiting'; e.attackU = -1; return null; }
+  const dx = x - e.x, dz = z - e.z, distance = Math.hypot(dx, dz);
+  e.timer = Math.max(0, e.timer - dt);
+  const spec = MOVES[e.move];
+  e.windup = e.phase === 'windup' ? e.timer : 0;
+  e.recovery = e.phase === 'recovery' ? e.timer : 0;
+  if (e.phase === 'waiting') {
+    if (distance < 9) { e.phase = 'intro'; e.timer = 1.4; return 'intro'; }
+    return null;
+  }
+  // Leaving the duel resets its health and lesson counters, while the cleared creature pack stays cleared.
+  if (distance > 17) { Object.assign(e, createDuel(e.seg)); e.ready = true; return 'reset'; }
+  if (e.phase === 'intro') { if (e.timer === 0) e.phase = 'approach'; return null; }
+  if (e.phase === 'approach') {
+    e.attackU = -1; e.yaw = angle(dx, dz);
+    if (distance > 2.5) {
+      const speed = e.seg > 1 ? 3.5 : 2.5, d = Math.min(speed * dt, distance - 2.5);
+      move(dx / distance * d, dz / distance * d); e.going = speed;
+    } else {
+      e.move = DUELS[e.seg].moves[e.moveIndex++ % DUELS[e.seg].moves.length];
+      e.phase = 'windup'; e.timer = MOVES[e.move].windup; e.hitDone = false; e.guard = 2;
+      e.attackYaw = e.yaw; return 'windup';
+    }
+  } else if (e.phase === 'windup') {
+    if (e.timer > spec.windup * 0.5) e.attackYaw = angle(dx, dz);
+    e.yaw = e.attackYaw; e.attackU = 0.28 * (1 - e.timer / spec.windup);
+    if (e.timer === 0) { e.phase = 'active'; e.timer = spec.active; return 'strike'; }
+  } else if (e.phase === 'active') {
+    const p = 1 - e.timer / spec.active;
+    e.attackU = 0.3 + p * 0.43;
+    if (e.move === 'double') e.attackU = 0.3 + (p * 2 % 1) * 0.43;
+    if (e.move === 'thrust') move(Math.sin(e.attackYaw) * dt * 10, Math.cos(e.attackYaw) * dt * 10);
+    if (e.timer === 0) {
+      if (!e.hitDone && distance < 8) e.evaded = true;
+      e.phase = 'recovery'; e.timer = spec.recover; return 'opening';
+    }
+  } else if (e.phase === 'recovery') {
+    e.attackU = 0.76 + 0.24 * (1 - e.timer / Math.max(spec.recover, e.timer));
+    if (e.timer === 0) { e.phase = 'approach'; e.attackU = -1; }
+  }
+  return null;
+}
+
+export function duelHit(e, x, y, z, floor) {
+  const m = MOVES[e.move], dx = x - e.x, dz = z - e.z;
+  if (e.phase !== 'active' || e.hitDone || Math.hypot(dx, dz) > m.reach || y - floor > (e.move === 'sweep' || e.move === 'double' ? 0.8 : 1.8)) return false;
+  return Math.abs(Math.atan2(Math.sin(angle(dx, dz) - e.attackYaw), Math.cos(angle(dx, dz) - e.attackYaw))) <= m.arc;
+}
+export function damageRival(e, amount, source) {
+  if (source === 'flare') { e.phase = 'recovery'; e.timer = 2.2; }
+  if (e.phase !== 'recovery') {
+    if ((source === 'heavy' || source === 'whirl') && e.seg >= 3 && --e.guard <= 0) { e.phase = 'recovery'; e.timer = 1.8; }
+    else return Math.max(1, Math.round(amount * 0.08));
+  }
+  e.punishes++; return Math.round(amount * 1.25);
+}
+
+export function demoDuels() {
+  for (let i = 0; i < DUELS.length; i++) {
+    const e = createDuel(i);
+    stepDuel(e, 1 / 60, { x: e.x, z: e.z + 2, ready: false, move() {} });
+    if (e.phase !== 'waiting') throw new Error('creatures first');
+    const ctx = { x: e.x, z: e.z + 2, ready: true, move() {} };
+    if (stepDuel(e, 1 / 60, ctx) !== 'intro') throw new Error('duel intro');
+    for (let k = 0; k < 300 && e.phase !== 'active'; k++) stepDuel(e, 1 / 60, ctx);
+    if (!duelHit(e, e.x, 0, e.z + 1, 0) || duelHit(e, e.x + 5, 0, e.z, 0)) throw new Error('committed attack');
+    e.phase = 'windup'; if (damageRival(e, 30, 'sword') >= 10) throw new Error('guard');
+    e.phase = 'recovery'; if (damageRival(e, 30, 'sword') <= 30 || !e.punishes) throw new Error('punish recovery');
+  }
+  const e = createDuel(3); e.phase = 'windup'; damageRival(e, 66, 'heavy'); damageRival(e, 66, 'heavy');
+  if (e.phase !== 'recovery') throw new Error('heavy guard break');
+  e.phase = 'windup'; damageRival(e, 60, 'flare'); if (e.phase !== 'recovery') throw new Error('flare guard break');
+}
+if (globalThis.process?.argv?.[1]?.endsWith('duel.js')) demoDuels();

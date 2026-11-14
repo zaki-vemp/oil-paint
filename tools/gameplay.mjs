@@ -1,5 +1,7 @@
+import { LEVELS, GOAL } from '../src/game/levels.js';
+const PLAN = LEVELS.map(l => ({ checkpoint: l.checkpoint, grant: l.grant }));
 // Exercises the real browser game: movement, short hops, collision-swept dash, manual combat,
-// five chapter unlocks, save restoration, pause and roam. Build/serve first, then:
+// chapter unlocks, save restoration, pause and roam. Build/serve first, then:
 //   CHROME=/path/to/chrome node tools/gameplay.mjs [http://127.0.0.1:5405]
 import assert from 'node:assert/strict';
 import { chromium } from 'playwright-core';
@@ -14,13 +16,15 @@ try {
   page.on('console', m => { if (m.type() === 'error') errors.push(m.text()); });
   await page.goto(`${baseURL}/?scene=autumn&fresh&nopad`);
   await page.waitForFunction(() => window.lab?.ready, null, { timeout: 120000 });
-  const result = await page.evaluate(() => {
+  const result = await page.evaluate((plan) => {
     window.__paused = true;
     const L = window.lab, P = L.player, h = L.hunt;
     const base = { move: { x: 0, y: 0 }, look: { x: 0, y: 0 }, walk: false, sprint: false, strafe: false, jump: false, jumpHeld: true, zoom: 0, device: 'keyboard' };
     const input = state => L.setInput(() => ({ ...base, ...state }));
     const check = (condition, message) => { if (!condition) throw Error(message); };
     const results = {};
+    check(L.figure.avatar.bindings.length >= 40, 'anime humanoid bindings');
+    check(h.enemies.filter(e => e.duel).length === plan.length, 'one mirror rival per chapter');
     L.teleport(0, 78, 0, 60); input({ move: { x: 0, y: 1 } }); L.step(1 / 60, 30);
     results.runDistance = 78 - P.feet.z; check(results.runDistance > 1, 'responsive running');
     input({}); L.step(1 / 60, 20); check(P.speed < 0.05, 'release stops');
@@ -49,8 +53,10 @@ try {
     check(h.hp === hp, 'moving out dodges the committed attack');
     first.windup = first.cool = 0;
     const chapterStyles = [];
-    for (let segment = 0; segment < 5; segment++) {
-      const pack = h.enemies.filter(e => e.seg === segment);
+    let checkedRetry = false;
+    for (let segment = 0; segment < plan.length; segment++) {
+      const pack = h.enemies.filter(e => !e.duel && e.seg === segment);
+      for (const e of pack) { e.aggro = 0; e.mode = 'roam'; e.wait = 100; }
       for (const e of pack) {
         // Keep this a damage/balance test; the windup was tested with active AI above.
         input({}); L.step(1 / 60, 60); e.aggro = 0; e.mode = 'roam'; e.wait = 100; e.windup = 0;
@@ -58,22 +64,45 @@ try {
         const before = e.hp; L.step(1 / 60, 20); check(e.hp === before, 'proximity never attacks: ' + segment + ' ' + e.kind);
         let frame = 0;
         const heavy = h.powers.heavy;
-        L.setInput(() => ({ ...base, attack: !heavy && frame++ % 60 === 0, heavy: heavy && frame++ % 60 === 0 }));
+        L.setInput(() => {
+          // Follow the new knockback while isolating damage/balance from pursuit AI.
+          if (!e.dead && Math.hypot(P.feet.x - e.x, P.feet.z - e.z) > 2.2) {
+            P.teleport(e.x, L.heightAt(e.x, e.z + 1.9), e.z + 1.9); P.yaw = P.lastYaw = Math.PI;
+          }
+          return { ...base, attack: !heavy && frame++ % 60 === 0, heavy: heavy && frame++ % 60 === 0 };
+        });
         L.step(1 / 60, heavy ? 330 : 370);
         check(e.dead, 'sword defeats ' + e.kind + ' in chapter ' + segment);
       }
       input({}); L.step(1 / 60, 2);
+      check(h.seg === segment, 'creatures alone cannot clear chapter');
+      const rival = h.enemies.find(e => e.duel && e.seg === segment);
+      L.teleport(rival.x, rival.z + 4.5, rival.x, rival.z); L.step(1 / 60, 60, false);
+      if (!checkedRetry) { L.respawn(); check(Math.hypot(P.feet.x - rival.homeX, P.feet.z - rival.homeZ - 6) < 0.1, 'nearby duel retry point'); checkedRetry = true; }
+      for (let frame = 0; frame < 1800 && !rival.dead; frame++) {
+        if (rival.phase === 'recovery') {
+          if (frame % 8 === 0) L.teleport(rival.x, rival.z + 1.9, rival.x, rival.z);
+          input({ attack: !h.powers.heavy && frame % 28 === 0, heavy: h.powers.heavy && frame % 55 === 0 });
+        } else {
+          input({});
+          if (frame % 8 === 0) L.teleport(rival.x, rival.z + (rival.phase === 'approach' || rival.phase === 'intro' ? 2.2 : 4.2), rival.x, rival.z);
+        }
+        L.step(1 / 60, 1, false);
+      }
+      check(rival.dead && rival.evaded && rival.punishes > 0, 'rival lesson and victory ' + segment + ' ' + JSON.stringify({ phase: rival.phase, hp: rival.hp, evaded: rival.evaded, punishes: rival.punishes }));
+      input({}); L.step(1 / 60, 3);
       check(h.seg === segment + 1, 'ordered chapter clear ' + segment);
-      const expected = ['spark', 'dash', 'heavy', 'flare'][segment];
+      const expected = plan[segment].grant;
       if (expected) check(h.powers[expected], 'earned ' + expected);
-      const cp = [[-7, 51], [3.6, 28], [10.3, 2], [0, -32], [11, -96]][segment];
+      const next = plan[segment + 1]?.checkpoint ?? plan[0].goal; const cp = [next.x, next.z];
       L.teleport(cp[0], cp[1], cp[0], cp[1] - 10); L.step(1 / 60, 90);
       chapterStyles.push(document.documentElement.dataset.style);
     }
     check(h.won, 'sanctuary victory');
     results.chapterStyles = chapterStyles;
+    results.rivalLessons = h.enemies.filter(e => e.duel).map(e => ({ chapter: e.seg + 1, evaded: e.evaded, punishes: e.punishes }));
     results.save = JSON.parse(localStorage.getItem('oilpaint.levels.v1'));
-    check(results.save.cleared === 5, 'victory persists');
+    check(results.save.cleared === plan.length, 'victory persists');
     // After winning, create a temporary wall in open space to test the actual capsule sweep.
     L.teleport(0, 78, 0, 60); input({}); const y = P.feet.y;
     const wall = P.world.createCollider(P.R.ColliderDesc.cuboid(3, 2, 0.2).setTranslation(0, y + 1, 75.5));
@@ -83,7 +112,7 @@ try {
     check(Math.abs(P.visualY - P.feet.y) < 0.2, 'dash visual history');
     P.world.removeCollider(wall, true); L.setInput(null);
     return results;
-  });
+  }, PLAN.map(p => ({...p, goal: GOAL})));
   // Pause freezes the real animation loop, and its controls remain keyboard accessible.
   await page.click('#pause-button');
   assert.equal(await page.locator('#menu').evaluate(el => el.open), true);
@@ -95,7 +124,7 @@ try {
   // Restore an existing checkpoint without using ?fresh. Keep the same storage context.
   await page.goto(`${baseURL}/?scene=autumn&nopad`);
   await page.waitForFunction(() => window.lab?.ready, null, { timeout: 120000 });
-  assert.equal(await page.evaluate(() => window.lab.hunt.seg), 5);
+  assert.equal(await page.evaluate(() => window.lab.hunt.seg), PLAN.length);
   const saved = await page.evaluate(() => localStorage.getItem('oilpaint.levels.v1'));
   await page.goto(`${baseURL}/?scene=autumn&mode=roam&nopad`);
   await page.waitForFunction(() => window.lab?.ready, null, { timeout: 120000 });
@@ -113,7 +142,7 @@ try {
   assert.match(warning, /Progress is not saving/, 'save failure remains visible after unlock');
   assert.deepEqual(errors, [], 'browser errors');
   console.log(JSON.stringify(result, null, 2));
-  console.log('PASS: physics, combat, five chapters, save/restore, pause and free roam');
+  console.log(`PASS: anime rigs, physics, combat, ${PLAN.length} rival lessons, chapters, save/restore, pause and free roam`);
 } finally {
   await browser.close();
 }

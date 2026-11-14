@@ -131,9 +131,9 @@ export function createPines(shared) {
         d.c2 = hazed(c * (snow ? 1.25 : 1.5) + vec3(0.0, 0.006, 0.01), P);
         d.seed = aData.x;
         d.lift = snow ? 0.55 : 0.25;
-        d.turnabout = snow ? 1.0 : 0.0;
+        d.turnabout = 0.0; // drawn blades all point out along the bough: a drooping fir, not a scatter
       }`,
-    minPx: [3, 6], maxPx: [100, 210], cells: [0, 8],
+    minPx: [3, 6], maxPx: [100, 210], cells: [0, 8], shape: 1,
   }), 3);
 
   const group = new THREE.Group();

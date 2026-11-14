@@ -123,11 +123,13 @@ in vec3 vC1;
 in vec3 vC2;
 in vec4 vAxis;
 in vec4 vGlaze;
+uniform float uShape;
 layout(location = 0) out vec4 outC;
 void main() {
   if (uAnime > 0.5) {
     vec2 q = fract(vUv * vec2(${BRUSH_COLS}.0, ${BRUSH_ROWS}.0)) * 2.0 - 1.0;
-    if (dot(q, q) > 0.95) discard;
+    // uShape 1: a pointed blade, round at its root and sharp at its tip (fir boughs drawn, not dabbed)
+    if (uShape < 0.5 ? dot(q, q) > 0.95 : abs(q.x) > (1.0 - q.y) * 0.62 * sqrt(max(0.0, 1.0 - q.y * q.y * 0.3)) || q.y < -0.97) discard;
     vec3 col = vC1;
     if (vGlaze.w > 0.5) col = mix(col * uGlazeMul + uGlazeAdd, col, figSunSoft(vGlaze.xyz));
     outC = vec4(col, 1.0);
@@ -154,7 +156,7 @@ void main() {
 }
 `;
 
-export function dabMaterial(shared, { head = '', body, uniforms = {}, minPx = [5, 9], maxPx = [400, 700], cells = [0, 8], depthTest = true, depthWrite = true } = {}) {
+export function dabMaterial(shared, { head = '', body, uniforms = {}, minPx = [5, 9], maxPx = [400, 700], cells = [0, 8], depthTest = true, depthWrite = true, shape = 0 } = {}) {
   return new THREE.ShaderMaterial({
     glslVersion: THREE.GLSL3,
     vertexShader: VERT(head, body),
@@ -164,6 +166,7 @@ export function dabMaterial(shared, { head = '', body, uniforms = {}, minPx = [5
       uMinPx: { value: new THREE.Vector2(...minPx) },
       uMaxPx: { value: new THREE.Vector2(...maxPx) },
       uCells: { value: new THREE.Vector2(...cells) },
+      uShape: { value: shape },
       ...uniforms,
     },
     side: THREE.DoubleSide,

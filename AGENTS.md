@@ -11,8 +11,9 @@ every object is a brush **dab** pinned to the world, never a post-process
 filter. Two playable scenes share one wanderer:
 
 - **Aurora** (`?scene=aurora`, default): snowy ridge, cabin, night sky.
-- **Autumn** (`?scene=autumn`): a wood with a level-based game on top —
-  5 gated levels, checkpoints, unlockable powers, bigger enemies, free roam.
+- **Autumn** (`?scene=autumn`): the level-based game — 6 gated levels,
+  checkpoints, unlockable powers, human and mech enemies, free roam. Its scenery is
+  now a night city (`src/world/anime.js`); the scene key and file names still say autumn.
 
 Vanilla ES modules, no framework, no TypeScript. Vite for dev/build.
 Rapier (vendored) for character physics. No test framework: correctness is
@@ -108,7 +109,8 @@ mindmap
       game_hunt["hunt.js - enemies, powers, HUD, checkpoints"]
     assets["Assets - public"]
       assets_figure["figure glb files - wanderer and clips"]
-      assets_animals["animals glb files - dog and wolf"]
+      assets_animals["animals and creatures - retired rigs, unused"]
+      assets_enemies["enemies - Quaternius CC0 people and mech"]
     tools["Tools - tools"]
       tools_measure["fps, shots, clip, steady, jitter, cold, probe"]
       tools_serve["serve.mjs, test.mjs, compact-glb.mjs"]
@@ -123,16 +125,19 @@ mindmap
 | Change | Files | Notes |
 |---|---|---|
 | Level layout, spawns, gates | `src/game/levels.js` | Pure data; keep gates ordered down the way (z decreasing) |
-| Enemy stats / AI / damage | `src/game/hunt.js` (`KIND`, `HIT`) | Then run `node src/game/hunt.js` |
+| Enemy stats / AI / damage | `src/game/hunt.js` (`KIND`, `HIT`, `HEFT`, `CAST`) | Then run `node src/game/hunt.js` |
 | New power | `levels.js` (`POWERS`, `grant`) + `hunt.js` (`has()`, update) + `input.js` | Gate with `has(key)`; show locked toast; add a HUD pill |
-| Controls | `src/figure/input.js` | One `read(dt)` state; keep keyboard + pad in sync. `F`=heavy, `J`/click=swing, `Q`=spark, `E`=dash, `R`=flare, `M`=mode |
+| Controls | `src/figure/input.js` | One `read(dt)` state; keep keyboard + pad in sync. `F`=heavy, `J`/click=swing, `Q`=spark, `E`=dash (one in the air), `R`=flare, `C`=whirl, `M`=mode |
 | Movement / jump / speed | `src/figure/player.js` (`TUNING`) | Rapier kinematic capsule; don't move the body except via `player` APIs or `holdAt`-style teleports |
 | Animation feel | `src/figure/animator.js` | Largest, most delicate file — small changes, check feet |
 | A painted object | `src/oilpaint/dabs.js` or `pins.js` + scene file | Write `makeDab` GLSL; pick colours via `paint3(light, half, shade)` |
 | Ground look | `src/world/floor.js`, `src/night/snow.js`, `oilpaint/ground.js` | Ground dabs must never swim — fixed cells only |
-| New tree/plant | `src/world/forest.js` / `src/night/pines.js` | Reuse dab counts; watch the leaf budget |
+| City scenery (towers, signs, lamps, crates, sky) | `src/world/anime.js` | One instanced draw per role; windows/signs are drawn in object metres in the `cel` shader. Towers are cuboid colliders (`box`) and keep clear of every spawn, duel, cairn and gate |
+| District colours | `src/game/chapters.js` | `grass` = pavement, `path` = road, `foliage`/`leafLight` = the two neons, `color` = HUD accent |
+| Road / pavement look | `src/world/land.js` (anime branch) | Soft neon wash at the road edge; no hard line off the way mask (it is jagged) |
+| New tree/plant (night scene) | `src/night/pines.js` | Reuse dab counts; watch the leaf budget |
 | Sky / aurora / mist | `src/world/sky.js`, `src/night/sky.js`, `oilpaint/common.js` | Shared uniforms live in `common.js` |
-| HUD / page chrome | `index.html` + HUD block in `hunt.js` | HUD is created in JS (`#hud`); styles in `index.html` |
+| HUD / page chrome | `index.html` + `src/game/hud.js` + `src/ui.css` | Cyberpunk plates: cut corners, cell bars, `--hot` + `--chapter-accent` (neon, from `chapters.js`). No backdrop blur |
 | Night-scene gameplay | `src/night/main.js` | Passes `marks`/`spots` to `createHunt` — keep that API working |
 | Perf regression hunt | `tools/fps.mjs`, `?quality=low` | Compare before/after; see Performance below |
 
@@ -163,14 +168,18 @@ mindmap
   and the next cairn becomes reachable. Cairns set the respawn point and
   heal. Death calls `down()` (respawn in `src/main.js`) and resets nearby
   enemies — enemies never respawn in level mode.
-- Power order: spark → dash → heavy → flare (`POWER_ORDER`). Powers are
+- Power order: spark → dash → heavy → flare → whirl (`POWER_ORDER`). Powers are
   *derived* from cleared count via `powersFor()` — never store the power
   list itself. Save is `{ cleared, x, z }` under
   `localStorage["oilpaint.levels.v1"]`; if the save throws, the game must
   toast once ("Progress is not saving…"), never swallow it silently.
-- Enemy kinds: `dog`, `wolf`, `brute` (brute = wolf rig, scale 2.35,
-  dark palette, 330 HP). Balance invariants are asserted in `demo()` at
-  the bottom of `hunt.js` — extend them when you change `HIT`/`KIND`.
+- Enemy kinds (`KINDS` in `levels.js`): `punk`, `enforcer` (melee), `gunner`
+  (ranged: tracks, locks `AIM_LOCK` s, fires a dodgeable/deflectable bolt, backs
+  off inside `keep`), `blade` (lunges as it strikes), `brute` (siege mech,
+  330 HP). Models are Quaternius CC0 rigs in `public/enemies/` (`CAST` maps kind →
+  file, kept prop, attack clip; `NEON` repaints materials by name). Crews escalate
+  by level; `demoLevels()` asserts it. Balance invariants are asserted in `demo()`
+  at the bottom of `hunt.js` — extend them when you change `HIT`/`KIND`.
 - Free roam: no gates, all powers, enemies respawn after 20 s, cairns
   heal repeatedly (10 s cooldown). Roam never writes the level save.
 - Back-compat: `createHunt` without `levels` (night scene) must keep the
@@ -184,7 +193,7 @@ game logic is negligible **if** these rules hold:
 - Enemies stay rigged GLB clones with painted materials — no per-enemy
   render targets, post passes, or unique shaders.
 - Cap work by distance: enemies beyond ~36 m skip AI (`hunt.js` already
-  does this). Keep total spawns modest (~16 today).
+  does this). Keep total spawns modest (~19 beasts + 6 rivals today).
 - Respect `renderer.setPixelRatio(min(devicePixelRatio, 1.5))` and the
   `?quality=low` path. Don't raise either.
 - Verify with `node tools/fps.mjs --seconds 8` before/after any rendering
@@ -216,8 +225,9 @@ game logic is negligible **if** these rules hold:
 z above its gate z, gates strictly decreasing → `node src/game/levels.js`
 (it throws on unordered gates) → clear the save (`?fresh`) when playtesting.
 
-**Add an enemy kind:** add `KIND` + `HIT` + `PAL` entries, map it in
-`beastMesh` (reuse a rig), add spawns to `levels.js`, extend `demo()`.
+**Add an enemy kind:** add `KIND` + `HIT` + `HEFT` + `CAST` entries in `hunt.js`,
+the name to `KINDS` (`levels.js`) and `FOES` (`hud.js`), spawns to `levels.js`;
+`demo()` fails until every kind is cast and statted.
 
 **Debug without playing:** `window.lab.teleport(...)` in the console,
 `tools/probe.mjs` headless, or `?capture` + `window.lab.step(dt, n)`.
@@ -228,6 +238,14 @@ z above its gate z, gates strictly decreasing → `node src/game/levels.js`
   only registers when already locked (`input.js`). Headless tools use
   `tools/no-pointer-lock.mjs`.
 - `?capture` disables the hunt entirely; don't "fix" missing enemies there.
+- Anime finish (`finish.js`): `uInk` draws depth-edge outlines, `uVignette` darkens corners;
+  Snowbound sets both high, autumn uses light ink. `?ink=0` compares. Anime mode also hides
+  the near snow strokes and draws pines with pointed dabs (`shape: 1` in `dabMaterial`).
+- Combat feel lives in `hunt.js`: `KNOCK`/`HEFT` (swept knockback, `sweep()`/`shove()`), `LAUNCH`
+  (heavy/whirl lift light bodies; airborne = staggered; the fallen are thrown), `PERFECT` (perfect-dodge
+  window → `timeScale` slow-mo, read by both mains), `PARRY` (a blow landed late in a windup), plunge
+  (strike in the air → `player.slam()` → landing shock), deflected gunner bolts, swing lunge.
+  Enemy materials are per body (white map + `uTint`), so a hit flashes one body only.
 - The aurora scene has its own `heightAt`/land — don't import autumn's.
 - `animator.js` and `cloak.js` are stateful per-frame; teleporting the
   player must reset `feet`/`prevFeet`/`visualY` (see `respawn()` and
