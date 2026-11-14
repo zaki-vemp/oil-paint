@@ -40,7 +40,8 @@ export function createHUD({ levels, roam, marks, route }) {
       <p class="boss-cue"></p><p class="boss-lesson"></p>
       <div class="lesson-steps"><span>Read</span><span>Evade</span><span>Punish</span></div>
     </section>
-    <nav class="actions" aria-label="Abilities">
+    <nav id="power-options" class="actions" aria-label="Abilities">
+      <div class="powers-heading"><strong>Powers</strong><span>Tap to use</span></div>
       <button data-action="attack" data-code="KeyJ" title="J or left click: sword strike">${icon('sword')}<kbd>J</kbd><span>Strike</span><small></small></button>
       ${(levels ? POWER_ORDER : ['spark']).map(k => `<button data-action="${k}" data-code="Key${POWERS[k].key}" title="${POWERS[k].hint}">${icon(k)}<kbd>${POWERS[k].key}</kbd><span>${k === 'heavy' ? 'Heavy' : k === 'flare' ? 'Flare' : POWERS[k].name}</span><small></small></button>`).join('')}
     </nav>
@@ -61,8 +62,31 @@ export function createHUD({ levels, roam, marks, route }) {
     steps: [...hud.querySelectorAll('.journey i')], actions: [...hud.querySelectorAll('.actions button')],
     target: get('.target'), targetName: get('.target strong'), targetHp: get('.target span'), targetFill: get('.target-hp i'), tell: get('.target p'),
   };
+  const mobile = matchMedia('(pointer: coarse)').matches;
+  const touchControls = document.getElementById('touch-controls');
+  const powersButton = document.getElementById('touch-powers');
+  const dashButton = document.getElementById('touch-dash');
+  const powerOptions = get('.actions');
+  function showPowers(open) {
+    if (!mobile) return;
+    powerOptions.hidden = !open;
+    powersButton.setAttribute('aria-expanded', String(open));
+    if (!open && powerOptions.contains(document.activeElement)) powersButton.focus({ preventScroll: true });
+  }
+  if (mobile) {
+    showPowers(false);
+    powersButton.addEventListener('click', () => { if (!window.__paused) showPowers(powerOptions.hidden); });
+    document.addEventListener('pointerdown', e => {
+      if (!powerOptions.contains(e.target) && !powersButton.contains(e.target)) showPowers(false);
+    });
+    addEventListener('keydown', e => { if (e.code === 'Escape') showPowers(false); });
+    addEventListener('resize', () => showPowers(false));
+    addEventListener('blur', () => showPowers(false));
+    document.addEventListener('visibilitychange', () => { if (document.hidden) showPowers(false); });
+  }
   hud.querySelectorAll('[data-code]').forEach(button => button.addEventListener('click', () => {
     if (!window.__paused) window.lab?.input.pressed.add(button.dataset.code);
+    showPowers(false);
     button.blur();
   }));
   let chapter = 0, bannerTime = 4.5, toastTime = 0, mapTime = 0, lastHp = 100;
@@ -158,13 +182,23 @@ export function createHUD({ levels, roam, marks, route }) {
   /** The vehicle he is in (speed, state), or the one in reach (a prompt), or null. */
   function ride(state) {
     rideEl.hidden = !state?.driving; promptEl.hidden = !state;
+    const jumpBtn = document.getElementById('touch-jump');
+    if (jumpBtn) {
+      const label = state?.driving ? 'Brake' : 'Jump';
+      jumpBtn.querySelector('span').textContent = label;
+      jumpBtn.setAttribute('aria-label', label);
+      jumpBtn.querySelector('use').setAttribute('href', state?.driving ? '#i-brake' : '#i-jump');
+    }
+    touchControls.dataset.driving = String(!!state?.driving);
+    if (state?.driving) showPowers(false);
     hud.classList.toggle('driving', !!state?.driving);
     if (!state) return;
     promptEl.querySelector('span').textContent = state.driving ? 'Step out' : state.tipped ? `Right the ${state.name}` : state.driver ? `Carjack the ${state.name}` : `Take the ${state.name}`;
+    if (mobile) promptEl.querySelector('span').textContent = state.driving ? 'Exit vehicle' : `${state.tipped ? 'Flip' : state.driver ? 'Take' : /bike|scooter/i.test(state.name) ? 'Ride' : 'Drive'} · ${state.name}`;
     if (!state.driving) return;
     rideEl.querySelector('b').textContent = Math.round(state.kmh);
     rideEl.querySelector('em').textContent = state.name;
-    rideEl.querySelector('i').textContent = state.tipped ? 'Overturned · G out, then G beside it to right' : state.hurt === 'dead' ? 'Dead' : state.hurt === 'fire' ? 'On fire' : state.hurt === 'smoke' ? 'Smoking' : state.air ? 'Airborne' : state.sliding ? 'Sliding' : 'G · step out';
+    rideEl.querySelector('i').textContent = state.tipped ? (mobile ? 'Overturned · exit, then flip it' : 'Overturned · G out, then G beside it to right') : state.hurt === 'dead' ? 'Dead' : state.hurt === 'fire' ? 'On fire' : state.hurt === 'smoke' ? 'Smoking' : state.air ? 'Airborne' : state.sliding ? 'Sliding' : mobile ? 'Stick to steer · hold Brake' : 'G · step out';
     rideEl.classList.toggle('loose', !!(state.air || state.sliding));
   }
   function update(dt, { hp, power, cleared, won, enemies, player, has, dashCool, flareCool, invuln, boss, heat = 0, cash = 0, stars = 0, task = '' }) {
@@ -206,12 +240,23 @@ export function createHUD({ levels, roam, marks, route }) {
     for (const el of els.actions) {
       const key = el.dataset.action, unlocked = key === 'attack' || has(key);
       const cool = key === 'dash' ? dashCool : key === 'flare' ? flareCool : 0;
-      const empty = key === 'spark' && power < 1 || key === 'flare' && power < 2;
+      const empty = (key === 'spark' || key === 'whirl') && power < 1 || key === 'flare' && power < 2;
       el.classList.toggle('locked', !unlocked);
       el.classList.toggle('cooling', unlocked && (cool > 0 || empty));
       el.setAttribute('aria-disabled', String(!unlocked || cool > 0 || empty));
+      if (mobile) {
+        el.hidden = key === 'attack' || key === 'dash' || !unlocked;
+        el.disabled = !unlocked || cool > 0 || empty;
+      }
       el.style.setProperty('--cd', unlocked && cool > 0 ? Math.min(1, cool / COOL[key]) : 0);
-      el.querySelector('small').textContent = !unlocked ? `Sec ${pad(POWER_ORDER.indexOf(key) + 1)}` : cool > 0 ? `${Math.ceil(cool)}s` : empty ? 'No charge' : '';
+      el.querySelector('small').textContent = !unlocked ? `Sec ${pad(POWER_ORDER.indexOf(key) + 1)}` : cool > 0 ? `${Math.ceil(cool)}s` : empty ? 'No charge' : mobile ? 'Ready' : '';
+    }
+    if (mobile) {
+      dashButton.hidden = !has('dash');
+      dashButton.disabled = dashCool > 0;
+      dashButton.querySelector('small').textContent = dashCool > 0 ? `${Math.ceil(dashCool)}s` : '';
+      powersButton.hidden = !els.actions.some(el => !el.hidden);
+      if (powersButton.hidden) showPowers(false);
     }
     // a calm passer-by reads as a few metres further off, so a real threat beside them takes the panel
     const reach = e => Math.hypot(e.x - player.feet.x, e.z - player.feet.z) + (e.civ && !(e.angry > 0) ? 5 : 0);

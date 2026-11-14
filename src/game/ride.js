@@ -1,6 +1,6 @@
 // Cars and bikes at every cairn, with local traffic yielding to people: G takes a slow vehicle, G again steps out.
-// The Eclipse SRC body (credits in public/vehicles/SOURCE.md) and the original bike/wheels share the scene’s
-// painted materials. The handling is a small tyre model, not a rigid body: the engine pulls
+// The reviewed Blender coupe, delivery van, motorcycles and seated rider share the city’s
+// vertex-painted materials; wheels keep their own steering and spin pivots. The handling is a small tyre model, not a rigid body: the engine pulls
 // hardest from rest and has nothing left at top speed, the front wheels turn the heading (a bicycle model, less
 // lock at speed), and the tyres scrub sideways speed off at their grip, until past the slip limit or on the
 // handbrake they let go and it slides. It follows the land's heightAt on both axles, leaves the ground over a
@@ -8,8 +8,7 @@
 // vehicles, and a sideways impact can tip the chassis onto its side or roof. G beside a stopped wreck rights it.
 // Whatever stands in its way is rammed (hunt.ram): crews, the mech, and the street's own people, at his risk.
 import * as THREE from 'three';
-import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
-import { paint } from '../figure/figure.js';
+import { loadStreetAsset, streetClone } from '../street-assets.js';
 import { RAM } from './hunt.js';
 import { wayDist, ROAD } from '../world/land.js';
 import { AVENUES, STREETS, GRID_MIN, GRID_MAX } from '../world/grid.js';
@@ -19,11 +18,11 @@ import { AVENUES, STREETS, GRID_MIN, GRID_MAX } from '../world/grid.js';
 // heft is the share of speed kept after hitting someone (a heavy truck keeps more). hull is hit points.
 // throw: a hard lean at speed, or a rollover, puts the rider on the pavement. `car` is the sedan — the street checks look it up by that key.
 export const RIDES = {
-  car: { name: 'Sedan', len: 4.2, wid: 1.9, base: 2.6, wheel: 0.36, top: 25, rev: 8, accel: 12, brake: 24, grip: 7.4, drift: 1.3, slip: 6, steer: 0.58, calm: 9, lean: 0, heft: 0.65, mass: 1200, eye: 10.5, hull: 140, throw: 0 },
-  sports: { name: 'Sports', len: 4.3, wid: 1.85, base: 2.45, wheel: 0.34, top: 34, rev: 9, accel: 18, brake: 30, grip: 8.6, drift: 0.95, slip: 7.2, steer: 0.72, calm: 11, lean: 0, heft: 0.58, mass: 1000, eye: 11.5, hull: 90, throw: 0 },
-  pickup: { name: 'Pickup', len: 5.3, wid: 2.05, base: 3.25, wheel: 0.44, top: 18, rev: 6, accel: 8, brake: 16, grip: 6.4, drift: 1.5, slip: 5.5, steer: 0.46, calm: 7, lean: 0, heft: 0.84, mass: 2400, eye: 12.2, hull: 240, throw: 0 },
-  bike: { name: 'Motorbike', len: 2.2, wid: 0.7, base: 1.45, wheel: 0.36, top: 31, rev: 4, accel: 17, brake: 22, grip: 9, drift: 1.7, slip: 7.5, steer: 0.5, calm: 8, lean: 1, heft: 0.45, mass: 240, eye: 8.5, hull: 70, throw: 1 },
-  bicycle: { name: 'Bicycle', len: 1.7, wid: 0.5, base: 1.05, wheel: 0.32, top: 12, rev: 3, accel: 5, brake: 10, grip: 8, drift: 2.2, slip: 4, steer: 0.7, calm: 5, lean: 1, heft: 0.28, mass: 80, eye: 7.6, hull: 28, throw: 1 },
+  car: { name: 'Kestrel', len: 4.2, wid: 1.9, base: 2.6, wheel: 0.36, top: 25, rev: 8, accel: 12, brake: 24, grip: 7.4, drift: 1.3, slip: 6, steer: 0.58, calm: 9, lean: 0, heft: 0.65, mass: 1200, eye: 10.5, hull: 140, throw: 0 },
+  sports: { name: 'Kestrel GT', len: 4.3, wid: 1.85, base: 2.45, wheel: 0.34, top: 34, rev: 9, accel: 18, brake: 30, grip: 8.6, drift: 0.95, slip: 7.2, steer: 0.72, calm: 11, lean: 0, heft: 0.58, mass: 1000, eye: 11.5, hull: 90, throw: 0 },
+  pickup: { name: 'Parcel van', len: 5.3, wid: 2.05, base: 3.25, wheel: 0.44, top: 18, rev: 6, accel: 8, brake: 16, grip: 6.4, drift: 1.5, slip: 5.5, steer: 0.46, calm: 7, lean: 0, heft: 0.84, mass: 2400, eye: 12.2, hull: 240, throw: 0 },
+  bike: { name: 'Razor bike', len: 2.2, wid: 0.7, base: 1.45, wheel: 0.36, top: 31, rev: 4, accel: 17, brake: 22, grip: 9, drift: 1.7, slip: 7.5, steer: 0.5, calm: 8, lean: 1, heft: 0.45, mass: 240, eye: 8.5, hull: 70, throw: 1 },
+  bicycle: { name: 'Courier scooter', len: 1.7, wid: 0.5, base: 1.05, wheel: 0.32, top: 12, rev: 3, accel: 5, brake: 10, grip: 8, drift: 2.2, slip: 4, steer: 0.7, calm: 5, lean: 1, heft: 0.28, mass: 80, eye: 7.6, hull: 28, throw: 1 },
 };
 const GRAVITY = 20;
 const BAIL = 9; // m/s: faster than this he stays in his seat
@@ -102,107 +101,55 @@ export function drive(v, s, { throttle = 0, steer = 0, hand = false } = {}, dt, 
   return v;
 }
 
-/** A side silhouette (z forward, y up) pulled across `width`, centred on x. */
-function profile(points, width) {
-  const g = new THREE.ExtrudeGeometry(new THREE.Shape(points.map(([z, y]) => new THREE.Vector2(z, y))), { depth: width, bevelEnabled: false });
-  return g.rotateY(-Math.PI / 2).translate(width / 2, 0, 0);
-}
-
-const BODIES = [
-  [[0.2, 0.86, 0.95], [0.08, 0.5, 0.62], [0.04, 0.2, 0.3]],
-  [[0.98, 0.3, 0.55], [0.66, 0.14, 0.36], [0.3, 0.06, 0.2]],
-  [[0.94, 0.94, 0.9], [0.6, 0.62, 0.66], [0.3, 0.32, 0.4]],
-  [[0.98, 0.84, 0.16], [0.7, 0.5, 0.08], [0.34, 0.22, 0.06]],
-];
-const DARK = [[0.2, 0.22, 0.28], [0.1, 0.11, 0.15], [0.04, 0.05, 0.08]];
-const GLASS = [[0.3, 0.4, 0.5], [0.1, 0.16, 0.24], [0.03, 0.05, 0.1]];
-const CLOTH = [[0.36, 0.7, 0.86], [0.2, 0.44, 0.62], [0.1, 0.2, 0.34]];
-const SKIN = [[1.0, 0.8, 0.64], [0.78, 0.55, 0.42], [0.45, 0.3, 0.28]];
+// Existing vehicle keys keep their handling and story unlocks; the reviewed art supplies their bodies.
+const ART = {
+  car: { file: 'coupe', axle: 2.56, radius: 0.39, track: 0.87 },
+  sports: { file: 'coupe', axle: 2.56, radius: 0.39, track: 0.87 },
+  pickup: { file: 'van', axle: 2.07, radius: 0.32, track: 0.76 },
+  bike: { file: 'motorbike', axle: 1.79, radius: 0.36 },
+  bicycle: { file: 'scooter', axle: 1.55, radius: 0.285 },
+};
 
 export async function createRides({ scene, shared, player, heightAt, hunt, route, checkpoints, inBounds, settle }) {
-  const carModel = await new GLTFLoader().loadAsync('./vehicles/eclipse.glb');
+  const files = [...new Set([...Object.values(ART).map(a => a.file), 'rider'])];
+  const sources = Object.fromEntries(await Promise.all(files.map(async name => [name, await loadStreetAsset(name)])));
   const R = player.R, world = player.world;
   const ray = new R.Ray({ x: 0, y: 0, z: 0 }, { x: 0, y: 0, z: 1 });
-  const glow = (c) => new THREE.MeshBasicMaterial({ color: c });
-  const dark = paint(shared, DARK, { grain: 3 }), glass = paint(shared, GLASS, { grain: 3 });
-  const lamps = { white: glow(0xeaf6ff), red: glow(0xff3040), cyan: glow(0x00f0ff), pink: glow(0xff2a6d) };
-  const tyre = (r, w) => new THREE.CylinderGeometry(r, r, w, 12).rotateZ(Math.PI / 2);
   const add = (parent, geometry, material, x = 0, y = 0, z = 0) => {
     const m = new THREE.Mesh(geometry, material); m.position.set(x, y, z); parent.add(m); return m;
   };
-
-  function build(kind, n) {
-    const s = RIDES[kind], root = new THREE.Group(), shell = new THREE.Group(), wheels = [];
+  function build(kind) {
+    const s = RIDES[kind], art = ART[kind], root = new THREE.Group(), shell = new THREE.Group(), wheels = [];
     root.rotation.order = 'YXZ'; root.add(shell);
-    const body = paint(shared, BODIES[n % BODIES.length], { grain: 3 }), neon = n % 2 ? lamps.pink : lamps.cyan;
-    const wheel = (x, z, width, front) => {
+    const model = streetClone(sources[art.file], shared);
+    model.updateMatrixWorld(true);
+    const nodes = [];
+    model.traverse(o => { if (o.isMesh && o.name.startsWith('Wheel_')) nodes.push(o); });
+    for (const node of nodes) {
+      const p = new THREE.Vector3().setFromMatrixPosition(node.matrixWorld);
+      const transform = node.matrixWorld.clone().setPosition(0, 0, 0);
+      const geometry = node.geometry.clone().applyMatrix4(transform);
+      geometry.scale(s.wheel / art.radius, s.wheel / art.radius, s.wheel / art.radius);
       const pivot = new THREE.Group(), spin = new THREE.Group();
-      pivot.position.set(x, s.wheel, z); pivot.add(spin); root.add(pivot);
-      add(spin, tyre(s.wheel, width), dark); add(spin, tyre(s.wheel * 0.5, width + 0.03), neon);
-      add(spin, new THREE.BoxGeometry(width + 0.04, s.wheel * 1.5, 0.07), dark); // a spoke, so the turning shows
+      const front = node.name.startsWith('Wheel_F');
+      pivot.position.set(art.track ? Math.sign(p.x) * (s.wid / 2 - 0.12) : 0, s.wheel, (front ? 1 : -1) * s.base / 2);
+      spin.add(new THREE.Mesh(geometry, node.material)); pivot.add(spin); root.add(pivot);
+      spin.children[0].layers.enable(1);
       wheels.push({ pivot, spin, front });
-    };
+      node.removeFromParent();
+    }
+    const sx = art.track ? (s.wid / 2 - 0.12) / art.track : kind === 'bicycle' ? 0.9 : 1;
+    model.scale.set(sx, s.wheel / art.radius, s.base / art.axle);
+    shell.add(model);
     let rider = null;
-    const bust = (y, z, sc = 1) => {
-      rider = new THREE.Group(); rider.visible = false; rider.scale.setScalar(sc); shell.add(rider);
-      const cloth = paint(shared, CLOTH), skin = paint(shared, SKIN);
-      add(rider, new THREE.BoxGeometry(0.42, 0.5, 0.28), cloth, 0, y, z);
-      add(rider, new THREE.SphereGeometry(0.16, 8, 6), skin, 0, y + 0.4, z + 0.06);
-    };
-    if (kind === 'car') {
-      const model = carModel.scene.clone(true);
-      model.traverse(o => {
-        if (!o.isMesh) return;
-        const name = o.material.name;
-        o.material = /Color|Body/.test(name) ? body : /Window$|Glass|Mirror/.test(name) ? glass : /RearLight|BrakeLight|Taillight/.test(name) ? lamps.red : /ReverseLight|^Light|Headlight/.test(name) ? lamps.white : /Signal|Accent/.test(name) ? neon : dark;
-      });
-      shell.add(model);
-      for (const x of [-1, 1]) add(shell, new THREE.BoxGeometry(0.04, 0.05, 3.5), neon, x * (s.wid / 2 + 0.005), 0.46, 0);
-      for (const x of [-1, 1]) for (const z of [-1, 1]) wheel(x * (s.wid / 2 - 0.12), z * s.base / 2, 0.26, z > 0);
-      bust(0.85, 0.15, 0.85);
-    } else if (kind === 'bike' || kind === 'bicycle') {
-      const slim = kind === 'bicycle';
-      add(shell, profile(slim
-        ? [[-0.7, 0.42], [-0.55, 0.7], [0.15, 0.78], [0.7, 0.55], [0.45, 0.36], [-0.35, 0.34]]
-        : [[-1.0, 0.56], [-0.95, 0.96], [-0.2, 0.9], [0.42, 1.12], [0.95, 0.82], [0.72, 0.46], [-0.4, 0.4]], slim ? 0.16 : 0.34), body);
-      add(shell, new THREE.BoxGeometry(slim ? 0.4 : 0.72, 0.05, 0.05), dark, 0, slim ? 0.82 : 1.16, slim ? 0.2 : 0.46);
-      if (!slim) add(shell, new THREE.BoxGeometry(0.36, 0.04, 1.15), neon, 0, 0.4, 0);
-      add(shell, new THREE.BoxGeometry(0.16, 0.08, 0.05), lamps.white, 0, slim ? 0.72 : 0.96, slim ? 0.68 : 0.9);
-      add(shell, new THREE.BoxGeometry(0.18, 0.05, 0.04), lamps.red, 0, slim ? 0.62 : 0.9, slim ? -0.72 : -0.99);
-      wheel(0, s.base / 2, slim ? 0.08 : 0.16, true); wheel(0, -s.base / 2, slim ? 0.08 : 0.2, false);
-      // He is hidden while he rides, so the bike carries a plain seated figure in his colours.
-      rider = new THREE.Group(); rider.visible = false; shell.add(rider);
-      const cloth = paint(shared, CLOTH), skin = paint(shared, SKIN);
-      const seat = slim ? 0.75 : 1;
-      add(rider, new THREE.BoxGeometry(0.4, 0.6, 0.26), cloth, 0, 1.36 * seat, -0.22).rotation.x = 0.45;
-      add(rider, new THREE.SphereGeometry(0.16, 8, 6), skin, 0, 1.78 * seat, 0.02);
-      add(rider, new THREE.SphereGeometry(0.17, 8, 6, 0, Math.PI * 2, 0, 1.6), dark, 0, 1.8 * seat, 0);
-      for (const x of [-1, 1]) {
-        add(rider, new THREE.BoxGeometry(0.1, 0.1, 0.62), cloth, x * 0.26, 1.34 * seat, 0.16).rotation.x = 0.35;
-        add(rider, new THREE.BoxGeometry(0.15, 0.46, 0.17), cloth, x * 0.2, 0.9 * seat, -0.12).rotation.x = -0.9;
-        add(rider, new THREE.BoxGeometry(0.13, 0.44, 0.14), dark, x * 0.2, 0.56 * seat, -0.1);
-      }
-    } else if (kind === 'pickup') {
-      add(shell, new THREE.BoxGeometry(s.wid, 0.45, s.len), body, 0, 0.55, 0);
-      add(shell, new THREE.BoxGeometry(s.wid * 0.96, 0.85, 1.7), body, 0, 1.15, 1.15);
-      add(shell, new THREE.BoxGeometry(s.wid * 0.7, 0.4, 0.9), glass, 0, 1.35, 1.35);
-      for (const x of [-1, 1]) add(shell, new THREE.BoxGeometry(0.08, 0.45, 2.2), dark, x * (s.wid / 2 - 0.04), 0.95, -1.15);
-      add(shell, new THREE.BoxGeometry(s.wid, 0.1, 0.08), lamps.white, 0, 0.7, s.len / 2);
-      add(shell, new THREE.BoxGeometry(s.wid * 0.4, 0.08, 0.06), lamps.red, 0, 0.7, -s.len / 2);
-      for (const x of [-1, 1]) for (const z of [-1.15, 1.15]) wheel(x * (s.wid / 2 - 0.08), z, 0.28, z > 0);
-      bust(1.35, 1.2);
-    } else {
-      add(shell, profile([[-2.0, 0.38], [-1.7, 0.62], [-0.3, 0.78], [0.5, 0.7], [1.85, 0.5], [2.0, 0.36], [1.4, 0.3], [-1.6, 0.3]], s.wid * 0.92), body);
-      add(shell, new THREE.BoxGeometry(s.wid * 0.55, 0.28, 0.7), glass, 0, 0.78, 0.15);
-      add(shell, new THREE.BoxGeometry(s.wid * 0.3, 0.06, 0.05), lamps.white, 0, 0.48, 1.95);
-      add(shell, new THREE.BoxGeometry(s.wid * 0.35, 0.05, 0.05), lamps.red, 0, 0.46, -1.95);
-      for (const x of [-1, 1]) add(shell, new THREE.BoxGeometry(0.04, 0.04, 3.2), neon, x * (s.wid / 2), 0.36, 0);
-      for (const x of [-1, 1]) for (const z of [-1, 1]) wheel(x * (s.wid / 2 - 0.1), z * s.base / 2, 0.24, z > 0);
-      bust(0.7, 0.05, 0.8);
+    if (s.lean) {
+      rider = streetClone(sources.rider, shared);
+      rider.scale.copy(model.scale); rider.visible = false; shell.add(rider);
     }
     const smoke = add(shell, new THREE.SphereGeometry(0.28, 6, 5), new THREE.MeshBasicMaterial({ color: 0x9aa3ad, transparent: true, opacity: 0.45, depthWrite: false }), 0, 1.3, -s.len * 0.35);
     const fire = add(shell, new THREE.SphereGeometry(0.34, 6, 5), new THREE.MeshBasicMaterial({ color: 0xff5a1f, transparent: true, opacity: 0.85, depthWrite: false }), 0, 1.15, -s.len * 0.15);
     smoke.visible = fire.visible = false;
+    root.userData.asset = art.file;
     scene.add(root);
     return { root, shell, wheels, rider, smoke, fire };
   }
@@ -216,7 +163,7 @@ export async function createRides({ scene, shared, player, heightAt, hunt, route
     const v = { kind, spec: s, x, y, z, yaw, vx: 0, vz: 0, vy: 0, vf: 0, steer: 0, yawRate: 0, air: 0, pitch: 0, roll: 0, lean: 0, squat: 0, spin: 0,
       tilt: 0, rollRate: 0, spinRate: 0, tipped: false, liable: 0, traffic: null, driver: false,
       hp: s.hull, wrecked: false, boom: 0,
-      shape: new R.Cuboid(s.wid / 2, 0.4, s.len / 2), home: { x, z, yaw }, body, collider, ...build(kind, rides.length) };
+      shape: new R.Cuboid(s.wid / 2, 0.4, s.len / 2), home: { x, z, yaw }, body, collider, ...build(kind) };
     rides.push(v); place(v, 0);
     return v;
   }
@@ -291,6 +238,7 @@ export async function createRides({ scene, shared, player, heightAt, hunt, route
   /** Puts the solids where the numbers say: heading, the land's tilt, a bike's lean, the body's squat, the wheels. */
   function place(v, dt) {
     const s = v.spec;
+    v.root.visible = v === driven || Math.hypot(v.x - player.feet.x, v.z - player.feet.z) < 110;
     // Rotate round the chassis centre, lifting the roof/side clear of the ground after a rollover.
     const roll = v.roll + v.tilt + v.lean * s.lean;
     const lift = Math.abs(Math.sin(v.tilt)) * s.wid / 2 + Math.abs(Math.cos(v.tilt)) * 0.7 - 0.7;

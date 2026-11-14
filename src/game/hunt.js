@@ -70,11 +70,11 @@ const CAST = {
   blade: { file: 'blade.glb', attack: 'Sword_Slash' },
   brute: { file: 'mech.glb', attack: 'Attack' },
   // paint: colours by material name, one picked per body so a crowd is not one person many times
-  civ: { file: '../people/citizen-female.glb', alternate: '../people/citizen-male.glb', attack: 'Punch', paint: {
+  civ: { file: '../street/resident.glb', alternate: '../street/mechanic.glb', attack: 'Punch', paint: {
     Shirt: [[0.92, 0.9, 0.84], [0.3, 0.62, 0.9], [0.95, 0.72, 0.2], [0.55, 0.85, 0.6], [0.85, 0.45, 0.7]],
     Pants: [[0.2, 0.24, 0.36], [0.32, 0.3, 0.3], [0.16, 0.2, 0.2]], Hair: [[0.16, 0.1, 0.08], [0.55, 0.36, 0.16], [0.75, 0.2, 0.5]],
     Skin: [[0.93, 0.72, 0.56], [0.72, 0.5, 0.36], [0.5, 0.34, 0.25]], Face: [[0.1, 0.08, 0.08]], Belt: [[0.12, 0.1, 0.1]] } },
-  thief: { file: '../people/runner.glb', attack: 'Punch' },
+  thief: { file: '../street/courier.glb', attack: 'Punch' },
 };
 const PROPS = /^(AK|GrenadeLauncher|Knife_\d|Pistol|Revolver(_Small)?|RocketLauncher|ShortCannon|Shotgun|Shovel|SMG|Sniper(_2)?)$/;
 // Neon repaints by source material name; every other material keeps its own colour.
@@ -168,8 +168,10 @@ export async function createHunt({ scene, shared, man, animator, player, heightA
       const key = o.material.name + (o.isSkinnedMesh ? '' : '|rigid');
       if (!own.has(key)) {
         const picks = cast.paint?.[o.material.name.split('.')[0]];
-        const tint = o.material.map ? [1.2, 1.2, 1.2] : picks?.[variant % picks.length] ?? NEON[o.material.name] ?? o.material.color.toArray().map((v) => v ** (1 / 2.2));
-        const m = paint(shared, PAL.steel, { grain: 2.6, skinned: true, map: o.material.map ?? white, tint });
+        const vertexColors = !!o.geometry.getAttribute('color');
+        const tint = vertexColors ? [1, 1, 1] : o.material.map ? [1.2, 1.2, 1.2] : picks?.[variant % picks.length] ?? NEON[o.material.name] ?? o.material.color.toArray().map((v) => v ** (1 / 2.2));
+        const m = paint(shared, PAL.steel, { grain: 2.6, skinned: true, vertexColors, map: vertexColors ? null : o.material.map ?? white, tint });
+        if (vertexColors) m.side = THREE.FrontSide;
         own.set(key, { m, tint: m.uniforms.uTint.value.clone() });
       }
       o.material = own.get(key).m;
@@ -295,12 +297,19 @@ export async function createHunt({ scene, shared, man, animator, player, heightA
     const mx = m.x + (segs ? 8 : 0);
     g.position.set(mx, heightAt(mx, m.z), m.z);
     if (segs) {
-      // The ring is the trigger you can see from a block away; the column stays bright through the smog.
+      // The shrine sits beside its trigger, but the thin ring follows the real seven-metre healing area.
       g.scale.setScalar(2.6);
-      const ring = new THREE.Mesh(new THREE.RingGeometry(2.45, 3.25, 48), new THREE.MeshBasicMaterial({ color: 0xfcee0a, transparent: true, opacity: 0.75, side: THREE.DoubleSide, depthWrite: false }));
-      ring.rotation.x = -Math.PI / 2; ring.position.y = 0.08; g.add(ring); m.ring = ring;
-      const beam = new THREE.Mesh(new THREE.BoxGeometry(0.55, 32, 0.55), new THREE.MeshBasicMaterial({ color: 0xfcee0a, transparent: true, opacity: 0.55, depthWrite: false }));
-      beam.position.y = 16; g.add(beam); m.beam = beam;
+      const ringGeo = new THREE.RingGeometry(6.8, 7, 64).rotateX(-Math.PI / 2);
+      const positions = ringGeo.attributes.position;
+      for (let i = 0; i < positions.count; i++) {
+        const x = m.x + positions.getX(i), z = m.z + positions.getZ(i);
+        positions.setXYZ(i, x, heightAt(x, z) + 0.045, z);
+      }
+      ringGeo.computeVertexNormals();
+      const ring = new THREE.Mesh(ringGeo, new THREE.MeshBasicMaterial({ color: 0x42d9ef, transparent: true, opacity: 0.25, side: THREE.DoubleSide, depthWrite: false }));
+      scene.add(ring); m.ring = ring;
+      const beam = new THREE.Mesh(new THREE.BoxGeometry(0.045, 6, 0.045), new THREE.MeshBasicMaterial({ color: 0x42d9ef, transparent: true, opacity: 0.16, depthWrite: false }));
+      beam.position.y = 3; g.add(beam); m.beam = beam;
     }
     scene.add(g);
     m.used = false;
@@ -635,9 +644,8 @@ export async function createHunt({ scene, shared, man, animator, player, heightA
       m.crystal.position.y = 1.5 + Math.sin(m.crystal.rotation.y * 1.8) * 0.12;
       if (!m.ring) continue;
       const s = 0.5 + 0.5 * Math.sin(m.crystal.rotation.y * 2.2), hot = !m.used;
-      m.ring.scale.setScalar((hot ? 0.96 : 0.9) + (hot ? 0.22 : 0.06) * s);
-      m.ring.material.opacity = (hot ? 0.35 : 0.18) + (hot ? 0.55 : 0.2) * s;
-      m.beam.material.opacity = (hot ? 0.25 : 0.15) + (hot ? 0.5 : 0.2) * s;
+      m.ring.material.opacity = (hot ? 0.18 : 0.08) + (hot ? 0.12 : 0.05) * s;
+      m.beam.material.opacity = (hot ? 0.12 : 0.04) + (hot ? 0.08 : 0.03) * s;
     }
     const px = player.feet.x, pz = player.feet.z;
     let yaw = player.yaw;

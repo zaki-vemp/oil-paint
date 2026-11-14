@@ -12,6 +12,8 @@ import { createShared, WIND } from './oilpaint/common.js';
 import { createBrushSheet } from './oilpaint/brush.js';
 import { prepareLand, createLand, heightAt, wayDist, noise, way, START } from './world/land.js';
 import { createAnimeWorld } from './world/anime.js';
+import { createStreetProps } from './world/props.js';
+import { createGraphics } from './quality.js';
 import { createShade } from './oilpaint/shade.js';
 import { createFrame } from './oilpaint/finish.js';
 import { createFigure } from './figure/figure.js';
@@ -26,8 +28,6 @@ import { LEVELS } from './game/levels.js';
 const q = new URLSearchParams(location.search);
 const capture = q.has('capture');
 window.__mode = q.get('mode') === 'roam' ? 'roam' : 'level';
-// ?quality wins; otherwise Patch's performance mode, where there is one
-const lowQuality = () => (q.get('quality') ?? window.patch?.quality ?? 'high') === 'low';
 
 // Patch's page talks to the demo through this. There are no controls yet; it carries loading, ready and hiding.
 let shown = true;
@@ -64,11 +64,13 @@ const camera = new THREE.PerspectiveCamera(52, innerWidth / innerHeight, 0.2, 20
 // Listened for from the start, not once loaded: the page may go fullscreen while the world is still being made.
 // The frame's target joins in once it exists.
 let fitFrame = () => {};
+let graphics = null;
 function fitView() {
   renderer.setSize(innerWidth, innerHeight);
   camera.aspect = innerWidth / innerHeight;
   camera.updateProjectionMatrix();
-  fitFrame();
+  if (graphics) graphics.resize();
+  else fitFrame();
 }
 addEventListener('resize', fitView);
 lap('start');
@@ -84,6 +86,10 @@ lap('land');
 say(0.1, 'Raising the city');
 await turn();
 const forest = createAnimeWorld(shared);
+const street = await createStreetProps({ shared, heightAt, solids: forest.colliders });
+forest.group.add(street.group);
+forest.shade.add(street.shade);
+forest.colliders.push(...street.colliders);
 lap('forest');
 // the baked shade has to hold the whole stretched district, not only the first small wood
 const shade = createShade(renderer, shared, forest.shade, { box: [460, 460], centre: [0, 24, 0], back: 800, far: 2000 });
@@ -127,14 +133,13 @@ frame.uniforms.uInk.value = 0.7;
 frame.uniforms.uInkColor.value.setRGB(0.02, 0.02, 0.04);
 frame.uniforms.uInkFar.value = 90;
 if (q.has('ink')) frame.uniforms.uInk.value = +q.get('ink'); // ?ink=0 to compare
-/** Low quality drops the sun in the mist and most of the falling leaves. */
-function applyQuality() {
-  const low = lowQuality();
+graphics = createGraphics({ renderer, capture, apply(profile) {
+  frame.setSamples(profile.samples);
+  frame.resize();
   frame.uniforms.uShafts.value = 0;
-  forest.setQuality(low);
-}
-applyQuality();
-window.patch?.addEventListener?.('qualitychange', applyQuality);
+  forest.setQuality(profile.decorations);
+  street.setQuality(profile);
+} });
 
 // the wind as the cloak feels it: the same bands the leaves move in
 const wind = { x: WIND.x, z: WIND.y };
@@ -202,6 +207,7 @@ function tick(dt, draw = true) {
 
 function renderScene() {
   camera.updateMatrixWorld(true);
+  street.update(player.feet);
   renderer.getDrawingBufferSize(size);
   shared.uTime.value = time;
   shared.uPixel.value = (2 * Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2)) / size.y;
@@ -211,7 +217,7 @@ function renderScene() {
 }
 
 window.lab = {
-  THREE, player, follow, camera, input, animator, figure, shared, frame, renderer, timings, counts: forest.counts, heightAt, respawn, way, scene,
+  THREE, player, follow, camera, input, animator, figure, shared, frame, renderer, graphics, street, timings, counts: forest.counts, heightAt, respawn, way, scene,
   step(dt = 1 / 60, n = 1, draw = true) { for (let i = 0; i < n; i++) tick(dt, draw && i === n - 1); },
   setInput(fn) { input.override = fn; },
   /** Puts him at (x, z) on the ground, facing (fx, fz), with the eye behind him. */
@@ -283,6 +289,7 @@ function run() {
   last = performance.now();
   renderer.setAnimationLoop(want ? () => {
     const now = performance.now();
+    graphics.sample((now - last) / 1000, !window.__paused);
     if (!window.__paused) {
       accumulator += Math.min((now - last) / 1000, 0.1);
       while (accumulator >= 1 / 60) { tick(1 / 60, false); accumulator -= 1 / 60; }

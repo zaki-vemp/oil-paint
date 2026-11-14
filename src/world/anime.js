@@ -61,6 +61,12 @@ function cel(shared, role, sway = 0) {
           // a line of neon under the roof
           float trim = step(vSize.y * 0.5 - 0.28, vObj.y) * side;
           glow = mix(glow, fol, trim); own = max(own, trim);
+          // Dark corner piers and lit ground-floor bays give the blocks a human scale.
+          float edge = step(vSize.x * 0.5 - 0.18, abs(vObj.x)) + step(vSize.z * 0.5 - 0.18, abs(vObj.z));
+          base *= mix(1.0, 0.62, min(1.0, edge) * side);
+          float shop = side * step(-vSize.y * 0.5 + 3.7, vObj.y) * step(vObj.y, -vSize.y * 0.5 + 5.8);
+          shop *= step(0.12, fract(u / 2.2)) * step(fract(u / 2.2), 0.88);
+          glow = mix(glow, pale * 0.72, shop); own = max(own, shop * 0.78);
         } else if (uRole < 1.5) {
           // a sign: bars of its colour that read as characters, with a tired flicker
           float bars = step(0.42, fract(vObj.y * 1.25 + vSeed * 7.0)) * step(abs(vObj.z), vSize.z * 0.38);
@@ -283,5 +289,5 @@ export function createAnimeWorld(shared) {
     shared.uBounce.value.copy(shared.uHaze.value).multiplyScalar(0.3);
   }
   return { group, shade, colliders, counts: { trees: towers.length, grass: weeds.length, flowers: lights.length, rocks: crates.length }, update,
-    setQuality(low) { for (const g of grasses) g.count = low ? Math.floor(g.userData.full * 0.4) : g.userData.full; } };
+    setQuality(detail) { for (const g of grasses) g.count = Math.floor(g.userData.full * detail); } };
 }

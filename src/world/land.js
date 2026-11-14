@@ -153,6 +153,10 @@ export function createLand(shared) {
           if (dz < uGrid.z && dx > uGrid.z && dx < uGrid.z + 3.2) crosswalk = step(0.5, fract(vWorld.x * 1.6));
           c = mix(c, vec3(0.86, 0.84, 0.72), crosswalk * road);
           c += neon * 0.12 * road * smoothstep(0.5, 0.8, texture(tNoise, vWorld.xz / vec2(1.6, 11.0)).g);
+          // Broken neon streaks stay in fixed puddles, so looking round never slides the road paint.
+          float puddle = smoothstep(0.64, 0.82, patches);
+          float streak = smoothstep(0.48, 0.72, texture(tNoise, vWorld.xz / vec2(0.7, 9.0)).r);
+          c += neon * road * puddle * streak * 0.16;
           c *= mix(0.68, 1.0, lit);
           // the road's edge takes a soft wash of neon; a hard line would show every tooth of the way's mask
           c = mix(c, neon, smoothstep(0.12, 0.42, m.r) * (1.0 - smoothstep(0.42, 0.78, m.r)) * 0.3);

@@ -1,5 +1,7 @@
 # Eclipse SRC — VitaVehicle model
 
+Retained legacy assets. The active street uses the reviewed Blender set in [`../street/SOURCE.md`](../street/SOURCE.md).
+
 The car body is **Eclipse SRC by shotman_16**, distributed in **Jreo's VitaVehicle** project, reached through
 the user's [itch.io physics assets](https://itch.io/game-assets/free/tag-physics) link.
 The [author's VitaVehicle page](https://jreo.itch.io/rcp4) lists assets under

@@ -24,4 +24,4 @@ createServer((req, res) => {
   }
   res.writeHead(200, { 'Content-Type': types[extname(file).toLowerCase()] ?? 'application/octet-stream', 'Cache-Control': 'no-store' });
   createReadStream(file).pipe(res);
-}).listen(port, '127.0.0.1', () => console.log(`painted-wanderer on http://127.0.0.1:${port}/`));
+}).listen(port, '0.0.0.0', () => console.log(`painted-wanderer on http://0.0.0.0:${port}/`));

@@ -7,6 +7,7 @@ export default {
   root: here,
   base: './',
   publicDir: 'public',
+  server: { host: '0.0.0.0', port: 5406, strictPort: true, allowedHosts: true },
   resolve: { alias: [{ find: /^patch-block$/, replacement: `${here}lib/patch-block.js` }] },
   build: {
     target: 'es2022',

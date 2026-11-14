@@ -17,6 +17,10 @@ npm run dev
 
 Open [localhost:5406](http://127.0.0.1:5406). Click the world to look, then click again or press J to strike. Escape opens the pause menu, including story/free exploration, world travel and scenery quality. A first click only captures the mouse. The game is silent.
 
+On phones and tablets, choose **Full screen** or **Normal screen** before the world loads. Fullscreen asks the browser to hide its chrome and lock landscape where supported; if the browser declines, choose Normal screen instead. Rotate the phone sideways to play with the touch stick and action buttons. The pause menu lets you switch screen modes later; ordinary gameplay taps never request fullscreen.
+
+Mobile starts with **Attack** and **Jump**. **Dash** appears when earned, and **Powers** opens a compact menu of unlocked abilities with charge and cooldown feedback. The left stick moves (push to its edge to sprint); dragging the world looks around. Vehicle actions appear only in reach. Driving hides combat buttons and changes Jump to **Brake**, with **Exit vehicle** beside it.
+
 | Action | Keyboard / mouse | Gamepad |
 |---|---|---|
 | Move | WASD / arrows | Left stick |
@@ -69,11 +73,33 @@ Shrines heal and set the respawn point. Story progress remains compatible with `
 
 ## Rendering and assets
 
+The reviewed Blender street set is now active: Kestrel cars, Parcel vans, Razor
+motorcycles, courier scooters and a seated helmeted rider. The resident, mechanic
+and hooded courier use skinned models with six in-place animation clips and the
+existing civilian/thief AI. Terminals, supply crates, portable cores, uplink beacons
+and barricades form service areas beside checkpoints. Their colliders stay off
+roads and combat spaces. Authored vertex colours are rendered through the cel
+painter; no physical lighting or tone mapping is added. Preparation and provenance
+are documented in `public/street/SOURCE.md`.
+
+Graphics default to **Auto** in both worlds. Auto starts conservatively using
+available device hints, then adjusts resolution, anti-aliasing and scenery after
+sustained frame performance. It ignores loading, pauses and hidden tabs, lowers
+detail sooner than it raises it, and keeps the 1.5 pixel-ratio ceiling. The pause
+menu offers live **High**, **Balanced** and **Low** overrides without restarting a
+run. `?quality=high`, `?quality=medium` and `?quality=low` select fixed detail;
+`?capture` keeps fixed pixels and disables adaptation. Use a fixed quality query
+when comparing FPS, so adaptation cannot change the work being measured.
+
+The skyline has dark corner piers and lit shop bays, and fixed road puddles carry
+broken neon streaks. Checkpoint rings follow `heightAt` around the actual healing
+area; their thin cyan marks and narrow beacons leave the street readable.
+
 The trail is now a night city in solid cel-shaded geometry: instanced towers with lit windows, neon signs, street lamps, lane dashes, crates, smog banks and shrine gates, in six neon districts. Chapter palettes live in `src/game/chapters.js`, scenery in `src/world/anime.js`, and HUD/layout in `src/game/hud.js` and `src/ui.css`. Everything sits on the existing `heightAt` terrain; no new packages are required.
 
 The visible traveler is now **Seed-san by VirtualCast, Inc.**, a detailed textured anime model from the VRM Consortium samples. Rivals reuse it with a contrasting outfit. Its humanoid joints follow the existing hidden MakeHuman animation rig with rest-pose corrections, preserving locomotion and foot IK. Boots, scarf and katana are original geometry. No VRM runtime dependency was added; the model loads through the existing GLTFLoader.
 
-The street is 2.2× longer, with shrines 2.3× larger and roads wide enough to drive. A car and a bike wait past every shrine (`G`), and each district has moving traffic that yields to people. Vehicles exchange momentum in crashes and can overturn; step out and press `G` beside a stopped wreck to right it. Steering, tyre grip, handbrake slides, terrain support and airborne motion use an arcade handling model. Ramming throws enemies, but armed crews brace against it: a punk survives one full-speed hit. Citizens walk the pavement; hurting one costs health, killing one turns the street on you, and a hooded runner may be a thief who costs nothing. Citizens and runners now use original OpenGameArt meshes by pistachio (CC0) and Clint Bellanger (CC BY 3.0), with clothing variations and six authored animation clips. Cars use the Eclipse SRC body by shotman_16 from Jreo’s VitaVehicle (CC BY 4.0), converted to the existing handling system. Source credits and reproduction steps are in `public/people/SOURCE.md` and `public/vehicles/SOURCE.md`. The enemies are now Quaternius CC0 people and a mech (`public/enemies/`, see its `SOURCE.md`): street punks, corp enforcers, hazmat gunners, razor ronin and a siege mech. Earlier builds used a textured animated Fox (PixelMannen/tomkranis/Asobo Studio/scurest, via Khronos) and Demon/BlueDemon from Quaternius Ultimate Monsters. They use their own locomotion, punch, hit-reaction and death clips where supplied. The original dog/wolf files remain for compatibility, but are no longer the active creature models. Snowbound retains the original world geometry but uses flat marks and clean character surfaces, without impasto or canvas grain. The original painter remains available in `src/oilpaint/`; its implementation notes follow below.
+The street is 2.2× longer, with shrines 2.3× larger and roads wide enough to drive. A car and a bike wait past every shrine (`G`), and each district has moving traffic that yields to people. Vehicles exchange momentum in crashes and can overturn; step out and press `G` beside a stopped wreck to right it. Steering, tyre grip, handbrake slides, terrain support and airborne motion use an arcade handling model. Ramming throws enemies, but armed crews brace against it: a punk survives one full-speed hit. Citizens walk the pavement; hurting one costs health, killing one turns the street on you, and a hooded runner may be a thief who costs nothing. Earlier citizens and runners used original OpenGameArt meshes by pistachio (CC0) and Clint Bellanger (CC BY 3.0), with clothing variations and six authored animation clips. Earlier cars used the Eclipse SRC body by shotman_16 from Jreo’s VitaVehicle (CC BY 4.0), converted to the existing handling system. Source credits and reproduction steps are in `public/people/SOURCE.md` and `public/vehicles/SOURCE.md`. The enemies are now Quaternius CC0 people and a mech (`public/enemies/`, see its `SOURCE.md`): street punks, corp enforcers, hazmat gunners, razor ronin and a siege mech. Earlier builds used a textured animated Fox (PixelMannen/tomkranis/Asobo Studio/scurest, via Khronos) and Demon/BlueDemon from Quaternius Ultimate Monsters. They use their own locomotion, punch, hit-reaction and death clips where supplied. The original dog/wolf files remain for compatibility, but are no longer the active creature models. Snowbound retains the original world geometry but uses flat marks and clean character surfaces, without impasto or canvas grain. The original painter remains available in `src/oilpaint/`; its implementation notes follow below.
 
 ## Build and verify
 
@@ -85,6 +111,10 @@ node src/game/levels.js
 node src/game/chapters.js
 node src/game/combat.js
 node src/game/duel.js
+node src/quality.js
+node tools/assets.mjs
+CHROME=/path/to/chrome node tools/graphics.mjs
+CHROME=/path/to/chrome node tools/mobile.mjs
 CHROME=/path/to/chrome node tools/gameplay.mjs
 CHROME=/path/to/chrome node tools/fps.mjs --seconds 8
 ```

@@ -157,13 +157,14 @@ try {
     const traffic = R.rides.filter(v => v.traffic);
     check(traffic.length === 6, 'a moving vehicle in each district');
     const v = traffic[0], x0 = v.x, z0 = v.z;
-    L.teleport(v.x + 8, v.z, v.x, v.z); input(); L.step(1 / 60, 120);
+    // Watch from outside the lane; standing eight metres ahead makes traffic correctly brake for us.
+    L.teleport(v.x + 8, v.z + 8, v.x, v.z); input(); L.step(1 / 60, 120);
     out.trafficTravel = Math.hypot(v.x - x0, v.z - z0);
     check(out.trafficTravel > 4, 'traffic moves without a driver: ' + out.trafficTravel);
     reset(v, v.home.x, v.home.z, v.home.yaw);
     const fx = Math.sin(v.yaw), fz = Math.cos(v.yaw), witness = people.find(e => e.kind === 'civ');
     witness.x = v.x + fx * 8; witness.z = v.z + fz * 8; witness.tx = witness.x; witness.tz = witness.z;
-    L.teleport(v.x + 8, v.z, v.x, v.z); input();
+    L.teleport(v.x + 8, v.z + 8, v.x, v.z); input();
     let closest = Infinity;
     const hp = witness.hp, driverHp = h.hp;
     for (let i = 0; i < 240; i++) { L.step(1 / 60, 1, false); closest = Math.min(closest, Math.hypot(v.x - witness.x, v.z - witness.z)); }

@@ -1,4 +1,4 @@
-// Keyboard, mouse and gamepad, read once a frame into one plain state.
+// Keyboard, mouse, touch and gamepad, read once a frame into one plain state.
 //   move: {x, y} (x right, y forward, length 0..1), walk, sprint, strafe (held),
 //   jump, attack, heavy, power, dash, flare, whirl, ride (pressed this frame; ride: G, in or out of a vehicle),
 //   look: {x, y} (radians this frame), zoom (wheel steps)
@@ -34,7 +34,7 @@ export class Input {
       // a click locks the mouse for looking, except while a panel or the replay wants the mouse
       if (e.button === 0) {
         if (document.pointerLockElement === el) this.mouse.attack = true;
-        else if (this.lockable) el.requestPointerLock?.()?.catch?.(() => {});
+        else if (this.lockable && matchMedia('(pointer: fine)').matches) el.requestPointerLock?.()?.catch?.(() => {});
       }
     });
     addEventListener('mouseup', (e) => { if (e.button === 2) this.mouse.right = false; });
@@ -68,10 +68,20 @@ export class Input {
     });
     el.addEventListener('pointerup', () => { lookId = null; });
     el.addEventListener('pointercancel', () => { lookId = null; });
-    const jump = document.getElementById('touch-jump');
-    jump?.addEventListener('pointerdown', e => { jump.setPointerCapture(e.pointerId); this.pressed.add('Space'); this.keys.add('Space'); });
-    jump?.addEventListener('pointerup', () => this.keys.delete('Space'));
-    jump?.addEventListener('pointercancel', () => this.keys.delete('Space'));
+    // The main touch actions share keyboard codes; earned powers use the HUD's existing action buttons.
+    for (const button of document.querySelectorAll('[data-touch]')) {
+      const code = button.dataset.touch, hold = button.dataset.hold === '1';
+      const release = () => { if (hold) this.keys.delete(code); };
+      button.addEventListener('pointerdown', e => {
+        if (window.__paused || button.disabled) return;
+        e.stopPropagation();
+        button.setPointerCapture(e.pointerId);
+        this.pressed.add(code);
+        if (hold) this.keys.add(code);
+      });
+      button.addEventListener('pointerup', release);
+      button.addEventListener('pointercancel', release);
+    }
   }
 
   reset() {
@@ -79,6 +89,8 @@ export class Input {
     this.mouse.x = this.mouse.y = this.mouse.wheel = 0;
     this.mouse.right = this.mouse.attack = false;
     this.touch.x = this.touch.y = 0;
+    const knob = document.querySelector('#stick i');
+    if (knob) knob.style.transform = '';
   }
 
   read(dt) {
@@ -88,11 +100,12 @@ export class Input {
     let y = (k.has('KeyW') || k.has('ArrowUp') ? 1 : 0) - (k.has('KeyS') || k.has('ArrowDown') ? 1 : 0);
     let len = Math.hypot(x, y);
     if (len > 1) { x /= len; y /= len; }
-    if (Math.hypot(this.touch.x, this.touch.y) > 0.05) { x = this.touch.x; y = this.touch.y; }
+    const touchMag = Math.hypot(this.touch.x, this.touch.y);
+    if (touchMag > 0.05) { x = this.touch.x; y = this.touch.y; }
     const s = {
       move: { x, y },
       walk: this.walkToggle !== (k.has('AltLeft') || k.has('AltRight')),
-      sprint: k.has('ShiftLeft') || k.has('ShiftRight'),
+      sprint: k.has('ShiftLeft') || k.has('ShiftRight') || touchMag > 0.82,
       strafe: this.mouse.right && document.pointerLockElement === this.el,
       jump: this.pressed.has('Space'),
       jumpHeld: k.has('Space'),

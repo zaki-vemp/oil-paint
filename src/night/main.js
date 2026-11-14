@@ -11,6 +11,7 @@ import { createShared, WIND } from '../oilpaint/common.js';
 import { createBrushSheet } from '../oilpaint/brush.js';
 import { createShade } from '../oilpaint/shade.js';
 import { createFrame } from '../oilpaint/finish.js';
+import { createGraphics } from '../quality.js';
 import { noise } from '../world/noise.js';
 import { createFigure } from '../figure/figure.js';
 import { Animator } from '../figure/animator.js';
@@ -77,11 +78,13 @@ const camera = new THREE.PerspectiveCamera(46, innerWidth / innerHeight, 0.3, 16
 // Listened for from the start, not once loaded: the page may go fullscreen while the world is still being made.
 // The frame's target joins in once it exists.
 let fitFrame = () => {};
+let graphics = null;
 function fitView() {
   renderer.setSize(innerWidth, innerHeight);
   camera.aspect = innerWidth / innerHeight;
   camera.updateProjectionMatrix();
-  fitFrame();
+  if (graphics) graphics.resize();
+  else fitFrame();
 }
 addEventListener('resize', fitView);
 lap('start');
@@ -165,19 +168,13 @@ frame.uniforms.uInkColor.value.setRGB(0.008, 0.014, 0.035);
 frame.uniforms.uInkFar.value = 170;
 frame.uniforms.uVignette.value = 0.62;
 if (q.has('ink')) frame.uniforms.uInk.value = +q.get('ink'); // ?ink=0 to compare
-// ?quality wins; otherwise Patch's performance mode, where there is one. Low draws at the screen's own pixels,
-// without the veil behind the aurora and with less snow in the air.
-function applyQuality() {
-  const low = (q.get('quality') ?? window.patch?.quality ?? 'high') === 'low';
-  renderer.setPixelRatio(capture ? 1 : Math.min(devicePixelRatio, low ? 1 : 1.5));
-  renderer.setSize(innerWidth, innerHeight);
+graphics = createGraphics({ renderer, capture, apply(profile) {
+  frame.setSamples(profile.samples);
   frame.resize();
   const veil = sky.group.getObjectByName('veil');
-  if (veil) veil.visible = !low;
-  drift.geometry.instanceCount = low ? 900 : 2400;
-}
-applyQuality();
-window.patch?.addEventListener?.('qualitychange', applyQuality);
+  if (veil) veil.visible = profile.level !== 'low';
+  drift.geometry.instanceCount = profile.drift;
+} });
 
 const wind = { x: WIND.x, z: WIND.y };
 let time = 0;
@@ -321,7 +318,7 @@ function renderScene() {
 }
 
 window.lab = {
-  THREE, player, follow, camera, input, animator, figure, shared, frame, renderer, timings, counts: { ...snow.counts, ...pines.counts, ...cabin.counts }, cabin, heightAt, crestX, tracks, sky,
+  THREE, player, follow, camera, input, animator, figure, shared, frame, renderer, graphics, timings, counts: { ...snow.counts, ...pines.counts, ...cabin.counts }, cabin, heightAt, crestX, tracks, sky,
   step(dt = 1 / 60, n = 1, draw = true) { for (let i = 0; i < n; i++) tick(dt, draw && i === n - 1); },
   setInput(fn) { input.override = fn; },
   /** Puts him at (x, z) on the ground, facing (fx, fz), with the eye behind him. */
@@ -396,6 +393,7 @@ function run() {
   last = performance.now();
   renderer.setAnimationLoop(want ? () => {
     const now = performance.now();
+    graphics.sample((now - last) / 1000, !window.__paused);
     if (!window.__paused) {
       accumulator += Math.min((now - last) / 1000, 0.1);
       while (accumulator >= 1 / 60) { tick(1 / 60, false); accumulator -= 1 / 60; }

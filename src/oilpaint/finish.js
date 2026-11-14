@@ -133,6 +133,11 @@ export function createFrame(renderer, shared, { samples = 4 } = {}) {
   return {
     target,
     uniforms,
+    setSamples(samples) {
+      if (target.samples === samples) return;
+      target.dispose();
+      target.samples = samples;
+    },
     resize() {
       renderer.getDrawingBufferSize(size);
       target.setSize(size.x, size.y);

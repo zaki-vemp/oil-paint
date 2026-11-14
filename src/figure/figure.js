@@ -20,6 +20,9 @@ uniform float uGrain;
 uniform sampler2D tAlbedo; uniform float uAlbedo; uniform vec3 uTint;
 uniform float uCutoff;
 in vec3 vWorld; in vec3 vN; in vec3 vBind; in vec2 vUv;
+#ifdef USE_COLOR
+in vec3 vColor;
+#endif
 layout(location = 0) out vec4 outC;
 void main() {
   vec3 Nn = normalize(vN);
@@ -36,6 +39,10 @@ void main() {
     vec3 base = texel.rgb * uTint;
     c = paint3(base * 1.12, base * 0.85, base * vec3(0.55, 0.62, 0.68), lit, 0.5);
   }
+  #ifdef USE_COLOR
+  vec3 base = vColor * uTint;
+  c = paint3(base * 1.12, base * 0.85, base * vec3(0.55, 0.62, 0.68), lit, 0.5);
+  #endif
   // light thrown up by the ground (warm, off the leaves), cool light from the sky into the shade
   c += uBounce * max(-Nn.y, 0.0) * (1.0 - lit);
   c = mix(c, c * vec3(0.86, 0.92, 1.18), (1.0 - lit) * max(Nn.y, 0.0) * 0.6);
@@ -53,17 +60,21 @@ void main() {
 `;
 
 // A palette is [light, half-tone, shade] and, where a lamp is carried, the thing's own colour for its light to fall on.
-export function paint(shared, [L, M, S, A = L], { skinned = false, lower = null, split = -10, grain = 2.2, map = null, tint = [1, 1, 1] } = {}) {
+export function paint(shared, [L, M, S, A = L], { skinned = false, vertexColors = false, lower = null, split = -10, grain = 2.2, map = null, tint = [1, 1, 1] } = {}) {
   const col = (c) => ({ value: new THREE.Color(...c) });
   const [L2, M2, S2, A2 = L2] = lower ?? [L, M, S, A];
   return new THREE.ShaderMaterial({
     glslVersion: THREE.GLSL3,
     side: THREE.DoubleSide,
+    vertexColors,
     uniforms: { ...shared, uL: col(L), uM: col(M), uS: col(S), uL2: col(L2), uM2: col(M2), uS2: col(S2), uOwn: col(A), uOwn2: col(A2), uSplit: { value: split }, uGrain: { value: grain }, tAlbedo: { value: map ?? shared.tNoise.value }, uAlbedo: { value: map ? 1 : 0 }, uTint: col(tint), uCutoff: { value: 0 } },
     vertexShader: skinned ? /* glsl */ `
       #include <common>
       #include <skinning_pars_vertex>
       out vec3 vWorld; out vec3 vN; out vec3 vBind; out vec2 vUv;
+      #ifdef USE_COLOR
+      out vec3 vColor;
+      #endif
       void main() {
         #include <beginnormal_vertex>
         #include <skinbase_vertex>
@@ -75,15 +86,29 @@ export function paint(shared, [L, M, S, A = L], { skinned = false, lower = null,
         vN = normalize(mat3(modelMatrix) * objectNormal);
         vBind = position;
         vUv = uv;
+        #ifdef USE_COLOR
+        vColor = color.rgb;
+        #endif
         gl_Position = projectionMatrix * viewMatrix * w;
       }` : /* glsl */ `
       out vec3 vWorld; out vec3 vN; out vec3 vBind; out vec2 vUv;
+      #ifdef USE_COLOR
+      out vec3 vColor;
+      #endif
       void main() {
-        vec4 w = modelMatrix * vec4(position, 1.0);
+        vec3 p = position, nrm = normal;
+        #ifdef USE_INSTANCING
+        p = (instanceMatrix * vec4(p, 1.0)).xyz;
+        nrm = mat3(instanceMatrix) * nrm;
+        #endif
+        vec4 w = modelMatrix * vec4(p, 1.0);
         vWorld = w.xyz;
-        vN = normalize(mat3(modelMatrix) * normal);
+        vN = normalize(mat3(modelMatrix) * nrm);
         vBind = vec3(uv * 0.6, 0.0);
         vUv = uv;
+        #ifdef USE_COLOR
+        vColor = color.rgb;
+        #endif
         gl_Position = projectionMatrix * viewMatrix * w;
       }`,
     fragmentShader: PAINT_FRAG,

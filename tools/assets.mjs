@@ -4,7 +4,8 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
-for (const file of ['people/citizen-female.glb', 'people/citizen-male.glb', 'people/runner.glb', 'vehicles/eclipse.glb']) {
+const street = ['terminal', 'supply-crate', 'power-core', 'beacon', 'barricade', 'coupe', 'van', 'motorbike', 'scooter', 'rider', 'resident', 'mechanic', 'courier'];
+for (const file of ['people/citizen-female.glb', 'people/citizen-male.glb', 'people/runner.glb', 'vehicles/eclipse.glb', ...street.map(name => `street/${name}.glb`)]) {
   const data = readFileSync(resolve('public', file));
   assert.equal(data.readUInt32LE(0), 0x46546c67, file + ' GLB');
   assert.equal(data.readUInt32LE(4), 2, file + ' glTF 2');
@@ -29,11 +30,20 @@ for (const file of ['people/citizen-female.glb', 'people/citizen-male.glb', 'peo
       assert(Number.isFinite(bin.readFloatLE(offset + i * stride + j * 4)), file + ' finite vertex/skin/animation data');
     }
   }
-  if (file.startsWith('people/')) {
-    assert(g.skins.some(s => s.joints.length >= 20), file + ' has a humanoid skeleton');
+  const authoredPerson = /^street\/(resident|mechanic|courier)\.glb$/.test(file);
+  if (file.startsWith('people/') || authoredPerson) {
+    assert(g.skins.some(s => s.joints.length >= (authoredPerson ? 17 : 20)), file + ' has a humanoid skeleton');
     const names = new Set(g.animations.map(a => a.name));
     for (const name of ['Idle', 'Walk', 'Run', 'Punch', 'HitReact', 'Death']) assert(names.has(name), file + ' clip ' + name);
     assert(g.meshes.some(m => m.primitives.some(p => p.attributes.JOINTS_0 !== undefined)), file + ' has skinned geometry');
-  } else assert.equal(g.meshes.length, 6, 'car surfaces are merged by material role');
+  } else if (file.startsWith('vehicles/')) assert.equal(g.meshes.length, 6, 'car surfaces are merged by material role');
+  if (file.startsWith('street/')) {
+    for (const mesh of g.meshes) for (const p of mesh.primitives) assert(p.attributes.COLOR_0 !== undefined, file + ' retains authored vertex colours');
+    assert(g.meshes.length <= 6, file + ' is batched for the game');
+    if (/\/(coupe|van|motorbike|scooter)\.glb$/.test(file)) {
+      const wheels = g.nodes.filter(n => n.name?.startsWith('Wheel_'));
+      assert.equal(wheels.length, /\/(coupe|van)\./.test(file) ? 4 : 2, file + ' keeps its wheel pivots');
+    }
+  }
   console.log(`${file}: ${triangles} triangles, ${Math.round(data.length / 1024)} KB`);
 }

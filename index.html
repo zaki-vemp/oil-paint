@@ -4,6 +4,9 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <meta name="theme-color" content="#05070a" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <meta name="description" content="Komorebi: an anime-inspired sword run through six neon districts. Explore, battle and find your way to the sanctuary." />
     <title>Komorebi — A spirit trail</title>
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'%3E%3Crect width='40' height='40' rx='12' fill='%23284c41'/%3E%3Cpath d='M10 27C7 12 20 7 31 9c1 14-7 23-19 18L26 14' fill='%23c3dc9c' stroke='%23284c41' stroke-width='2'/%3E%3C/svg%3E" />
@@ -15,6 +18,8 @@
       <symbol id="i-sword" viewBox="0 0 24 24"><path d="m7 14 10-11 4 0 0 4-11 10m-6-5 8 8m-7-3-3 4 1 1 4-3M13 10l3 3"/></symbol>
       <symbol id="i-spark" viewBox="0 0 24 24"><path d="m13 2-8 12h6l-1 8 9-13h-7Z"/></symbol>
       <symbol id="i-dash" viewBox="0 0 24 24"><path d="m13 5 7 7-7 7M4 12h16M3 6h5M3 18h5"/></symbol>
+      <symbol id="i-jump" viewBox="0 0 24 24"><path d="m6 10 6-6 6 6M12 4v13M4 20h16"/></symbol>
+      <symbol id="i-brake" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><path d="M9 8v8m6-8v8"/></symbol>
       <symbol id="i-heavy" viewBox="0 0 24 24"><path d="m7 15 9-12 5 4-11 11M4 13l8 7m-6-3-4 5M3 6l3 2m4-7v4"/></symbol>
       <symbol id="i-flare" viewBox="0 0 24 24"><path d="M12 2v3m0 14v3M2 12h3m14 0h3M5 5l2 2m10 10 2 2M5 19l2-2M17 7l2-2m-7 1 2 4 4 2-4 2-2 4-2-4-4-2 4-2Z"/></symbol>
       <symbol id="i-whirl" viewBox="0 0 24 24"><path d="M12 4a8 8 0 1 1-7.4 5M12 8a4 4 0 1 1-3.6 2.3M4.6 9 3 5m1.6 4 4-1"/></symbol>
@@ -24,14 +29,37 @@
     <div id="loading"><div class="loading-mark"><svg viewBox="0 0 24 24"><use href="#i-leaf"/></svg></div><h1>Komorebi</h1><p>Syncing trail data</p><span class="loading-track"><i></i></span></div>
     <header id="game-header"><div class="wordmark"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-leaf"/></svg><div>Komorebi<small>// spirit trail</small></div></div><button id="pause-button" aria-label="Pause and open game menu"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-menu"/></svg><span>Menu</span><kbd>Esc</kbd></button></header>
     <div id="hint"><span><kbd>W A S D</kbd> Move</span><span><kbd>Space</kbd> Jump</span><span><kbd>Shift</kbd> Sprint</span><span><kbd>G</kbd> Drive</span><span>Click to look & fight</span></div>
-    <div id="touch-controls"><div id="stick" role="application" aria-label="Drag to move"><i></i></div><button id="touch-jump" aria-label="Jump">Jump</button></div>
+    <div id="touch-controls">
+      <div id="stick" role="application" aria-label="Drag to move. Push to the edge to sprint"><i></i></div>
+      <div class="touch-pad">
+        <button type="button" data-touch="KeyJ" class="touch-attack" aria-label="Attack"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-sword"/></svg><span>Attack</span></button>
+        <button type="button" data-touch="Space" data-hold="1" id="touch-jump" aria-label="Jump"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-jump"/></svg><span>Jump</span></button>
+        <button type="button" data-touch="KeyE" id="touch-dash" aria-label="Dash" hidden><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-dash"/></svg><span>Dash</span><small></small></button>
+        <button type="button" id="touch-powers" aria-expanded="false" aria-controls="power-options" hidden><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-spark"/></svg><span>Powers</span></button>
+      </div>
+    </div>
+    <div id="turn" role="status">Turn your phone sideways</div>
+    <dialog id="screen-choice" aria-labelledby="screen-title" aria-describedby="screen-description">
+      <span class="screen-kicker">Komorebi // mobile</span>
+      <h2 id="screen-title">Choose your view</h2>
+      <p id="screen-description">Go full screen or play in your browser. Turn your phone sideways for the best view.</p>
+      <div class="screen-actions">
+        <button id="start-fullscreen" type="button" class="primary">Full screen <span aria-hidden="true">↗</span></button>
+        <button id="start-normal" type="button" class="secondary">Normal screen <span aria-hidden="true">→</span></button>
+      </div>
+      <p id="screen-status" class="screen-status" role="status" hidden></p>
+    </dialog>
     <dialog id="menu" aria-labelledby="menu-title">
       <svg class="menu-leaf" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-leaf"/></svg><h2 id="menu-title">Link paused</h2><p>&gt; the trail holds until you are back</p>
       <button id="resume" class="primary">Resume run <span>→</span></button>
+      <button id="fill" type="button" class="secondary">Full screen</button>
+      <p id="fill-status" class="screen-status" role="status" hidden></p>
       <div class="menu-options"><section><h3>Mode</h3><div id="mode"><button data-mode="level">Story sectors</button><button data-mode="roam">Free roam</button></div></section>
       <section><h3>Travel to</h3><div id="scenes"><button data-scene="autumn">The spirit trail</button><button data-scene="aurora">Snowbound</button></div></section>
-      <section class="quality-row"><label for="quality">Detail level</label><select id="quality"><option value="high">Full scenery</option><option value="low">Light scenery</option></select></section></div>
-      <details><summary>Controls & combat notes</summary><div class="controls-grid"><span>Move / sprint</span><b>WASD / Shift</b><span>Jump / short hop</span><b>Hold / tap Space</b><span>Strike / heavy strike</span><b>J or click / F</b><span>Spark / dash / flare / whirl</span><b>Q / E / R / C</b><span>Plunge</span><b>Strike in the air</b><span>Vehicle in / out · handbrake</span><b>G · Space · G beside a wreck to right it</b><span>Look / zoom</span><b>Mouse / wheel</b><span>Controller</span><b>Sticks · A jump · X strike</b></div><p>Red rings warn of a strike. Move out, jump, or dash — dash just before it lands for a perfect dodge, or land your own blow in that moment to parry. A gunner's red line locks before he fires: sidestep, dash through the shot, or cut it back at him. Heavy blows and the whirl throw light enemies into the air; a strike in the air plunges onto everyone below. A car and a bike wait past every shrine. Traffic yields to people. Crashes transfer momentum and can overturn vehicles; G beside a stopped wreck rights it. Ramming throws enemies, but a punk survives one full-speed hit. The street has people on it too. Hurt a citizen and it costs you health; kill one and every citizen near turns on you. Hooded runners may be thieves (loot at the hip) and a thief costs nothing. Clear each sector to open its gate and learn an ability. Shrines heal and save your progress.</p></details>
+      <section class="quality-row"><label for="quality">Graphics</label><select id="quality" aria-describedby="quality-status"><option value="auto">Auto (recommended)</option><option value="high">High</option><option value="medium">Balanced</option><option value="low">Low</option></select><output id="quality-status" class="quality-status" aria-live="polite">Auto · Adjusting detail</output><p class="quality-note">Auto adjusts detail to keep play smooth.</p></section></div>
+      <details><summary>Controls & combat notes</summary>
+        <p class="touch-help">Use the left stick to move; push to its edge to sprint. Drag the world to look. Tap Attack to strike and hold Jump for a higher leap. Dash and Powers appear as you earn them; open Powers, then tap an ability to use it. Vehicle buttons appear only nearby. While driving, use the stick to steer, hold Brake to slide, and tap Exit vehicle to get out.</p>
+        <div class="controls-grid"><span>Move / sprint</span><b>WASD / Shift</b><span>Jump / short hop</span><b>Hold / tap Space</b><span>Strike / heavy strike</span><b>J or click / F</b><span>Spark / dash / flare / whirl</span><b>Q / E / R / C</b><span>Plunge</span><b>Strike in the air</b><span>Vehicle in / out · handbrake</span><b>G · Space · G beside a wreck to right it</b><span>Look / zoom</span><b>Mouse / wheel</b><span>Controller</span><b>Sticks · A jump · X strike</b></div><p>Red rings warn of a strike. Move out, jump, or dash — dash just before it lands for a perfect dodge, or land your own blow in that moment to parry. A gunner's red line locks before he fires: sidestep, dash through the shot, or cut it back at him. Heavy blows and the whirl throw light enemies into the air; a strike in the air plunges onto everyone below. A car and a bike wait past every shrine. Traffic yields to people. Crashes transfer momentum and can overturn vehicles; use the vehicle button beside a stopped wreck to right it. Ramming throws enemies, but a punk survives one full-speed hit. The street has people on it too. Hurt a citizen and it costs you health; kill one and every citizen near turns on you. Hooded runners may be thieves (loot at the hip) and a thief costs nothing. Clear each sector to open its gate and learn an ability. Shrines heal and save your progress.</p></details>
       <p class="menu-footnote">Six sectors. One way forward.</p>
       <p class="asset-credits">Seed-san model by VirtualCast, Inc. · Enemy models by Quaternius (CC0) · <a href="/CREDITS.md" target="_blank" rel="noreferrer">Art credits</a></p>
     </dialog>

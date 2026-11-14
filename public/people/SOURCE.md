@@ -1,5 +1,7 @@
 # Street people — original OpenGameArt meshes
 
+Retained legacy assets. The active street uses the reviewed Blender set in [`../street/SOURCE.md`](../street/SOURCE.md).
+
 Retrieved 2026-11-14 directly from the authors' OpenGameArt uploads; these replace the mirrored Quaternius
 pedestrians in the active city. The old files in `enemies/` are retained but are not loaded.
 
