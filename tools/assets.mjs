@@ -1,0 +1,39 @@
+// Validate imported GLBs before shipping: finite geometry/animation data, embedded buffers, real rigs and clips.
+// This catches failed legacy Blender conversions (including a hidden character exporting as headgear alone).
+import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+
+for (const file of ['people/citizen-female.glb', 'people/citizen-male.glb', 'people/runner.glb', 'vehicles/eclipse.glb']) {
+  const data = readFileSync(resolve('public', file));
+  assert.equal(data.readUInt32LE(0), 0x46546c67, file + ' GLB');
+  assert.equal(data.readUInt32LE(4), 2, file + ' glTF 2');
+  assert.equal(data.readUInt32LE(8), data.length, file + ' length');
+  const size = data.readUInt32LE(12), g = JSON.parse(data.subarray(20, 20 + size));
+  const bin = data.subarray(28 + size);
+  assert(g.asset.copyright, file + ' embeds credit');
+  assert(g.buffers.every(b => !b.uri), file + ' has embedded buffers');
+  let triangles = 0;
+  for (const mesh of g.meshes) for (const p of mesh.primitives) {
+    const a = g.accessors[p.attributes.POSITION];
+    assert.equal(a.type, 'VEC3');
+    assert(a.min.every(Number.isFinite) && a.max.every(Number.isFinite), file + ' bounds');
+    triangles += g.accessors[p.indices].count / 3;
+  }
+  assert(triangles > 500, file + ' contains a complete model');
+  for (const a of g.accessors) {
+    if (a.componentType !== 5126) continue;
+    const v = g.bufferViews[a.bufferView], components = { SCALAR: 1, VEC2: 2, VEC3: 3, VEC4: 4, MAT4: 16 }[a.type];
+    const offset = (v.byteOffset ?? 0) + (a.byteOffset ?? 0), stride = v.byteStride ?? components * 4;
+    for (let i = 0; i < a.count; i++) for (let j = 0; j < components; j++) {
+      assert(Number.isFinite(bin.readFloatLE(offset + i * stride + j * 4)), file + ' finite vertex/skin/animation data');
+    }
+  }
+  if (file.startsWith('people/')) {
+    assert(g.skins.some(s => s.joints.length >= 20), file + ' has a humanoid skeleton');
+    const names = new Set(g.animations.map(a => a.name));
+    for (const name of ['Idle', 'Walk', 'Run', 'Punch', 'HitReact', 'Death']) assert(names.has(name), file + ' clip ' + name);
+    assert(g.meshes.some(m => m.primitives.some(p => p.attributes.JOINTS_0 !== undefined)), file + ' has skinned geometry');
+  } else assert.equal(g.meshes.length, 6, 'car surfaces are merged by material role');
+  console.log(`${file}: ${triangles} triangles, ${Math.round(data.length / 1024)} KB`);
+}

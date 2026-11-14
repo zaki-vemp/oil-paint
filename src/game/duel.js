@@ -1,6 +1,7 @@
 // Six mirror duels teach the same readable loop: see the committed attack, evade it, punish recovery.
 // This state machine is pure game logic. Rendering, collisions and damage stay with hunt.js, so a rival
 // uses the same terrain, capsule sweeps and save rules as the rest of the game.
+import { SCALE } from './chapters.js';
 export const DUELS = [
   { name: 'Ren, the Patient Blade', x: -7.5, z: 58, hp: 120, lesson: 'Jump or backstep the sweep. Strike when the blade falls.', moves: ['sweep'] },
   { name: 'Ren, the Piercing Wind', x: 3.8, z: 35, hp: 150, lesson: 'Sidestep the thrust. Use your spark during the opening.', moves: ['thrust', 'sweep'] },
@@ -8,7 +9,7 @@ export const DUELS = [
   { name: 'Ren, the Iron Will', x: 0, z: -25, hp: 240, lesson: 'Two heavy strikes break the guard. Punish the overhead slam.', moves: ['slam', 'double'] },
   { name: 'Ren, the Ember Spiral', x: -0.9, z: -57, hp: 270, lesson: 'Dash through the sweep. Punish recovery with heavy strikes to earn Whirl.', moves: ['sweep', 'double', 'slam'] },
   { name: 'Ren, your Mirror', x: 10, z: -88, hp: 320, lesson: 'Combine your lessons. Whirl cracks the guard; Flare forces a finishing opening.', moves: ['thrust', 'double', 'slam'] },
-];
+].map((d) => ({ ...d, x: d.x * SCALE, z: d.z * SCALE }));
 export const MOVES = {
   sweep: { windup: 1.0, active: 0.2, recover: 1.35, reach: 2.8, arc: 1.5, damage: 12, pose: 'cut', cue: 'Sweep — jump or step out of the ring' },
   thrust: { windup: 0.95, active: 0.26, recover: 1.3, reach: 2.1, arc: 0.42, damage: 16, pose: 'thrust', cue: 'Thrust — sidestep the committed line' },

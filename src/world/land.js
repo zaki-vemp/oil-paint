@@ -5,12 +5,15 @@ import * as THREE from 'three';
 import { COMMON, EXTENT, LAND_RES } from '../oilpaint/common.js';
 
 import { noise, rng } from './noise.js';
+import { SCALE } from '../game/chapters.js';
 export { noise, rng };
 
 // --- the way through ---------------------------------------------------------------------------------------------
-const WAY = [[2, 96], [0, 80], [-7, 56], [3, 32], [10, 6], [3, -20], [-5, -44], [4, -68], [10, -90]];
-export const START = { x: 0, z: 78 };
-export const CLEARING = { x: 11, z: -96, r: 21 };
+const WAY = [[2, 96], [0, 80], [-7, 56], [3, 32], [10, 6], [3, -20], [-5, -44], [4, -68], [10, -90]].map(([x, z]) => [x * SCALE, z * SCALE]);
+export const START = { x: 0, z: 78 * SCALE };
+export const CLEARING = { x: 11 * SCALE, z: -96 * SCALE, r: 21 };
+/** Half the width of the road, kerb to middle: wide enough to drive. */
+export const ROAD = 3.6;
 const waySamples = [];
 {
   const at = (i) => WAY[Math.max(0, Math.min(WAY.length - 1, i))];
@@ -45,8 +48,8 @@ export const clearingAt = (x, z) => {
 const sstep = (a, b, x) => { const t = Math.min(1, Math.max(0, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
 function rawHeight(x, z, wd) {
   let h = 2.8 * noise(x / 74 + 3.1, z / 74 - 1.7) + 1.2 * noise(x / 26, z / 26) + 0.3 * noise(x / 8.3, z / 8.3);
-  h += 5.5 * sstep(70, -110, z); // the land climbs gently toward the clearing
-  h -= 0.28 * Math.exp(-(wd * wd) / 3.2); // the way is worn a little into it
+  h += 5.5 * sstep(70 * SCALE, -110 * SCALE, z); // the land climbs gently toward the clearing
+  h -= 0.28 * Math.exp(-(wd * wd) / (2 * ROAD * ROAD)); // the road lies a little below the pavement
   return h;
 }
 
@@ -63,12 +66,12 @@ export async function prepareLand(pause) {
   if (pause && j % 24 === 0) await pause(j / N);
   for (let i = 0; i < N; i++) {
     const x = -EXTENT + (i / (N - 1)) * 2 * EXTENT, z = -EXTENT + (j / (N - 1)) * 2 * EXTENT;
-    const near = Math.abs(x) < 60 && z > -130 && z < 110;
+    const near = Math.abs(x) < 48 && z > -100 * SCALE && z < 102 * SCALE;
     const wd = near ? wayDist(x, z) : 99;
     heights[i + j * N] = rawHeight(x, z, wd);
     const k = (i + j * N) * 4;
     const ragged = noise(x * 0.9, z * 0.9) * 0.35 + noise(x * 0.23, z * 0.23) * 0.5;
-    land[k] = Math.round(255 * (1 - sstep(0.75, 1.9, wd + ragged)));
+    land[k] = Math.round(255 * (1 - sstep(ROAD - 0.5, ROAD + 0.7, wd + ragged * 0.45)));
     land[k + 1] = Math.round(255 * clearingAt(x, z));
     land[k + 2] = Math.round(255 * Math.min(1, Math.max(0, 0.5 + 0.6 * noise(x / 17 + 9, z / 17) + 0.3 * noise(x / 5, z / 5 + 4))));
     land[k + 3] = 255;
@@ -146,7 +149,7 @@ export function createLand(shared) {
   mesh.frustumCulled = false;
 
   /** Heights for the physics: `cells` squares a side over the middle `half` metres, column by column. */
-  function heightField(cells = 384, half = 192) {
+  function heightField(cells = 512, half = EXTENT) {
     const out = new Float32Array((cells + 1) * (cells + 1));
     for (let col = 0; col <= cells; col++) {
       for (let row = 0; row <= cells; row++) {

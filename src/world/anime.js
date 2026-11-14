@@ -6,15 +6,16 @@
 // sign is simply drawn in its own colour, never added as lighting.
 import * as THREE from 'three';
 import { COMMON } from '../oilpaint/common.js';
-import { heightAt, wayDist, clearingAt, rng, way } from './land.js';
-import { CHAPTERS, chapterAt } from '../game/chapters.js';
+import { heightAt, wayDist, clearingAt, rng, way, ROAD } from './land.js';
+import { CHAPTERS, chapterAt, SCALE } from '../game/chapters.js';
 import { LEVELS, GOAL } from '../game/levels.js';
 import { DUELS } from '../game/duel.js';
 
 // Roles: 0 tower, 1 sign, 2 weeds, 3 crate, 4 lamp head / lane stud, 5 smog, 6 pole.
 function cel(shared, role, sway = 0) {
   return new THREE.ShaderMaterial({
-    glslVersion: THREE.GLSL3, side: THREE.DoubleSide,
+    // every solid here is closed, so only its outside is drawn; the weeds are single blades and show both faces
+    glslVersion: THREE.GLSL3, side: role === 2 ? THREE.DoubleSide : THREE.FrontSide,
     uniforms: { ...shared, uRole: { value: role }, uSway: { value: sway } },
     vertexShader: /* glsl */ `
       ${COMMON}
@@ -110,14 +111,15 @@ export function createAnimeWorld(shared) {
   const SINK = 3; // metres a tower goes into the ground, so a slope never shows under it
   const towers = [], signs = [];
   // The street stays open to the sky: low blocks front it and the towers rise behind them.
-  for (let i = 0; i < 2600; i++) {
-    const x = (rand() - 0.5) * 230, z = (rand() - 0.5) * 320, wd = wayDist(x, z);
+  // Only the blocks a street or two back are real; past that the sky's painted skyline takes over in the smog.
+  for (let i = 0; i < 9000; i++) {
+    const x = (rand() - 0.5) * 290, z = (rand() - 0.5) * 500, wd = wayDist(x, z);
     const w = 3.5 + rand() * 3.5, d = 3.5 + rand() * 3.5, reach = Math.max(w, d) * 0.75;
-    if (wd < 7 + reach || clearingAt(x, z) > 0.4) continue;
+    if (wd < ROAD + 6.5 + reach || wd > 120 || clearingAt(x, z) > 0.4) continue;
     if (keep.some((p) => Math.hypot(p.x - x, p.z - z) < 7.5 + reach)) continue;
     if (towers.some((p) => Math.hypot(p.x - x, p.z - z) < 8.5)) continue;
     const y = heightAt(x, z), h = 6 + rand() * 8 + Math.min(24, Math.max(0, wd - 10) * 0.8) * rand(), ry = (rand() - 0.5) * 0.6;
-    towers.push(record(x, y + (h - SINK) / 2, z, w, h + SINK, d, ry));
+    towers.push({ ...record(x, y + (h - SINK) / 2, z, w, h + SINK, d, ry), wd });
     colliders.push({ x, y: y + (h - SINK) / 2, z, box: [w / 2, (h + SINK) / 2, d / 2], ry });
     for (let j = rand() < 0.45 ? 2 : 1; j > 0; j--) {
       // a wall of the four, and a slab standing just off it
@@ -128,22 +130,24 @@ export function createAnimeWorld(shared) {
     }
   }
   const boxGeo = new THREE.BoxGeometry(1, 1, 1);
+  // Drawn nearest the street first: seen from it, the towers behind are mostly hidden and their pixels are never shaded.
+  towers.sort((a, b) => a.wd - b.wd);
   instances(boxGeo, cel(shared, 0), towers);
   instances(boxGeo, cel(shared, 1), signs);
   instances(boxGeo, new THREE.MeshBasicMaterial(), towers, shade);
 
   // Lamps lean over the way from alternate sides; lit dashes mark both of its edges.
   const poles = [], lights = [];
-  for (let i = 2; i < way.length - 1; i += 3) {
+  for (let i = 2; i < way.length - 1; i += 2) {
     const [ax, az] = way[i], [bx, bz] = way[i + 1], l = Math.hypot(bx - ax, bz - az) || 1, nx = (bz - az) / l, nz = -(bx - ax) / l;
     for (const s of [-1, 1]) {
-      const x = ax + nx * 2.5 * s, z = az + nz * 2.5 * s;
+      const x = ax + nx * (ROAD - 0.5) * s, z = az + nz * (ROAD - 0.5) * s;
       lights.push(record(x, heightAt(x, z) + 0.03, z, 0.12, 0.05, 0.6, Math.atan2(bx - ax, bz - az))); // a dash along the lane
     }
-    if (i % 12 !== 2) continue;
-    const s = i % 24 === 2 ? 1 : -1, x = ax + nx * 4 * s, z = az + nz * 4 * s, y = heightAt(x, z);
+    if (i % 8 !== 2) continue;
+    const s = i % 16 === 2 ? 1 : -1, x = ax + nx * (ROAD + 3) * s, z = az + nz * (ROAD + 3) * s, y = heightAt(x, z);
     poles.push(record(x, y + 2.1, z, 0.07, 4.2, 0.07));
-    lights.push(record(x - nx * 0.45 * s, y + 4.2, z - nz * 0.45 * s, 1.0, 0.12, 0.3, Math.atan2(-nz, nx)));
+    lights.push(record(x - nx * 0.7 * s, y + 4.2, z - nz * 0.7 * s, 1.5, 0.12, 0.3, Math.atan2(-nz, nx)));
   }
   instances(new THREE.CylinderGeometry(1, 1, 1, 6), cel(shared, 6), poles);
   instances(boxGeo, cel(shared, 4), lights);
@@ -157,15 +161,15 @@ export function createAnimeWorld(shared) {
   tuft.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
   tuft.computeVertexNormals();
   const weeds = [], crates = [];
-  for (let i = 0; i < 7000; i++) {
-    const x = (rand() - 0.5) * 100, z = -115 + rand() * 220, d = wayDist(x, z);
-    if (d < 3.2 || d > 46) continue;
+  for (let i = 0; i < 16000; i++) {
+    const x = (rand() - 0.5) * 130, z = (-115 + rand() * 220) * SCALE, d = wayDist(x, z);
+    if (d < ROAD + 1.2 || d > 46) continue;
     const s = 0.5 + rand() * 0.7;
     weeds.push(record(x, heightAt(x, z) - 0.015, z, s, s, s, rand() * 6.28));
   }
-  for (let i = 0; i < 160; i++) {
-    const x = (rand() - 0.5) * 90, z = -110 + rand() * 215;
-    if (wayDist(x, z) < 4) continue;
+  for (let i = 0; i < 380; i++) {
+    const x = (rand() - 0.5) * 120, z = (-110 + rand() * 215) * SCALE;
+    if (wayDist(x, z) < ROAD + 2.5) continue; // the road itself stays clear for wheels
     const s = 0.5 + rand() * 1.0, y = heightAt(x, z);
     crates.push(record(x, y + s * 0.4, z, s * 1.5, s, s * 1.2, rand() * 6.28));
     colliders.push({ x, y: y + s * 0.15, z, r: s * 0.8, rock: true });

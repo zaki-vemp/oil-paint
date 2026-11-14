@@ -12,6 +12,10 @@
 // A dash in the last moment of a windup is a perfect dodge: time slows, a spark comes back. A strike
 // landed in that same moment is a parry. Gunners' shots can be cut back at them. A strike in the air
 // is a plunge that shakes everyone near where he lands. Hits chain into a combo count the HUD shows.
+// The street has people on it too (level mode): citizens strolling the pavement and hooded runners. They are
+// bodies like any other, so a blade, a spark or a bumper (ride.js calls ram()) hurts them the same, and that
+// is the risk: hurting a citizen costs him health, killing one turns every citizen near on him, while a
+// runner who was a thief costs nothing. Two runners in three are thieves; the loot at the hip tells which.
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import * as SkeletonUtils from 'three/addons/utils/SkeletonUtils.js';
@@ -29,9 +33,9 @@ export const WHIRL = 1.8; // a whirl hit is worth this many plain swings
 export const PLUNGE = 1.4; // ...and so is the landing of a plunge, on everyone within reach
 const PARRY_MUL = 1.5;
 export const HIT = {
-  hp: { punk: 60, enforcer: 120, gunner: 70, blade: 150, brute: 330, rival: 120 },
-  sword: { punk: 34, enforcer: 30, gunner: 34, blade: 28, brute: 22, rival: 30 },
-  bolt: { punk: 80, enforcer: 50, gunner: 80, blade: 45, brute: 40, rival: 32 },
+  hp: { punk: 60, enforcer: 120, gunner: 70, blade: 150, brute: 330, rival: 120, civ: 50, thief: 50 },
+  sword: { punk: 34, enforcer: 30, gunner: 34, blade: 28, brute: 22, rival: 30, civ: 30, thief: 30 },
+  bolt: { punk: 80, enforcer: 50, gunner: 80, blade: 45, brute: 40, rival: 32, civ: 60, thief: 60 },
 };
 const MAX_HP = 100;
 // wind: seconds of windup; push: shove on the traveler; cap: capsule [radius, half height].
@@ -43,6 +47,15 @@ const KIND = {
   blade: { dmg: 20, roam: 1.6, chase: 5.2, aggro: 13, reach: 2.1, leash: 22, home: 4, scale: 1.2, boltR: 0.9, wind: 0.6, push: 6, cap: [0.34, 0.52], lunge: 2.4 },
   brute: { dmg: 26, roam: 1.6, chase: 5.2, aggro: 12, reach: 2.6, leash: 20, home: 4.5, scale: 2.2, boltR: 1.9, wind: 0.9, push: 9, cap: [1.0, 0.7] },
 };
+// The street's own people. civ marks a bystander body; aggro is 0 until a killing turns the street (`angry`).
+Object.assign(KIND, {
+  civ: { civ: true, dmg: 7, roam: 1.3, chase: 4.1, aggro: 0, reach: 1.5, leash: 45, home: 3, scale: 1.08, boltR: 0.8, wind: 0.55, push: 3, cap: [0.3, 0.5] },
+  thief: { civ: true, dmg: 7, roam: 4.5, chase: 4.5, aggro: 0, reach: 1.5, leash: 90, home: 3, scale: 1.05, boltR: 0.8, wind: 0.55, push: 3, cap: [0.3, 0.5] },
+});
+export const GUILT = 15; // health a hurt citizen costs him; a killed one costs twice that and the street's temper
+export const MOB = { radius: 34, time: 30 }; // who turns on him, and for how long
+export const RAM = { per: 5, max: 130, crew: 42, min: 4 }; // people are vulnerable; armed crews brace, so a bumper opens a fight rather than clearing it
+const KERB = 5.4; // metres from the middle of the way to where people walk
 // Who plays each kind: the file, the one prop kept in hand, and the clip that is its attack.
 const CAST = {
   punk: { file: 'punk.gltf', keep: 'Knife_1', attack: 'Punch' },
@@ -50,6 +63,12 @@ const CAST = {
   gunner: { file: 'gunner.gltf', keep: 'SMG', attack: 'Idle_Shoot' },
   blade: { file: 'blade.glb', attack: 'Sword_Slash' },
   brute: { file: 'mech.glb', attack: 'Attack' },
+  // paint: colours by material name, one picked per body so a crowd is not one person many times
+  civ: { file: '../people/citizen-female.glb', alternate: '../people/citizen-male.glb', attack: 'Punch', paint: {
+    Shirt: [[0.92, 0.9, 0.84], [0.3, 0.62, 0.9], [0.95, 0.72, 0.2], [0.55, 0.85, 0.6], [0.85, 0.45, 0.7]],
+    Pants: [[0.2, 0.24, 0.36], [0.32, 0.3, 0.3], [0.16, 0.2, 0.2]], Hair: [[0.16, 0.1, 0.08], [0.55, 0.36, 0.16], [0.75, 0.2, 0.5]],
+    Skin: [[0.93, 0.72, 0.56], [0.72, 0.5, 0.36], [0.5, 0.34, 0.25]], Face: [[0.1, 0.08, 0.08]], Belt: [[0.12, 0.1, 0.1]] } },
+  thief: { file: '../people/runner.glb', attack: 'Punch' },
 };
 const PROPS = /^(AK|GrenadeLauncher|Knife_\d|Pistol|Revolver(_Small)?|RocketLauncher|ShortCannon|Shotgun|Shovel|SMG|Sniper(_2)?)$/;
 // Neon repaints by source material name; every other material keeps its own colour.
@@ -57,7 +76,7 @@ const NEON = { Enemy_Red: [1, 0.16, 0.5], Red: [1, 0.16, 0.5], Character_Main: [
   Accent: [0, 0.9, 1], Accent_Dark: [0, 0.42, 0.52], Blade: [1, 0.2, 0.62], Blade_Edge: [1, 0.66, 0.88], Eye: [1, 0.12, 0.25] };
 // Knockback in m/s by source; big beasts give less ground.
 const KNOCK = { sword: 3.2, thrust: 6.5, heavy: 9, whirl: 7.5, spark: 4, flare: 0 };
-const HEFT = { punk: 1, enforcer: 0.75, gunner: 1, blade: 0.7, brute: 0.32 };
+const HEFT = { punk: 1, enforcer: 0.75, gunner: 1, blade: 0.7, brute: 0.32, civ: 1.1, thief: 1.1 };
 const LAUNCH = 6.5; // m/s upward under a heavy blow or a whirl, scaled by HEFT
 export const PERFECT = 0.32; // seconds before a strike lands in which a dash counts as perfect
 const AIM_LOCK = 0.3; // a gunner stops tracking this long before he fires: the time to step aside
@@ -97,7 +116,7 @@ export function strikeHits(e, x, y, z, groundY) {
 
 const CLIP = (clip) => clip.name.split('|').pop().replace(/ \d+$/, '');
 
-export async function createHunt({ scene, shared, man, animator, player, heightAt, marks, spots, moveSpawn, down, levels = null, roam = false, route = null }) {
+export async function createHunt({ scene, shared, man, animator, player, heightAt, marks, spots, moveSpawn, down, levels = null, roam = false, route = null, camera = null }) {
   // Level mode builds its own marks and cairns from the level list; the night
   // scene passes marks and spots directly, which keeps working as before.
   const segs = levels ? levels.map((L) => ({ ...L })) : null;
@@ -106,8 +125,9 @@ export async function createHunt({ scene, shared, man, animator, player, heightA
     spots = segs.flatMap((s, i) => s.spots.map((p) => ({ ...p, seg: i })));
   }
   const loader = new GLTFLoader();
-  const kinds = [...new Set(spots.map((p) => p.kind))];
-  const sources = Object.fromEntries(await Promise.all(kinds.map(async (k) => [k, await loader.loadAsync('./enemies/' + CAST[k].file)])));
+  const kinds = [...new Set([...spots.map((p) => p.kind), ...(segs && route ? ['civ', 'thief'] : [])])];
+  const sources = Object.fromEntries(await Promise.all(kinds.map(async (k) => [k, await Promise.all(
+    [CAST[k].file, CAST[k].alternate].filter(Boolean).map(file => loader.loadAsync('./enemies/' + file)))])));
   const white = new THREE.DataTexture(new Uint8Array([255, 255, 255, 255]), 1, 1);
   white.needsUpdate = true;
   const mats = new Map();
@@ -124,8 +144,8 @@ export async function createHunt({ scene, shared, man, animator, player, heightA
   };
   const GEO = { rock: new THREE.SphereGeometry(1, 6, 5), cap: new THREE.SphereGeometry(1, 7, 5) };
 
-  function beastMesh(kind) {
-    const src = sources[kind], cast = CAST[kind];
+  function beastMesh(kind, variant = 0) {
+    const src = sources[kind][variant % sources[kind].length], cast = CAST[kind];
     const model = SkeletonUtils.clone(src.scene), mesh = new THREE.Group();
     const spare = [];
     model.traverse((o) => { if (PROPS.test(o.name) && o.name !== cast.keep) spare.push(o); });
@@ -141,8 +161,9 @@ export async function createHunt({ scene, shared, man, animator, player, heightA
       if (!o.isMesh) return;
       const key = o.material.name + (o.isSkinnedMesh ? '' : '|rigid');
       if (!own.has(key)) {
-        const tint = NEON[o.material.name] ?? o.material.color.toArray().map((v) => v ** (1 / 2.2));
-        const m = paint(shared, PAL.steel, { grain: 2.6, skinned: true, map: white, tint });
+        const picks = cast.paint?.[o.material.name.split('.')[0]];
+        const tint = o.material.map ? [1.2, 1.2, 1.2] : picks?.[variant % picks.length] ?? NEON[o.material.name] ?? o.material.color.toArray().map((v) => v ** (1 / 2.2));
+        const m = paint(shared, PAL.steel, { grain: 2.6, skinned: true, map: o.material.map ?? white, tint });
         own.set(key, { m, tint: m.uniforms.uTint.value.clone() });
       }
       o.material = own.get(key).m;
@@ -151,7 +172,7 @@ export async function createHunt({ scene, shared, man, animator, player, heightA
     });
     const named = {};
     for (const clip of src.animations) named[CLIP(clip)] = clip;
-    const clips = { Idle: named.Idle_Sword ?? named.Idle, Walk: named.Walk, Run: named.Run, Attack: named[cast.attack], Hit: named.HitReact ?? named.HitRecieve, Death: named.Death };
+    const clips = { Idle: named.Idle_Sword ?? named.Idle, Walk: named.Walk ?? named.Run, Run: named.Run, Attack: named[cast.attack], Hit: named.HitReact ?? named.HitRecieve ?? named.RecieveHit, Death: named.Death };
     const mixer = new THREE.AnimationMixer(mesh);
     const action = mixer.clipAction(clips.Idle);
     action.play();
@@ -162,8 +183,8 @@ export async function createHunt({ scene, shared, man, animator, player, heightA
 
   // A gunner's sight: a thin line along his aim while he winds up.
   const aimGeo = new THREE.BoxGeometry(0.03, 0.03, 1).translate(0, 0, 0.5);
-  const enemies = spots.map((s) => {
-    const mesh = beastMesh(s.kind);
+  const make = (s, variant = 0) => {
+    const mesh = beastMesh(s.kind, variant);
     scene.add(mesh);
     const tell = new THREE.Mesh(new THREE.RingGeometry(0.88, 1, 32), new THREE.MeshBasicMaterial({ color: 0xff2a6d, transparent: true, opacity: 0.7, side: THREE.DoubleSide, depthWrite: false }));
     tell.rotation.x = -Math.PI / 2; tell.visible = false; scene.add(tell);
@@ -173,7 +194,31 @@ export async function createHunt({ scene, shared, man, animator, player, heightA
       aim.visible = false; scene.add(aim);
     }
     return { ...s, ...KIND[s.kind], mesh, tell, aim, air: 0, vy: 0, hp: HIT.hp[s.kind], maxHp: HIT.hp[s.kind], homeX: s.x, homeZ: s.z, tx: s.x, tz: s.z, yaw: Math.random() * 6.28, wait: Math.random() * 1.5, mode: 'roam', cool: 0, windup: 0, stagger: 0, phase: Math.random() * 6, flash: 0, dead: 0, gone: false, going: 0, seg: s.seg ?? -1, respawnT: 0, kx: 0, kz: 0 };
-  });
+  };
+  const enemies = spots.map((p) => make(p));
+  if (segs && route) {
+    // Each level's pavement gets three citizens walking a short beat and one hooded runner doing its whole length.
+    const off = (i, side, d) => {
+      const j = Math.max(0, Math.min(route.length - 2, i)), [ax, az] = route[j], [bx, bz] = route[j + 1], l = Math.hypot(bx - ax, bz - az) || 1;
+      return [ax + (bz - az) / l * d * side, az - (bx - ax) / l * d * side];
+    };
+    const loot = new THREE.MeshBasicMaterial({ color: 0xff2a6d });
+    for (const [i, L] of segs.entries()) {
+      // the stretch of the way that is this level's: a body never has to cross a gate
+      const top = L.checkpoint.z - 5, bottom = (L.gate?.z ?? GOAL.z + 26) + 7;
+      const mine = route.map(([, z], k) => (z < top && z > bottom ? k : -1)).filter((k) => k >= 0);
+      const lo = Math.min(...mine), hi = Math.max(...mine);
+      for (let k = 0; k < 4; k++) {
+        const side = k % 2 ? 1 : -1, runner = k === 3, at = Math.round(lo + (hi - lo) * (0.14 + 0.24 * k));
+        const walk = runner ? [off(lo + 1, side, KERB - 1), off(hi - 1, side, KERB - 1)] : [off(at, side, KERB), off(Math.max(lo, Math.min(hi, at + (k ? 9 : -9))), side, KERB)];
+        const e = make({ kind: runner ? 'thief' : 'civ', x: walk[0][0], z: walk[0][1], walk, leg: 0, angry: 0, thief: runner && i % 3 !== 2 }, i * 4 + k);
+        [e.tx, e.tz] = walk[1]; e.leg = 1; e.wait = Math.random() * 4;
+        // what a thief has on him: small, and only on the one side
+        if (e.thief) put(e.mesh, new THREE.BoxGeometry(0.2, 0.24, 0.12), loot, (m) => m.position.set(0.24, 0.82, -0.14));
+        enemies.push(e);
+      }
+    }
+  }
   if (segs) {
     const actors = await Promise.all(segs.map(() => createRivalAppearance(man, shared)));
     actors.forEach((actor, index) => {
@@ -213,7 +258,7 @@ export async function createHunt({ scene, shared, man, animator, player, heightA
       for (let k = -4; k <= 4; k++) put(g, new THREE.BoxGeometry(0.045, 3.3, 0.03), mat('gold'), m => m.position.set(k * 1.15, 1.9, 0));
       g.position.set(s.gate.x, heightAt(s.gate.x, s.gate.z), s.gate.z);
       scene.add(g);
-      const collider = player.world.createCollider(player.R.ColliderDesc.cuboid(90, 4, 0.4).setTranslation(s.gate.x, g.position.y + 3, s.gate.z));
+      const collider = player.world.createCollider(player.R.ColliderDesc.cuboid(260, 4, 0.4).setTranslation(s.gate.x, g.position.y + 3, s.gate.z));
       gates.push({ group: g, seg: i, collider });
     }
   }
@@ -230,8 +275,13 @@ export async function createHunt({ scene, shared, man, animator, player, heightA
     const crystal = put(g, new THREE.OctahedronGeometry(0.28), mat('gold'), cap => cap.position.y = 1.5);
     m.crystal = crystal;
     // Place the shrine beside its trigger so the starting one never hides the traveler.
-    const mx = m.x + (segs ? 3.6 : 0);
+    const mx = m.x + (segs ? 8 : 0);
     g.position.set(mx, heightAt(mx, m.z), m.z);
+    if (segs) {
+      // On the long street a cairn has to be found from a block away: it stands tall and throws a line of light up.
+      g.scale.setScalar(2.3);
+      g.add(new THREE.Mesh(new THREE.BoxGeometry(0.07, 26, 0.07), new THREE.MeshBasicMaterial({ color: 0xfcee0a, transparent: true, opacity: 0.45, depthWrite: false })).translateY(14));
+    }
     scene.add(g);
     m.used = false;
   }
@@ -267,7 +317,7 @@ export async function createHunt({ scene, shared, man, animator, player, heightA
   // `cleared` is the count of fully cleared segments; the current level is segs[cleared].
   const segAlive = (i) => enemies.some((e) => e.seg === i && !e.dead);
   const clearedCount = () => { let n = 0; if (segs) while (n < segs.length && !segAlive(n)) n++; return n; };
-  const remaining = () => enemies.reduce((n, e) => n + (e.dead ? 0 : 1), 0);
+  const remaining = () => enemies.reduce((n, e) => n + (e.dead || e.civ ? 0 : 1), 0);
   let powers = roam && segs ? powersFor(segs.length) : { spark: false, dash: false, heavy: false, flare: false };
   const has = (k) => !segs || roam || powers[k];
   function persist(cleared) {
@@ -284,7 +334,7 @@ export async function createHunt({ scene, shared, man, animator, player, heightA
     if (saved && saved.cleared > 0) {
       const n = Math.min(saved.cleared, segs.length);
       for (const e of enemies) {
-        if (e.seg < n) { scene.remove(e.mesh); if (e.body) player.world.removeRigidBody(e.body); e.body = e.collider = null; e.dead = 1; e.gone = true; }
+        if (e.seg >= 0 && e.seg < n) { scene.remove(e.mesh); if (e.body) player.world.removeRigidBody(e.body); e.body = e.collider = null; e.dead = 1; e.gone = true; }
       }
       for (let i = 0; i < n; i++) marks[i].used = true;
       powers = powersFor(n);
@@ -297,8 +347,37 @@ export async function createHunt({ scene, shared, man, animator, player, heightA
   }
   function toast(msg) { hud.toast(msg); }
 
+  /** What hurting one of the street's own costs. A thief costs nothing; so does anyone already coming at him. */
+  function blame(e, killed, provoked) {
+    if (e.thief) { if (killed) { toast('A thief. Nobody saw a thing.'); power = Math.min(POWER_MAX, power + 1); } return; }
+    if (provoked) return;
+    hp = Math.max(1, hp - GUILT * (killed ? 2 : 1));
+    combo = 0; hud.combo(0);
+    if (!killed) return void hud.flashText('Citizen hurt');
+    let n = 0;
+    for (const o of enemies) {
+      if (!o.civ || o.thief || o.dead || o.gone || Math.hypot(o.x - e.x, o.z - e.z) > MOB.radius) continue;
+      o.angry = MOB.time; o.aggro = 18; o.mode = 'chase'; o.wait = 0; n++;
+    }
+    hud.flashText('Citizen down');
+    toast(n ? `The street saw that — ${n} coming for you` : 'A citizen is dead. That one is on you.');
+  }
+
+  /** A vehicle's blow (ride.js): damage by speed, thrown along its travel. Returns false if there was nothing to hit. */
+  function ram(e, speed, ux, uz) {
+    if (e.dead || e.gone || e.rammed > 0 || e.duel && (!e.ready || e.phase === 'waiting')) return false;
+    e.rammed = 0.5;
+    hurt(e, Math.min(e.civ ? RAM.max : RAM.crew, speed * RAM.per), 'ram');
+    if (!e.duel) {
+      const k = speed * 0.9 * HEFT[e.kind];
+      e.kx = ux * k; e.kz = uz * k; e.vy = Math.max(e.vy, Math.min(7.5, speed * 0.4) * HEFT[e.kind]);
+    }
+    return true;
+  }
+
   function hurt(e, n, source = 'sword') {
     if (e.dead) return;
+    const provoked = e.angry > 0;
     if (e.duel && (!e.ready || e.phase === 'intro' || e.phase === 'waiting')) return;
     const guarded = e.duel && e.phase !== 'recovery';
     if (e.duel) n = damageRival(e, n, source);
@@ -325,8 +404,9 @@ export async function createHunt({ scene, shared, man, animator, player, heightA
       mesh.scale.setScalar(0.35);
       impacts.push({ mesh, x: e.x, y: heightAt(e.x, e.z) + (e.duel ? 1.15 : 0.75), z: e.z, vx: (Math.random() - 0.5) * 9, vy: 2 + Math.random() * 3, vz: (Math.random() - 0.5) * 9, life: 0.3 });
     }
+    if (e.civ) blame(e, e.hp <= 0, provoked);
     if (e.hp <= 0) {
-      e.dead = 0.001; e.tell.visible = false; power = Math.min(POWER_MAX, power + 0.35);
+      e.dead = 0.001; e.tell.visible = false; if (!e.civ) power = Math.min(POWER_MAX, power + 0.35);
       player.world.removeRigidBody(e.body); e.body = e.collider = null;
       if (!e.duel) { e.kx *= 1.7; e.kz *= 1.7; e.vy = Math.max(e.vy, 3.5 * HEFT[e.kind]); } // the fallen are thrown
       if (e.duel) { toast(`${e.name} — lesson mastered`); hitPause = 0.12; cameraKick = 0.16; }
@@ -357,6 +437,7 @@ export async function createHunt({ scene, shared, man, animator, player, heightA
     for (const e of enemies) {
       if (e.dead) continue;
       if (e.duel) { Object.assign(e, createDuel(e.seg)); continue; }
+      if (e.civ) { e.angry = 0; e.aggro = 0; e.mode = 'roam'; } // his fall settles the street's score
       if (Math.hypot(e.x - player.feet.x, e.z - player.feet.z) < 5) {
         e.x = e.homeX; e.z = e.homeZ; e.mode = 'roam'; e.tx = e.homeX; e.tz = e.homeZ;
         e.windup = e.stagger = e.cool = e.air = e.vy = e.kx = e.kz = 0;
@@ -415,7 +496,7 @@ export async function createHunt({ scene, shared, man, animator, player, heightA
     e.tell.scale.setScalar(e.reach * (0.6 + e.windup * 0.4));
     const name = e.dead ? 'Death' : e.flash > 0 && u.clips.Hit ? 'Hit' : e.windup > 0 ? 'Attack' : e.going > 2.4 ? 'Run' : e.going > 0.25 ? 'Walk' : 'Idle';
     playClip(e, name);
-    e.mesh.userData.mixer.update(dt);
+    if (dt > 0 && e.mesh.visible) e.mesh.userData.mixer.update(dt); // a pose nobody sees, or a frozen one, is not worked out
   }
 
   function pose() {
@@ -426,6 +507,12 @@ export async function createHunt({ scene, shared, man, animator, player, heightA
     }
     combatPose.apply(1 / 60, { u: swing, type: swingType, hurt: hurtPose, cast: castPose });
   }
+
+  // A body is many small skinned meshes with no bounds worth trusting, so they cannot be left to the renderer's
+  // own culling. Each is shown only when it is within SEEN metres and inside the eye's view (last frame's, with
+  // room to spare); the few right beside him always are, since they stand in his shadow picture.
+  const SEEN = 85, frustum = new THREE.Frustum(), viewMatrix = new THREE.Matrix4(), ball = new THREE.Sphere();
+  const seen = (e, pd) => pd < 9 || pd < SEEN && (!camera || frustum.intersectsSphere(ball.set(ball.center.set(e.x, heightAt(e.x, e.z) + 1.2, e.z), 3.2 * e.scale)));
 
   /** Moves a body up to `dist` along the unit (ux, uz), stopped by walls and trees like walking. */
   function sweep(e, ux, uz, dist) {
@@ -474,6 +561,7 @@ export async function createHunt({ scene, shared, man, animator, player, heightA
     gateToastT = Math.max(0, gateToastT - dt);
     lockToastT = Math.max(0, lockToastT - dt);
     attackBuffer = Math.max(0, attackBuffer - dt);
+    if (camera) frustum.setFromProjectionMatrix(viewMatrix.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse));
     for (const m of marks) { m.crystal.rotation.y += dt; m.crystal.position.y = 1.5 + Math.sin(m.crystal.rotation.y * 1.8) * 0.12; }
     const px = player.feet.x, pz = player.feet.z;
     let yaw = player.yaw;
@@ -500,7 +588,7 @@ export async function createHunt({ scene, shared, man, animator, player, heightA
       // A strike in the air is a plunge: he drops on the blade and the landing does the rest.
       plunge = !player.grounded && player.feet.y - heightAt(px, pz) > 0.7;
       if (plunge) { swingType = 'heavy'; swingH = false; player.slam(26); }
-      const target = plunge ? null : enemies.filter(e => !e.dead && (!e.duel || e.ready) && !gated(e.z) && inFront(px, pz, yaw, e.x, e.z, 3.6, 1.8)).sort((a, b) => Math.hypot(a.x - px, a.z - pz) - Math.hypot(b.x - px, b.z - pz))[0];
+      const target = plunge ? null : enemies.filter(e => !e.dead && (!e.civ || e.angry > 0) && (!e.duel || e.ready) && !gated(e.z) && inFront(px, pz, yaw, e.x, e.z, 3.6, 1.8)).sort((a, b) => Math.hypot(a.x - px, a.z - pz) - Math.hypot(b.x - px, b.z - pz))[0];
       if (target) {
         const turn = Math.atan2(Math.sin(Math.atan2(target.x - px, target.z - pz) - yaw), Math.cos(Math.atan2(target.x - px, target.z - pz) - yaw)); yaw = player.yaw += Math.max(-0.7, Math.min(0.7, turn));
         // close the gap a knockback opened: a short swept lunge to striking distance
@@ -542,13 +630,15 @@ export async function createHunt({ scene, shared, man, animator, player, heightA
 
     for (const e of enemies) {
       e.flash = Math.max(0, e.flash - dt);
+      e.rammed = Math.max(0, (e.rammed ?? 0) - dt);
       e.stagger = Math.max(0, e.stagger - dt);
       if (e.gone) {
         // In free roam the fallen come back after a while, at home and calm.
-        if (roam && (e.respawnT -= dt) <= 0) {
+        if ((roam || e.civ) && (e.respawnT -= dt) <= 0) { // the street refills in level mode too
           e.hp = e.maxHp; e.dead = 0; e.gone = false;
           e.x = e.homeX; e.z = e.homeZ; e.tx = e.homeX; e.tz = e.homeZ;
           e.mode = 'roam'; e.cool = e.windup = e.stagger = e.air = e.vy = e.kx = e.kz = 0; e.wait = 1; e.mesh.visible = true;
+          if (e.civ) { e.angry = 0; e.aggro = 0; }
           if (e.duel) Object.assign(e, createDuel(e.seg));
           if (!e.duel) addBody(e);
         } else continue;
@@ -559,7 +649,7 @@ export async function createHunt({ scene, shared, man, animator, player, heightA
         shove(e, dt);
         lay(e, dt);
         if (e.dead > 2.2) {
-          if (roam) { e.gone = true; e.respawnT = 20; e.mesh.visible = false; }
+          if (roam || e.civ) { e.gone = true; e.respawnT = e.civ ? 45 : 20; e.mesh.visible = false; }
           else { scene.remove(e.mesh); e.gone = true; }
         }
         continue;
@@ -568,7 +658,9 @@ export async function createHunt({ scene, shared, man, animator, player, heightA
       const dxp = px - e.x, dzp = pz - e.z, pd = Math.hypot(dxp, dzp);
       const homeD = Math.hypot(e.x - e.homeX, e.z - e.homeZ);
       // Far beasts keep their pose but skip the thinking: the frame stays cheap.
-      if (pd > 36) { e.going = 0; e.cool = Math.max(0, e.cool - dt); lay(e, 0); continue; }
+      if (pd > 36) { e.going = 0; e.cool = Math.max(0, e.cool - dt); if (!e.duel) e.mesh.visible = seen(e, pd); lay(e, 0); continue; }
+      if (!e.duel) e.mesh.visible = seen(e, pd);
+      if (e.angry > 0 && (e.angry -= dt) <= 0) { e.aggro = 0; e.mode = 'roam'; [e.tx, e.tz] = e.walk[e.leg]; }
       if (e.duel) {
         const ready = roam ? e === closestRival : !enemies.some(b => !b.duel && b.seg === e.seg && !b.dead);
         if (ready && !e.body) addBody(e);
@@ -608,6 +700,8 @@ export async function createHunt({ scene, shared, man, animator, player, heightA
         e.wait = 0.7 + Math.random() * 1.8;
         const a = Math.random() * Math.PI * 2, r = Math.random() * e.home;
         e.tx = e.homeX + Math.sin(a) * r; e.tz = e.homeZ + Math.cos(a) * r;
+        // the street's people keep to their beat: there and back along the pavement
+        if (e.walk) { e.leg ^= 1; [e.tx, e.tz] = e.walk[e.leg]; e.wait = e.thief || e.kind === 'thief' ? 0.2 : Math.random() * 3; }
       } else speed = e.roam;
       const mx = e.tx - e.x, mz = e.tz - e.z, md = Math.hypot(mx, mz) || 1;
       if (e.windup > 0 || e.stagger > 0) speed = 0;
@@ -804,7 +898,7 @@ export async function createHunt({ scene, shared, man, animator, player, heightA
       for (const [mi, m] of marks.entries()) {
         if (m.cool > 0) m.cool -= dt;
         if (m.used) continue;
-        if (Math.hypot(px - m.x, pz - m.z) > (m.goal ? 3.6 : 3.1)) continue;
+        if (Math.hypot(px - m.x, pz - m.z) > (segs ? 7 : m.goal ? 3.6 : 3.1)) continue;
         if (segs && !roam) {
           if (m.goal) {
             if (c >= segs.length) {
@@ -838,10 +932,14 @@ export async function createHunt({ scene, shared, man, animator, player, heightA
     // Show save failure after other progress messages, so an unlock cannot overwrite the warning.
     if (saveWarningPending) { toast('Progress is not saving in this browser'); saveWarningPending = false; }
     const boss = enemies.find(e => e.duel && !e.dead && e.ready && e.phase !== 'waiting' && Math.hypot(e.x - player.feet.x, e.z - player.feet.z) < 18);
-    hud.update(dt, { hp, power, cleared: c, won, enemies, player, has, dashCool, flareCool, invuln, boss });
+    const heat = enemies.reduce((t, e) => (e.dead ? t : Math.max(t, e.angry ?? 0)), 0);
+    hud.update(dt, { hp, power, cleared: c, won, enemies, player, has, dashCool, flareCool, invuln, boss, heat });
   }
 
-  return { update, pose, enemies, get hp() { return hp; }, get power() { return power; },
+  return { update, pose, enemies, hud, ram,
+    /** For the vehicles: a jolt through the camera, and a knock he takes from his own crash. */
+    jolt(k) { cameraKick = Math.max(cameraKick, k); }, crash(n) { hp -= n; hurtPose = 1; if (hp <= 0) die(); },
+    get hp() { return hp; }, get power() { return power; },
     get seg() { return segs ? clearedCount() : 0; }, get powers() { return { ...powers }; },
     get roam() { return roam; }, get won() { return won; }, get hitPause() { return hitPause; }, get cameraKick() { return cameraKick; },
     /** How fast the world runs this frame: hit-stop, then the perfect-dodge slow motion. */
@@ -885,6 +983,16 @@ export function demo() {
   if (!(4 * (AIM_LOCK + KIND.gunner.keep / KIND.gunner.shot) > 0.55 + 0.5)) throw new Error('a shot must be dodgeable');
   if (!(LAUNCH * HEFT.brute < 2.2 && LAUNCH * HEFT.punk > 5)) throw new Error('punks fly, the mech stays down');
   if (!(PLUNGE * HIT.sword.punk < HIT.hp.punk)) throw new Error('a plunge alone does not clear a crew');
+  for (const k of ['civ', 'thief']) {
+    if (!KIND[k].civ || KIND[k].aggro !== 0 || KIND[k].dmg <= 0 || !CAST[k] || !HEFT[k]) throw new Error('the street\'s people are bystanders until provoked, then can fight back: ' + k);
+    if (HIT.hp[k] - HIT.sword[k] <= 0) throw new Error('one careless swing hurts, it does not kill: ' + k);
+    if (HIT.hp[k] - 2 * HIT.sword[k] > 0) throw new Error('a second swing is a choice, and it kills: ' + k);
+    if (RAM.per * 12 < HIT.hp[k]) throw new Error('a car at speed kills on the pavement: ' + k);
+  }
+  if (KINDS.includes('civ') || KINDS.includes('thief')) throw new Error('bystanders are never part of a level\'s crew');
+  if (!(GUILT * 2 < MAX_HP && GUILT > 0)) throw new Error('guilt hurts but one mistake is not death');
+  if (!(RAM.per * RAM.min < HIT.hp.punk && RAM.max < HIT.hp.brute)) throw new Error('a nudge is not a kill, and no car drops the mech in one');
+  if (!(RAM.crew < HIT.hp.punk && RAM.crew * 2 >= HIT.hp.punk)) throw new Error('a punk survives one ram, but not two committed hits');
   if (!(PERFECT > 0 && PERFECT < 0.5)) throw new Error('perfect-dodge window');
   demoLevels();
   demoDuels(); demoCombat();

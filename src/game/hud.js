@@ -7,7 +7,8 @@ import { POWERS, POWER_ORDER } from './levels.js';
 import { MOVES } from './duel.js';
 
 /** Display name and threat tier for each enemy kind. */
-export const FOES = { punk: ['Street punk', 1], enforcer: ['Corp enforcer', 2], gunner: ['Hazmat gunner', 2], blade: ['Razor ronin', 3], brute: ['Siege mech', 4], rival: ['Mirror rival', 5] };
+export const FOES = { punk: ['Street punk', 1], enforcer: ['Corp enforcer', 2], gunner: ['Hazmat gunner', 2], blade: ['Razor ronin', 3], brute: ['Siege mech', 4], rival: ['Mirror rival', 5],
+  civ: ['Citizen', 0], thief: ['Hooded runner', 0] };
 const COOL = { dash: 2.5, flare: 20 }; // seconds, to draw the drain on a slot
 const pad = (n) => String(n).padStart(2, '0');
 const icon = name => `<svg aria-hidden="true" viewBox="0 0 24 24"><use href="#i-${name}"/></svg>`;
@@ -46,7 +47,10 @@ export function createHUD({ levels, roam, marks, route }) {
     <div class="chapter-banner" aria-hidden="true"><span></span><strong></strong><p></p></div>
     <div class="hit-feedback" aria-hidden="true"></div>
     <div class="combo" aria-hidden="true"><b></b><span>hits</span></div>
-    <div class="flash-text" aria-hidden="true"></div>`;
+    <div class="flash-text" aria-hidden="true"></div>
+    <div class="heat" hidden role="status"><strong>Street hostile</strong><span></span></div>
+    <div class="ride" hidden aria-label="Vehicle"><b>0</b><span>km/h</span><em></em><i></i></div>
+    <button class="ride-prompt" data-code="KeyG" hidden><kbd>G</kbd><span></span></button>`;
   document.body.appendChild(hud);
   const get = s => hud.querySelector(s);
   const els = {
@@ -95,7 +99,12 @@ export function createHUD({ levels, roam, marks, route }) {
       m.used ? map.strokeRect(x - 5, z - 5, 10, 10) : map.fillRect(x - 5, z - 5, 10, 10);
     }
     for (const e of enemies) {
-      if (e.dead || e.duel && !e.ready || Math.hypot(e.x - px, e.z - pz) > 42) continue;
+      if (e.dead || e.gone || e.duel && !e.ready || Math.hypot(e.x - px, e.z - pz) > 42) continue;
+      if (e.civ && !(e.angry > 0)) { // the street's own: a small pale dot until they turn
+        const [x, z] = point(e.x, e.z);
+        map.fillStyle = '#8aa0ab'; map.fillRect(x - 2.5, z - 2.5, 5, 5);
+        continue;
+      }
       const [x, z] = point(e.x, e.z);
       const r = e.kind === 'brute' ? 7 : 4.5;
       map.beginPath(); map.moveTo(x, z - r); map.lineTo(x + r, z); map.lineTo(x, z + r); map.lineTo(x - r, z); map.closePath();
@@ -118,7 +127,22 @@ export function createHUD({ levels, roam, marks, route }) {
     flashEl.classList.remove('show'); void flashEl.offsetWidth; flashEl.classList.add('show');
   }
   function toast(message) { get('.toast').textContent = message; toastTime = 3.5; get('.toast').classList.add('visible'); }
-  function update(dt, { hp, power, cleared, won, enemies, player, has, dashCool, flareCool, invuln, boss }) {
+  const rideEl = get('.ride'), promptEl = get('.ride-prompt'), heatEl = get('.heat');
+  /** The vehicle he is in (speed, state), or the one in reach (a prompt), or null. */
+  function ride(state) {
+    rideEl.hidden = !state?.driving; promptEl.hidden = !state;
+    hud.classList.toggle('driving', !!state?.driving);
+    if (!state) return;
+    promptEl.querySelector('span').textContent = state.driving ? 'Step out' : state.tipped ? `Right the ${state.name}` : `Take the ${state.name}`;
+    if (!state.driving) return;
+    rideEl.querySelector('b').textContent = Math.round(state.kmh);
+    rideEl.querySelector('em').textContent = state.name;
+    rideEl.querySelector('i').textContent = state.tipped ? 'Overturned · G out, then G beside it to right' : state.air ? 'Airborne' : state.sliding ? 'Sliding' : 'G · step out';
+    rideEl.classList.toggle('loose', !!(state.air || state.sliding));
+  }
+  function update(dt, { hp, power, cleared, won, enemies, player, has, dashCool, flareCool, invuln, boss, heat = 0 }) {
+    heatEl.hidden = !(heat > 0);
+    if (heat > 0) heatEl.querySelector('span').textContent = `${Math.ceil(heat)}s`;
     bannerTime = Math.max(0, bannerTime - dt);
     banner.classList.toggle('visible', bannerTime > 0 && !boss);
     hud.classList.toggle('in-duel', !!boss);
@@ -137,7 +161,7 @@ export function createHUD({ levels, roam, marks, route }) {
     els.fill.style.opacity = invuln > 0 ? '0.65' : '1';
     els.pips.forEach((el, i) => { el.style.transform = `scaleX(${Math.max(0, Math.min(1, power - i))})`; });
     const index = Math.min(chapter, (levels?.length ?? 1) - 1);
-    const alive = enemies.filter(e => !e.dead && !e.duel && (!levels || roam || e.seg === index));
+    const alive = enemies.filter(e => !e.dead && !e.duel && !e.civ && (!levels || roam || e.seg === index));
     const total = levels && !roam ? levels[index].spots.length : enemies.length;
     const next = marks.find(m => !m.used) ?? marks[marks.length - 1];
     els.chapter.textContent = !levels ? 'Side op · Snowbound' : roam ? 'Free roam · all systems' : won ? 'Run complete' : `Sector ${pad(chapter + 1)} / ${pad(levels.length)}`;
@@ -157,14 +181,16 @@ export function createHUD({ levels, roam, marks, route }) {
       el.style.setProperty('--cd', unlocked && cool > 0 ? Math.min(1, cool / COOL[key]) : 0);
       el.querySelector('small').textContent = !unlocked ? `Sec ${pad(POWER_ORDER.indexOf(key) + 1)}` : cool > 0 ? `${Math.ceil(cool)}s` : empty ? 'No charge' : '';
     }
-    const target = enemies.filter(e => !e.dead).sort((a, b) => Math.hypot(a.x - player.feet.x, a.z - player.feet.z) - Math.hypot(b.x - player.feet.x, b.z - player.feet.z))[0];
+    // a calm passer-by reads as a few metres further off, so a real threat beside them takes the panel
+    const reach = e => Math.hypot(e.x - player.feet.x, e.z - player.feet.z) + (e.civ && !(e.angry > 0) ? 5 : 0);
+    const target = enemies.filter(e => !e.dead && !e.gone).sort((a, b) => reach(a) - reach(b))[0];
     els.target.hidden = !!boss || !target || target.duel || Math.hypot(target.x - player.feet.x, target.z - player.feet.z) > 10;
     if (!els.target.hidden) {
       const [name, tier] = FOES[target.kind];
       els.targetName.textContent = name;
-      els.targetHp.textContent = `T${tier} · ${Math.ceil(target.hp)} HP`;
+      els.targetHp.textContent = target.civ ? (target.angry > 0 ? 'Hostile' : 'Bystander') : `T${tier} · ${Math.ceil(target.hp)} HP`;
       els.targetFill.style.transform = `scaleX(${target.hp / target.maxHp})`;
-      els.tell.textContent = target.windup > 0 ? (target.shot ? 'Laser lock — sidestep, dash or cut the shot back' : 'Incoming — dodge, or strike now to parry') : target.air > 0 ? 'Airborne — keep the chain going' : target.stagger > 0 ? 'Staggered — strike now' : target.shot ? 'Close the gap. He backs off.' : 'Keep moving. Watch for the windup.';
+      els.tell.textContent = target.kind === 'thief' ? 'Thief or jogger? A thief carries loot at the hip.' : target.civ && !(target.angry > 0) ? 'Not your fight. Hurting them costs you.' : target.windup > 0 ? (target.shot ? 'Laser lock — sidestep, dash or cut the shot back' : 'Incoming — dodge, or strike now to parry') : target.air > 0 ? 'Airborne — keep the chain going' : target.stagger > 0 ? 'Staggered — strike now' : target.shot ? 'Close the gap. He backs off.' : 'Keep moving. Watch for the windup.';
       els.target.classList.toggle('warning', target.windup > 0);
     }
     const bar = get('.bossbar'); bar.hidden = !boss;
@@ -183,5 +209,5 @@ export function createHUD({ levels, roam, marks, route }) {
     }
     if ((mapTime -= dt) <= 0) { drawMap(player, enemies); mapTime = 0.1; }
   }
-  return { update, toast, combo, flashText, element: hud };
+  return { update, toast, combo, flashText, ride, element: hud };
 }

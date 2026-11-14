@@ -20,7 +20,9 @@ import { Player } from './figure/player.js';
 import { Input } from './figure/input.js';
 import { Follow } from './figure/camera.js';
 import { createHunt } from './game/hunt.js';
+import { createRides } from './game/ride.js';
 import { LEVELS } from './game/levels.js';
+import { SCALE } from './game/chapters.js';
 
 const q = new URLSearchParams(location.search);
 const capture = q.has('capture');
@@ -84,7 +86,8 @@ say(0.1, 'Raising the city');
 await turn();
 const forest = createAnimeWorld(shared);
 lap('forest');
-const shade = createShade(renderer, shared, forest.shade);
+// the baked shade has to hold the whole stretched district, not only the first small wood
+const shade = createShade(renderer, shared, forest.shade, { box: [165 * SCALE, 104 * SCALE], centre: [0, 11, -8 * SCALE], back: 700, far: 1600 });
 lap('shade');
 say(0.25, 'Fetching the wanderer');
 await turn();
@@ -145,10 +148,16 @@ function air(x, y, z, out) {
   return out.set(wind.x * speed, 0.25 * Math.sin(time * 2.3 + x) * gust, wind.z * speed);
 }
 
-function respawn() {
-  player.teleport(spawn.x, spawn.y, spawn.z);
+let rides = null;
+/** After he has been put somewhere by hand: the animation starts from standing, not from where it was. */
+function settle() {
   animator.lock = null; animator.lockOff = null;
   animator.enter(animator.locoState({ strafe: false }), 0.1);
+}
+function respawn() {
+  rides?.leave(true); // a fall takes him out of his seat; the vehicle stays where it was
+  player.teleport(spawn.x, spawn.y, spawn.z);
+  settle();
 }
 
 const size = new THREE.Vector2();
@@ -158,10 +167,13 @@ function tick(dt, draw = true) {
   dt *= hunt?.timeScale ?? 1;
   time += dt;
   const inp = input.read(realDt);
-  player.update(dt, inp, follow.yaw);
-  // the wood has no wall: far from the way he is turned gently back, and under the world he starts again
-  if (player.feet.y < heightAt(player.feet.x, player.feet.z) - 6 || wayDist(player.feet.x, player.feet.z) > 78) respawn();
-  hunt?.update(dt, inp, realDt);
+  // At the wheel his legs are left alone: the vehicle carries him and his hands are busy.
+  const driving = rides?.update(dt, inp, follow) ?? false;
+  if (!driving) player.update(dt, inp, follow.yaw);
+  // the district has no wall: far from the way he is turned gently back, and under the world he starts again
+  if (!driving && (player.feet.y < heightAt(player.feet.x, player.feet.z) - 6 || wayDist(player.feet.x, player.feet.z) > 78)) respawn();
+  hunt?.update(dt, driving ? { ...inp, attack: false, heavy: false, power: false, dash: false, flare: false, whirl: false } : inp, realDt);
+  man.object.visible = !driving;
   forest.update(dt, player.feet.z, hunt?.seg, hunt?.roam);
   const root = player.visualRoot(dt);
   man.object.position.copy(root);
@@ -184,7 +196,8 @@ function tick(dt, draw = true) {
   figure.updateCloak(dt, air, heightAt);
 
   follow.shake = hunt?.cameraKick ?? 0;
-  follow.update(realDt, root, inp.look, inp.zoom, (o, d, max) => player.castRay(o, d, max), heightAt);
+  // at the wheel the eye must not be pushed in by the very car it follows
+  follow.update(realDt, root, inp.look, inp.zoom, (o, d, max) => player.castRay(o, d, max, undefined, driving), heightAt);
   if (draw) renderScene();
 }
 
@@ -217,7 +230,7 @@ window.lab = {
 
 if (!capture) {
   hunt = await createHunt({
-    scene, shared, man, animator, player, heightAt,
+    scene, shared, man, animator, player, heightAt, camera,
     moveSpawn: (x, z) => spawn.set(x, heightAt(x, z), z),
     down: respawn,
     levels: LEVELS,
@@ -225,6 +238,9 @@ if (!capture) {
     roam: (window.__mode ?? 'level') === 'roam',
   });
   window.lab.hunt = hunt;
+  rides = await createRides({ scene, shared, player, heightAt, hunt, route: way, checkpoints: LEVELS.map((L) => L.checkpoint),
+    inBounds: (x, z) => wayDist(x, z) < 72, settle });
+  window.lab.rides = rides;
 }
 
 // --- warming up: every shader is built and drawn once, and the GPU has caught up, before anyone is let in ---

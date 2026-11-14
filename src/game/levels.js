@@ -5,6 +5,7 @@
 // by its mirror duel (duel.js); only victory over both clears the segment. The crews escalate:
 // punks, then enforcers, gunners from level 3, the mech from 4, razor blades from 5.
 import { DUELS } from './duel.js';
+import { SCALE } from './chapters.js';
 export const KINDS = ['punk', 'enforcer', 'gunner', 'blade', 'brute'];
 export const POWER_ORDER = ['spark', 'dash', 'heavy', 'flare', 'whirl'];
 
@@ -16,7 +17,8 @@ export const POWERS = {
   whirl: { name: 'Whirl', key: 'C', hint: 'C: a spinning slash that hits all around (one spark)' },
 };
 
-export const LEVELS = [
+// Written at the trail's first, small scale; LEVELS below is this stretched by SCALE, with each crew doubled.
+const BASE = [
   {
     name: 'The strip',
     checkpoint: { x: 0, z: 78, name: 'The start' },
@@ -86,7 +88,16 @@ export const LEVELS = [
   },
 ];
 
-export const GOAL = { x: 11, z: -96, name: 'The clearing' };
+const at = (p) => p && { ...p, x: p.x * SCALE, z: p.z * SCALE };
+export const LEVELS = BASE.map((L) => {
+  const spots = L.spots.map(at);
+  // The longer street takes a second wave: the same crew again, a few metres back up the way and across it.
+  // A second mech would be too much, so its twin is an enforcer.
+  const twins = spots.map((s, i) => ({ kind: s.kind === 'brute' ? 'enforcer' : s.kind, x: s.x + (i % 2 ? -7 : 7), z: s.z + 7 }));
+  return { ...L, checkpoint: at(L.checkpoint), gate: at(L.gate), spots: [...spots, ...twins] };
+});
+
+export const GOAL = at({ x: 11, z: -96, name: 'The clearing' });
 
 export const SAVE_KEY = 'oilpaint.levels.v1';
 
@@ -108,10 +119,9 @@ export function loadProgress() {
     if (!raw) return null;
     const s = JSON.parse(raw);
     if (!Number.isInteger(s?.cleared) || s.cleared < 0 || s.cleared > LEVELS.length) return null;
+    // The place is always the cleared level's own cairn: a save written before the map grew still lands on it.
     const cp = LEVELS[Math.min(s.cleared, LEVELS.length - 1)].checkpoint;
-    const x = Number.isFinite(s?.x) ? s.x : cp.x;
-    const z = Number.isFinite(s?.z) ? s.z : cp.z;
-    return { cleared: s.cleared, x, z };
+    return { cleared: s.cleared, x: cp.x, z: cp.z };
   } catch {
     return null;
   }
@@ -136,6 +146,8 @@ export function demoLevels() {
     if (!rival || rival.z >= L.checkpoint.z || rival.z <= (L.gate?.z ?? GOAL.z)) throw new Error('rival must end chapter ' + i);
     for (const s of L.spots) {
       if (!KINDS.includes(s.kind)) throw new Error('bad kind ' + s.kind);
+      // a beast behind a closed gate cannot be reached, so the level could never clear
+      if (s.z < (L.gate?.z ?? -Infinity) + 3 || s.z > (LEVELS[i - 1]?.gate.z ?? Infinity) - 3) throw new Error('spawn outside its gates: level ' + i);
     }
   }
   for (const k of KINDS) if (!LEVELS.some((L) => L.spots.some((s) => s.kind === k))) throw new Error('every kind is met on the way: ' + k);

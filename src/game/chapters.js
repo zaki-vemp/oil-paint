@@ -22,7 +22,9 @@ export const CHAPTERS = [
     sky: [0.09, 0.06, 0.03], haze: [0.34, 0.22, 0.10], path: [0.25, 0.22, 0.18] },
 ];
 
-const BOUNDARIES = [52, 29, 3, -31, -63];
+/** The whole trail is laid out small and stretched by this: the way, every spawn, gate, duel and boundary. */
+export const SCALE = 2.2;
+const BOUNDARIES = [52, 29, 3, -31, -63].map((z) => z * SCALE);
 export function chapterAt(z, cleared = CHAPTERS.length, roam = false) {
   let i = 0;
   while (i < BOUNDARIES.length && z < BOUNDARIES[i]) i++;
@@ -31,7 +33,8 @@ export function chapterAt(z, cleared = CHAPTERS.length, roam = false) {
 
 export function demoChapters() {
   if (CHAPTERS.length !== BOUNDARIES.length + 1 || CHAPTERS.length < 6 || new Set(CHAPTERS.map(c => c.style)).size !== 2) throw new Error('six chapters, two HUD styles');
-  if (chapterAt(78) !== 0 || chapterAt(-50) !== 4 || chapterAt(-70) !== 5 || chapterAt(-70, 1) !== 1 || chapterAt(-70, 0, true) !== 5) throw new Error('chapter progression');
+  const at = (z, ...rest) => chapterAt(z * SCALE, ...rest);
+  if (at(78) !== 0 || at(-50) !== 4 || at(-70) !== 5 || at(-70, 1) !== 1 || at(-70, 0, true) !== 5) throw new Error('chapter progression');
   for (const c of CHAPTERS) for (const key of ['grass', 'foliage', 'leafLight', 'sky', 'haze', 'path']) {
     if (c[key].length !== 3 || c[key].some(v => v < 0 || v > 1)) throw new Error('palette ' + c.name);
   }

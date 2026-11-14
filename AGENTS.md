@@ -29,6 +29,9 @@ npm run serve        # serves dist/ on :5405 (tools/serve.mjs)
 
 node src/game/hunt.js      # balance/logic demo: throws on any broken rule
 node src/game/levels.js    # level-data validation
+node src/game/ride.js      # handling, momentum, energy loss and rollover self-checks
+node tools/assets.mjs      # imported GLB geometry, rig, clip and finite-data checks
+node tools/street.mjs      # headless: traffic, collisions, rollover, ramming, citizens, mob, thief (build + serve + CHROME)
 node --check <file>        # syntax-check any edited module
 node tools/fps.mjs --seconds 8   # frame-rate of the built page (needs browser)
 ```
@@ -46,7 +49,8 @@ Key URLs (dev server):
 
 In the browser, `window.lab` is the test handle: `teleport(x,z,fx,fz)`,
 `step(dt,n)`, `setInput(fn)`, `view(eye,target)`, and `window.lab.hunt`
-exposes `hp`, `power`, `seg`, `powers`, `roam`, `won`, `enemies`.
+exposes `hp`, `power`, `seg`, `powers`, `roam`, `won`, `enemies`;
+`window.lab.rides` exposes `rides` (each `{ kind, x, z, yaw, vx, vz, vf, lean, tilt, tipped, traffic }`) and `driven`.
 
 ## Startup flow
 
@@ -125,9 +129,14 @@ mindmap
 | Change | Files | Notes |
 |---|---|---|
 | Level layout, spawns, gates | `src/game/levels.js` | Pure data; keep gates ordered down the way (z decreasing) |
+| Map size | `SCALE` in `src/game/chapters.js` | Stretches the way, every spawn, gate, duel and chapter boundary. Must keep the clearing inside `EXTENT` (256 m, `common.js`); tools measure from `LEVELS[0].checkpoint`, never a literal |
+| Road width | `ROAD` in `src/world/land.js` | Half-width; the mask, tower setback, lamps and lane dashes all read it |
+| Vehicles | `src/game/ride.js` (`RIDES`, `drive()`) | Eclipse GLB car body + original painted wheels/bike. `createRides()` is async. `drive()` is pure: tune there, run `node src/game/ride.js` |
+| Imported people / car models | `public/people/`, `public/vehicles/`, `tools/import-street-assets.py` | Original OGA / VitaVehicle sources and licenses in each `SOURCE.md`; validate with `node tools/assets.mjs`. Do not hand-edit GLB binaries |
+| Citizens / thieves / what hurting them costs | `src/game/hunt.js` (`KIND.civ`, `KIND.thief`, `blame()`, `GUILT`, `MOB`, `RAM`) | Then `node src/game/hunt.js` and `tools/street.mjs` |
 | Enemy stats / AI / damage | `src/game/hunt.js` (`KIND`, `HIT`, `HEFT`, `CAST`) | Then run `node src/game/hunt.js` |
 | New power | `levels.js` (`POWERS`, `grant`) + `hunt.js` (`has()`, update) + `input.js` | Gate with `has(key)`; show locked toast; add a HUD pill |
-| Controls | `src/figure/input.js` | One `read(dt)` state; keep keyboard + pad in sync. `F`=heavy, `J`/click=swing, `Q`=spark, `E`=dash (one in the air), `R`=flare, `C`=whirl, `M`=mode |
+| Controls | `src/figure/input.js` | One `read(dt)` state; keep keyboard + pad in sync. `F`=heavy, `J`/click=swing, `Q`=spark, `E`=dash (one in the air), `R`=flare, `C`=whirl, `G`=vehicle in/out (pad Back), `M`=mode |
 | Movement / jump / speed | `src/figure/player.js` (`TUNING`) | Rapier kinematic capsule; don't move the body except via `player` APIs or `holdAt`-style teleports |
 | Animation feel | `src/figure/animator.js` | Largest, most delicate file — small changes, check feet |
 | A painted object | `src/oilpaint/dabs.js` or `pins.js` + scene file | Write `makeDab` GLSL; pick colours via `paint3(light, half, shade)` |
@@ -180,6 +189,21 @@ mindmap
   file, kept prop, attack clip; `NEON` repaints materials by name). Crews escalate
   by level; `demoLevels()` asserts it. Balance invariants are asserted in `demo()`
   at the bottom of `hunt.js` — extend them when you change `HIT`/`KIND`.
+- The street's people (level and roam, autumn only): per level three citizens (`civ`) walking a beat on the
+  pavement and one hooded runner (`thief` kind). They are hunt bodies with `civ: true`, `seg: -1`, so they never
+  count toward clearing a level, and they come back after 45 s. Hurting a citizen costs `GUILT` health; killing one
+  costs twice and turns every citizen within `MOB.radius` hostile for `MOB.time` seconds (hitting one who is already
+  hostile costs nothing). Two runners in three are thieves (`e.thief`, a loot box at the hip) and cost nothing;
+  the third is a jogger and counts as a citizen. `blame()` in `hunt.js` is the whole rule.
+- Vehicles: a car and a bike past every cairn, plus one traffic vehicle per district (`ride.js`). `G` in/out,
+  `W A S D`, `Space` handbrake; `G` beside a stopped overturned vehicle rights it. Small substeps, chassis sweeps
+  against static solids (heightfield excluded: `heightAt` handles support), oriented-box impulses between vehicles,
+  and impact-driven roll. This is arcade tyre/chassis physics, not a Rapier dynamic chassis. Traffic yields to
+  people and vehicles and stops inside its district; it recycles only out of sight into an empty lane. Taking a
+  slow traffic vehicle removes its AI. Only player-driven/coasting/shunted vehicles ram hunt bodies; ambient traffic
+  never earns the player guilt. Ramming damage is `RAM.per` per m/s, capped at `RAM.crew` for armed crews (a punk
+  survives one hit) and `RAM.max` for bystanders. A hard crash costs driver health. Combat inputs are masked and
+  the figure is hidden while driving. The clickable G prompt also works for exiting on touch.
 - Free roam: no gates, all powers, enemies respawn after 20 s, cairns
   heal repeatedly (10 s cooldown). Roam never writes the level save.
 - Back-compat: `createHunt` without `levels` (night scene) must keep the
@@ -192,8 +216,11 @@ game logic is negligible **if** these rules hold:
 
 - Enemies stay rigged GLB clones with painted materials — no per-enemy
   render targets, post passes, or unique shaders.
-- Cap work by distance: enemies beyond ~36 m skip AI (`hunt.js` already
-  does this). Keep total spawns modest (~19 beasts + 6 rivals today).
+- Cap work by distance: bodies beyond ~36 m skip AI, and a body is drawn only within 85 m and inside the
+  camera's view (`seen()` in `hunt.js`; their meshes cannot use the renderer's own culling). Today: 38 crew,
+  24 street people, 6 rivals, 18 vehicles (12 parked, 6 traffic).
+- City solids are drawn front-face only and towers nearest the street first (`anime.js`): tower fill was a
+  third of the frame before that. Keep it.
 - Respect `renderer.setPixelRatio(min(devicePixelRatio, 1.5))` and the
   `?quality=low` path. Don't raise either.
 - Verify with `node tools/fps.mjs --seconds 8` before/after any rendering
@@ -250,6 +277,10 @@ the name to `KINDS` (`levels.js`) and `FOES` (`hud.js`), spawns to `levels.js`;
 - `animator.js` and `cloak.js` are stateful per-frame; teleporting the
   player must reset `feet`/`prevFeet`/`visualY` (see `respawn()` and
   `holdAt` in `hunt.js`) or the figure will streak.
+- A vehicle has a kinematic collider so he and the crews walk round it; its own sweeps and the chase camera pass
+  `EXCLUDE_KINEMATIC` (`player.castRay(..., still = true)`), or the car would stop on, and the eye clip into, itself.
+- Compare fps only back to back on the same machine state (build the old commit in a worktree and pass
+  `--dist`): the same build has measured 95 and 210 fps hours apart.
 - If no browser is available in the environment, say so honestly:
   build + `node` demos + syntax checks are the fallback verification,
   not proof the game plays. State what was not exercised.

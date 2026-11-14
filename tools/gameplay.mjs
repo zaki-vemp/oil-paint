@@ -23,23 +23,31 @@ try {
     const input = state => L.setInput(() => ({ ...base, ...state }));
     const check = (condition, message) => { if (!condition) throw Error(message); };
     const results = {};
+    const Z0 = plan[0].checkpoint.z; // the start: every fixed place below is measured from it, whatever the map's scale
+    // This run measures combat and progression. The street's people are moved out of it; tools/street.mjs is theirs.
+    for (const e of h.enemies) if (e.civ) e.x = e.homeX = e.tx = 240;
+    // A second crew member must not hit during the single-attacker dodge check. Traffic is tested in street.mjs.
+    for (const e of h.enemies) if (!e.duel) { e.aggro = 0; e.mode = 'roam'; e.wait = 1e4; e.windup = 0; }
+    for (const [i, v] of L.rides.rides.entries()) if (v.traffic) {
+      v.traffic = null; v.x = 230; v.z = 100 - i * 7; v.y = L.heightAt(v.x, v.z); v.vx = v.vz = v.vf = 0;
+    }
     check(L.figure.avatar.bindings.length >= 40, 'anime humanoid bindings');
     check(h.enemies.filter(e => e.duel).length === plan.length, 'one mirror rival per chapter');
-    L.teleport(0, 78, 0, 60); input({ move: { x: 0, y: 1 } }); L.step(1 / 60, 30);
-    results.runDistance = 78 - P.feet.z; check(results.runDistance > 1, 'responsive running');
+    L.teleport(0, Z0, 0, Z0 - 18); input({ move: { x: 0, y: 1 } }); L.step(1 / 60, 30);
+    results.runDistance = Z0 - P.feet.z; check(results.runDistance > 1, 'responsive running');
     input({}); L.step(1 / 60, 20); check(P.speed < 0.05, 'release stops');
     function jump(held) {
-      L.teleport(0, 78, 0, 60); const y = P.feet.y; let peak = y, n = 0;
+      L.teleport(0, Z0, 0, Z0 - 18); const y = P.feet.y; let peak = y, n = 0;
       L.setInput(() => { peak = Math.max(peak, P.feet.y); return { ...base, jump: n++ === 0, jumpHeld: held }; });
       L.step(1 / 60, 80); check(P.grounded, 'landed'); return peak - y;
     }
     results.holdJump = jump(true); results.tapJump = jump(false);
     check(results.holdJump > 1 && results.tapJump < results.holdJump * 0.8, 'variable jumps');
-    P.teleport(0, L.heightAt(0, 78) + 0.08, 78); P.grounded = false; P.coyote = 0; P.mode = 'air'; P.vel.y = -1;
+    P.teleport(0, L.heightAt(0, Z0) + 0.08, Z0); P.grounded = false; P.coyote = 0; P.mode = 'air'; P.vel.y = -1;
     let frame = 0, bufferedLaunch = false;
     L.setInput(() => { bufferedLaunch ||= P.vel.y > 2; return { ...base, jump: frame++ === 0 }; });
     L.step(1 / 60, 20); check(bufferedLaunch, 'jump buffered before landing');
-    P.teleport(0, L.heightAt(0, 78) + 0.08, 78); P.grounded = false; P.coyote = 0.08;
+    P.teleport(0, L.heightAt(0, Z0) + 0.08, Z0); P.grounded = false; P.coyote = 0.08;
     input({ jump: true }); L.step(1 / 60, 1); check(P.vel.y > 2, 'coyote jump after leaving ground');
     input({});
     // Test the windup before isolating the beasts for reproducible damage/progression checks.
@@ -104,11 +112,11 @@ try {
     results.save = JSON.parse(localStorage.getItem('oilpaint.levels.v1'));
     check(results.save.cleared === plan.length, 'victory persists');
     // After winning, create a temporary wall in open space to test the actual capsule sweep.
-    L.teleport(0, 78, 0, 60); input({}); const y = P.feet.y;
-    const wall = P.world.createCollider(P.R.ColliderDesc.cuboid(3, 2, 0.2).setTranslation(0, y + 1, 75.5));
+    L.teleport(0, Z0, 0, Z0 - 18); input({}); const y = P.feet.y;
+    const wall = P.world.createCollider(P.R.ColliderDesc.cuboid(3, 2, 0.2).setTranslation(0, y + 1, Z0 - 2.5));
     P.world.step(); check(P.startDash(), 'ground dash starts'); L.step(1 / 60, 30);
     results.dashEndZ = P.feet.z;
-    check(P.feet.z > 75.9 && P.feet.z < 77, 'dash stops at the wall');
+    check(P.feet.z > Z0 - 2.1 && P.feet.z < Z0 - 1, 'dash stops at the wall');
     check(Math.abs(P.visualY - P.feet.y) < 0.2, 'dash visual history');
     P.world.removeCollider(wall, true); L.setInput(null);
     return results;

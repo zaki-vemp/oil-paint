@@ -71,10 +71,11 @@ export class Player {
     return { y: fromY - hit.timeOfImpact, normal: new THREE.Vector3(hit.normal.x, hit.normal.y, hit.normal.z) };
   }
 
-  castRay(origin, dir, max, exclude = this.collider) {
+  /** `still`: only what never moves counts (walls, ground), not bodies or vehicles. */
+  castRay(origin, dir, max, exclude = this.collider, still = false) {
     this.ray.origin = { x: origin.x, y: origin.y, z: origin.z };
     this.ray.dir = { x: dir.x, y: dir.y, z: dir.z };
-    const hit = this.world.castRay(this.ray, max, true, undefined, undefined, exclude);
+    const hit = this.world.castRay(this.ray, max, true, still ? this.R.QueryFilterFlags.EXCLUDE_KINEMATIC : undefined, undefined, exclude);
     return hit ? hit.timeOfImpact : null;
   }
 

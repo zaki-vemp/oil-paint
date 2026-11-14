@@ -219,3 +219,21 @@ html[data-clean] #game-header, html[data-clean] #hud, html[data-clean] #hint, ht
   .combo.pop b, .flash-text.show, .chapter-banner.visible strong, .journey .active, #hud.critical .hp span, .target.warning p, .bossbar.opening .boss-cue { animation: none; }
   .flash-text.show { opacity: 1; }
 }
+
+/* At the wheel: a speed read-out over the vitals, a prompt beside a vehicle in reach, and the street's temper. */
+.ride { position: absolute; left: 30px; bottom: 130px; display: grid; grid-template-columns: auto auto; align-items: end; column-gap: 8px; color: var(--yellow); text-shadow: 3px 3px 0 #ff2a6d88, 0 0 18px #000c; font-style: italic; }
+.ride[hidden], .ride-prompt[hidden], .heat[hidden] { display: none; }
+.ride b { font: 700 82px/0.86 var(--display); font-variant-numeric: tabular-nums; min-width: 2.2ch; text-align: right; }
+.ride span { font: 700 12px var(--mono); letter-spacing: .24em; text-transform: uppercase; color: var(--cyan); padding-bottom: 8px; text-shadow: 0 1px 0 #000; }
+.ride em, .ride i { grid-column: 1 / -1; font: 700 11px var(--mono); letter-spacing: .14em; text-transform: uppercase; font-style: normal; text-shadow: 0 1px 0 #000; }
+.ride em { color: var(--ink); margin-top: 6px; }
+.ride i { color: var(--muted); }
+.ride.loose i { color: var(--red); animation: blink .3s steps(2) infinite; }
+.ride-prompt { position: absolute; left: 50%; bottom: 190px; transform: translateX(-50%); display: flex; align-items: center; gap: 10px; padding: 9px 18px 9px 10px; pointer-events: auto; color: var(--ink); font-size: 13px; font-weight: 700; letter-spacing: .14em; text-transform: uppercase;
+  background: linear-gradient(160deg, #0d131ae8, #06090de8); border: 1px solid var(--hot); clip-path: polygon(0 0, calc(100% - 10px) 0, 100% 10px, 100% 100%, 10px 100%, 0 calc(100% - 10px)); }
+.ride-prompt kbd { background: var(--hot); color: #05070a; border: 0; font-size: 12px; padding: 3px 7px; }
+.heat { position: absolute; top: 112px; left: 50%; transform: translateX(-50%); display: flex; align-items: center; gap: 12px; padding: 6px 14px; background: var(--red); color: #05070a; font: 700 12px var(--mono); letter-spacing: .2em; text-transform: uppercase; animation: blink .8s steps(2) infinite; }
+.heat span { font-variant-numeric: tabular-nums; }
+#hud.driving .actions { opacity: .3; }
+@media (max-width: 640px) { .ride { left: 16px; bottom: 200px; } .ride b { font-size: 54px; } .ride-prompt { bottom: 250px; font-size: 11px; } .heat { top: 240px; font-size: 10px; } }
+@media (prefers-reduced-motion: reduce) { .ride.loose i, .heat { animation: none; } }
