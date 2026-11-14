@@ -84,6 +84,13 @@ export function createShared() {
     uFoliage: { value: new THREE.Color(0.25, 0.57, 0.32) },
     uLeafLight: { value: new THREE.Color(0.64, 0.79, 0.34) },
     uPath: { value: new THREE.Color(0.88, 0.78, 0.53) },
+    // City districts, set from the chapter palettes in anime.js. x/y/z of uZoneSplit are the downtown z, market z, docks x.
+    uZoneSplit: { value: new THREE.Vector3(90, -10, -30) },
+    uGrid: { value: new THREE.Vector3(-200, 40, 3.6) }, // road lattice: origin, spacing, half-width
+    uZoneGrass: { value: [0, 1, 2, 3].map(() => new THREE.Vector3(0.1, 0.12, 0.16)) },
+    uZoneFoliage: { value: [0, 1, 2, 3].map(() => new THREE.Vector3(0.2, 0.8, 0.9)) },
+    uZoneLeaf: { value: [0, 1, 2, 3].map(() => new THREE.Vector3(1, 0.86, 0.5)) },
+    uZonePath: { value: [0, 1, 2, 3].map(() => new THREE.Vector3(0.2, 0.22, 0.26)) },
     uSkyHigh: { value: new THREE.Color(0.31, 0.67, 0.82) },
     uFocus: { value: new THREE.Vector3() }, // where the wanderer stands
   };
@@ -123,8 +130,24 @@ uniform vec3 uGrass;
 uniform vec3 uFoliage;
 uniform vec3 uLeafLight;
 uniform vec3 uPath;
+uniform vec3 uZoneSplit;
+uniform vec3 uGrid;
+uniform vec3 uZoneGrass[4];
+uniform vec3 uZoneFoliage[4];
+uniform vec3 uZoneLeaf[4];
+uniform vec3 uZonePath[4];
 uniform vec3 uSkyHigh;
 uniform vec3 uFocus;
+
+vec3 zonePick(vec2 xz, vec3 a, vec3 b, vec3 c, vec3 d) {
+  if (xz.y > uZoneSplit.x) return a;
+  if (xz.y > uZoneSplit.y) return b;
+  if (xz.x > uZoneSplit.z) return c;
+  return d;
+}
+float gridAxis(float p) {
+  return abs(mod(p - uGrid.x + uGrid.y * 0.5, uGrid.y) - uGrid.y * 0.5);
+}
 
 vec4 hash4(vec2 p, float salt) {
   vec4 q = fract(vec4(p.xyxy) * vec4(0.1031, 0.1030, 0.0973, 0.1099) + salt * 0.0713);

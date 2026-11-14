@@ -22,7 +22,6 @@ import { Follow } from './figure/camera.js';
 import { createHunt } from './game/hunt.js';
 import { createRides } from './game/ride.js';
 import { LEVELS } from './game/levels.js';
-import { SCALE } from './game/chapters.js';
 
 const q = new URLSearchParams(location.search);
 const capture = q.has('capture');
@@ -87,7 +86,7 @@ await turn();
 const forest = createAnimeWorld(shared);
 lap('forest');
 // the baked shade has to hold the whole stretched district, not only the first small wood
-const shade = createShade(renderer, shared, forest.shade, { box: [165 * SCALE, 104 * SCALE], centre: [0, 11, -8 * SCALE], back: 700, far: 1600 });
+const shade = createShade(renderer, shared, forest.shade, { box: [460, 460], centre: [0, 24, 0], back: 800, far: 2000 });
 lap('shade');
 say(0.25, 'Fetching the wanderer');
 await turn();

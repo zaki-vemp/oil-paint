@@ -11,12 +11,19 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { paint } from '../figure/figure.js';
 import { RAM } from './hunt.js';
+import { wayDist, ROAD } from '../world/land.js';
+import { AVENUES, STREETS, GRID_MIN, GRID_MAX } from '../world/grid.js';
 
 // len/wid/base in metres; top and rev in m/s; grip and drift are how fast sideways speed is scrubbed (1/s), gripping
 // and sliding; slip is the sideways speed where the tyres let go; calm is the speed at which steering lock has halved.
+// heft is the share of speed kept after hitting someone (a heavy truck keeps more). hull is hit points.
+// throw: a hard lean at speed, or a rollover, puts the rider on the pavement. `car` is the sedan — the street checks look it up by that key.
 export const RIDES = {
-  car: { name: 'Eclipse SRC', len: 4.2, wid: 1.9, base: 2.6, wheel: 0.36, top: 25, rev: 8, accel: 12, brake: 24, grip: 7, drift: 1.3, slip: 6, steer: 0.62, calm: 9, lean: 0, heft: 0.65, mass: 1200, eye: 10.5 },
-  bike: { name: 'Hayate 400', len: 2.2, wid: 0.7, base: 1.45, wheel: 0.36, top: 31, rev: 4, accel: 17, brake: 22, grip: 9, drift: 1.7, slip: 7.5, steer: 0.5, calm: 8, lean: 1, heft: 0.45, mass: 240, eye: 8.5 },
+  car: { name: 'Sedan', len: 4.2, wid: 1.9, base: 2.6, wheel: 0.36, top: 25, rev: 8, accel: 12, brake: 24, grip: 7.4, drift: 1.3, slip: 6, steer: 0.58, calm: 9, lean: 0, heft: 0.65, mass: 1200, eye: 10.5, hull: 140, throw: 0 },
+  sports: { name: 'Sports', len: 4.3, wid: 1.85, base: 2.45, wheel: 0.34, top: 34, rev: 9, accel: 18, brake: 30, grip: 8.6, drift: 0.95, slip: 7.2, steer: 0.72, calm: 11, lean: 0, heft: 0.58, mass: 1000, eye: 11.5, hull: 90, throw: 0 },
+  pickup: { name: 'Pickup', len: 5.3, wid: 2.05, base: 3.25, wheel: 0.44, top: 18, rev: 6, accel: 8, brake: 16, grip: 6.4, drift: 1.5, slip: 5.5, steer: 0.46, calm: 7, lean: 0, heft: 0.84, mass: 2400, eye: 12.2, hull: 240, throw: 0 },
+  bike: { name: 'Motorbike', len: 2.2, wid: 0.7, base: 1.45, wheel: 0.36, top: 31, rev: 4, accel: 17, brake: 22, grip: 9, drift: 1.7, slip: 7.5, steer: 0.5, calm: 8, lean: 1, heft: 0.45, mass: 240, eye: 8.5, hull: 70, throw: 1 },
+  bicycle: { name: 'Bicycle', len: 1.7, wid: 0.5, base: 1.05, wheel: 0.32, top: 12, rev: 3, accel: 5, brake: 10, grip: 8, drift: 2.2, slip: 4, steer: 0.7, calm: 5, lean: 1, heft: 0.28, mass: 80, eye: 7.6, hull: 28, throw: 1 },
 };
 const GRAVITY = 20;
 const BAIL = 9; // m/s: faster than this he stays in his seat
@@ -66,8 +73,9 @@ export function collide(a, b) {
 /**
  * One step of the handling on flat ground: `v` is { yaw, vx, vz, steer } and is changed in place.
  * throttle -1..1 (the same pedal brakes when it opposes the motion), steer -1..1 (+ is his right), hand: handbrake.
+ * gripMul is 1 on asphalt and lower on dirt: the same slip limit arrives sooner, and the tyres scrub less of it.
  */
-export function drive(v, s, { throttle = 0, steer = 0, hand = false } = {}, dt, grounded = true) {
+export function drive(v, s, { throttle = 0, steer = 0, hand = false } = {}, dt, grounded = true, gripMul = 1) {
   const fx = Math.sin(v.yaw), fz = Math.cos(v.yaw);
   let vf = v.vx * fx + v.vz * fz, vs = v.vx * fz - v.vz * fx; // along the heading, and across it
   v.yawRate = 0; v.sliding = false;
@@ -82,8 +90,9 @@ export function drive(v, s, { throttle = 0, steer = 0, hand = false } = {}, dt, 
     v.steer += (steer * lock - v.steer) * Math.min(1, 9 * dt);
     v.yawRate = -(vf / s.base) * Math.tan(v.steer) * (hand ? 1.35 : 1); // a locked rear swings round
     v.yaw += v.yawRate * dt;
-    const before = Math.hypot(vf, vs), slide = hand || Math.abs(vs) > s.slip;
-    vs *= Math.exp(-(slide ? s.drift : s.grip) * dt);
+    const grip = s.grip * gripMul, slip = s.slip * (0.35 + 0.65 * gripMul);
+    const before = Math.hypot(vf, vs), slide = hand || Math.abs(vs) > slip;
+    vs *= Math.exp(-(slide ? s.drift * (gripMul < 1 ? 0.7 : 1) : grip) * dt);
     // gripping tyres turn the car's speed with it rather than burn it: three quarters of the scrub comes back
     const after = Math.hypot(vf, vs);
     if (!slide && after > 1e-3) { const k = (after + (before - after) * 0.75) / after; vf *= k; vs *= k; }
@@ -134,6 +143,12 @@ export async function createRides({ scene, shared, player, heightAt, hunt, route
       wheels.push({ pivot, spin, front });
     };
     let rider = null;
+    const bust = (y, z, sc = 1) => {
+      rider = new THREE.Group(); rider.visible = false; rider.scale.setScalar(sc); shell.add(rider);
+      const cloth = paint(shared, CLOTH), skin = paint(shared, SKIN);
+      add(rider, new THREE.BoxGeometry(0.42, 0.5, 0.28), cloth, 0, y, z);
+      add(rider, new THREE.SphereGeometry(0.16, 8, 6), skin, 0, y + 0.4, z + 0.06);
+    };
     if (kind === 'car') {
       const model = carModel.scene.clone(true);
       model.traverse(o => {
@@ -142,107 +157,135 @@ export async function createRides({ scene, shared, player, heightAt, hunt, route
         o.material = /Color|Body/.test(name) ? body : /Window$|Glass|Mirror/.test(name) ? glass : /RearLight|BrakeLight|Taillight/.test(name) ? lamps.red : /ReverseLight|^Light|Headlight/.test(name) ? lamps.white : /Signal|Accent/.test(name) ? neon : dark;
       });
       shell.add(model);
-      for (const x of [-1, 1]) {
-        add(shell, new THREE.BoxGeometry(0.04, 0.05, 3.5), neon, x * (s.wid / 2 + 0.005), 0.46, 0);
-      }
+      for (const x of [-1, 1]) add(shell, new THREE.BoxGeometry(0.04, 0.05, 3.5), neon, x * (s.wid / 2 + 0.005), 0.46, 0);
       for (const x of [-1, 1]) for (const z of [-1, 1]) wheel(x * (s.wid / 2 - 0.12), z * s.base / 2, 0.26, z > 0);
-    } else {
-      add(shell, profile([[-1.0, 0.56], [-0.95, 0.96], [-0.2, 0.9], [0.42, 1.12], [0.95, 0.82], [0.72, 0.46], [-0.4, 0.4]], 0.34), body);
-      add(shell, new THREE.BoxGeometry(0.72, 0.05, 0.05), dark, 0, 1.16, 0.46);
-      add(shell, new THREE.BoxGeometry(0.36, 0.04, 1.15), neon, 0, 0.4, 0);
-      add(shell, new THREE.BoxGeometry(0.2, 0.1, 0.06), lamps.white, 0, 0.96, 0.9);
-      add(shell, new THREE.BoxGeometry(0.22, 0.06, 0.05), lamps.red, 0, 0.9, -0.99);
-      wheel(0, s.base / 2, 0.16, true); wheel(0, -s.base / 2, 0.2, false);
+      bust(0.85, 0.15, 0.85);
+    } else if (kind === 'bike' || kind === 'bicycle') {
+      const slim = kind === 'bicycle';
+      add(shell, profile(slim
+        ? [[-0.7, 0.42], [-0.55, 0.7], [0.15, 0.78], [0.7, 0.55], [0.45, 0.36], [-0.35, 0.34]]
+        : [[-1.0, 0.56], [-0.95, 0.96], [-0.2, 0.9], [0.42, 1.12], [0.95, 0.82], [0.72, 0.46], [-0.4, 0.4]], slim ? 0.16 : 0.34), body);
+      add(shell, new THREE.BoxGeometry(slim ? 0.4 : 0.72, 0.05, 0.05), dark, 0, slim ? 0.82 : 1.16, slim ? 0.2 : 0.46);
+      if (!slim) add(shell, new THREE.BoxGeometry(0.36, 0.04, 1.15), neon, 0, 0.4, 0);
+      add(shell, new THREE.BoxGeometry(0.16, 0.08, 0.05), lamps.white, 0, slim ? 0.72 : 0.96, slim ? 0.68 : 0.9);
+      add(shell, new THREE.BoxGeometry(0.18, 0.05, 0.04), lamps.red, 0, slim ? 0.62 : 0.9, slim ? -0.72 : -0.99);
+      wheel(0, s.base / 2, slim ? 0.08 : 0.16, true); wheel(0, -s.base / 2, slim ? 0.08 : 0.2, false);
       // He is hidden while he rides, so the bike carries a plain seated figure in his colours.
       rider = new THREE.Group(); rider.visible = false; shell.add(rider);
       const cloth = paint(shared, CLOTH), skin = paint(shared, SKIN);
-      add(rider, new THREE.BoxGeometry(0.4, 0.6, 0.26), cloth, 0, 1.36, -0.22).rotation.x = 0.45;
-      add(rider, new THREE.SphereGeometry(0.16, 8, 6), skin, 0, 1.78, 0.02);
-      add(rider, new THREE.SphereGeometry(0.17, 8, 6, 0, Math.PI * 2, 0, 1.6), dark, 0, 1.8, 0);
+      const seat = slim ? 0.75 : 1;
+      add(rider, new THREE.BoxGeometry(0.4, 0.6, 0.26), cloth, 0, 1.36 * seat, -0.22).rotation.x = 0.45;
+      add(rider, new THREE.SphereGeometry(0.16, 8, 6), skin, 0, 1.78 * seat, 0.02);
+      add(rider, new THREE.SphereGeometry(0.17, 8, 6, 0, Math.PI * 2, 0, 1.6), dark, 0, 1.8 * seat, 0);
       for (const x of [-1, 1]) {
-        add(rider, new THREE.BoxGeometry(0.1, 0.1, 0.62), cloth, x * 0.26, 1.34, 0.16).rotation.x = 0.35;
-        add(rider, new THREE.BoxGeometry(0.15, 0.46, 0.17), cloth, x * 0.2, 0.9, -0.12).rotation.x = -0.9;
-        add(rider, new THREE.BoxGeometry(0.13, 0.44, 0.14), dark, x * 0.2, 0.56, -0.1);
+        add(rider, new THREE.BoxGeometry(0.1, 0.1, 0.62), cloth, x * 0.26, 1.34 * seat, 0.16).rotation.x = 0.35;
+        add(rider, new THREE.BoxGeometry(0.15, 0.46, 0.17), cloth, x * 0.2, 0.9 * seat, -0.12).rotation.x = -0.9;
+        add(rider, new THREE.BoxGeometry(0.13, 0.44, 0.14), dark, x * 0.2, 0.56 * seat, -0.1);
       }
+    } else if (kind === 'pickup') {
+      add(shell, new THREE.BoxGeometry(s.wid, 0.45, s.len), body, 0, 0.55, 0);
+      add(shell, new THREE.BoxGeometry(s.wid * 0.96, 0.85, 1.7), body, 0, 1.15, 1.15);
+      add(shell, new THREE.BoxGeometry(s.wid * 0.7, 0.4, 0.9), glass, 0, 1.35, 1.35);
+      for (const x of [-1, 1]) add(shell, new THREE.BoxGeometry(0.08, 0.45, 2.2), dark, x * (s.wid / 2 - 0.04), 0.95, -1.15);
+      add(shell, new THREE.BoxGeometry(s.wid, 0.1, 0.08), lamps.white, 0, 0.7, s.len / 2);
+      add(shell, new THREE.BoxGeometry(s.wid * 0.4, 0.08, 0.06), lamps.red, 0, 0.7, -s.len / 2);
+      for (const x of [-1, 1]) for (const z of [-1.15, 1.15]) wheel(x * (s.wid / 2 - 0.08), z, 0.28, z > 0);
+      bust(1.35, 1.2);
+    } else {
+      add(shell, profile([[-2.0, 0.38], [-1.7, 0.62], [-0.3, 0.78], [0.5, 0.7], [1.85, 0.5], [2.0, 0.36], [1.4, 0.3], [-1.6, 0.3]], s.wid * 0.92), body);
+      add(shell, new THREE.BoxGeometry(s.wid * 0.55, 0.28, 0.7), glass, 0, 0.78, 0.15);
+      add(shell, new THREE.BoxGeometry(s.wid * 0.3, 0.06, 0.05), lamps.white, 0, 0.48, 1.95);
+      add(shell, new THREE.BoxGeometry(s.wid * 0.35, 0.05, 0.05), lamps.red, 0, 0.46, -1.95);
+      for (const x of [-1, 1]) add(shell, new THREE.BoxGeometry(0.04, 0.04, 3.2), neon, x * (s.wid / 2), 0.36, 0);
+      for (const x of [-1, 1]) for (const z of [-1, 1]) wheel(x * (s.wid / 2 - 0.1), z * s.base / 2, 0.24, z > 0);
+      bust(0.7, 0.05, 0.8);
     }
+    const smoke = add(shell, new THREE.SphereGeometry(0.28, 6, 5), new THREE.MeshBasicMaterial({ color: 0x9aa3ad, transparent: true, opacity: 0.45, depthWrite: false }), 0, 1.3, -s.len * 0.35);
+    const fire = add(shell, new THREE.SphereGeometry(0.34, 6, 5), new THREE.MeshBasicMaterial({ color: 0xff5a1f, transparent: true, opacity: 0.85, depthWrite: false }), 0, 1.15, -s.len * 0.15);
+    smoke.visible = fire.visible = false;
     scene.add(root);
-    return { root, shell, wheels, rider };
+    return { root, shell, wheels, rider, smoke, fire };
   }
 
   const rides = [];
+  let driven = null, eyeBefore = 0, lookIdle = 0, told = 0;
   function park(kind, x, z, yaw) {
     const s = RIDES[kind], y = heightAt(x, z);
     const body = world.createRigidBody(R.RigidBodyDesc.kinematicPositionBased().setTranslation(x, y + 0.7, z));
     const collider = world.createCollider(R.ColliderDesc.cuboid(s.wid / 2, 0.6, s.len / 2).setFriction(0), body);
     const v = { kind, spec: s, x, y, z, yaw, vx: 0, vz: 0, vy: 0, vf: 0, steer: 0, yawRate: 0, air: 0, pitch: 0, roll: 0, lean: 0, squat: 0, spin: 0,
-      tilt: 0, rollRate: 0, spinRate: 0, tipped: false, liable: 0, traffic: null,
+      tilt: 0, rollRate: 0, spinRate: 0, tipped: false, liable: 0, traffic: null, driver: false,
+      hp: s.hull, wrecked: false, boom: 0,
       shape: new R.Cuboid(s.wid / 2, 0.4, s.len / 2), home: { x, z, yaw }, body, collider, ...build(kind, rides.length) };
     rides.push(v); place(v, 0);
     return v;
   }
-  // A car on one kerb and a bike on the other, a little past every cairn, pointing down the way.
-  for (const cp of checkpoints) {
+  // Two different kinds just past each cairn, rotating so all five show up along the trail.
+  const parked = [['car', 'bike'], ['sports', 'bicycle'], ['pickup', 'car'], ['bike', 'sports'], ['bicycle', 'pickup'], ['car', 'bike']];
+  checkpoints.forEach((cp, n) => {
     let i = 0;
     for (let k = 1; k < route.length - 1; k++) if (Math.hypot(route[k][0] - cp.x, route[k][1] - cp.z) < Math.hypot(route[i][0] - cp.x, route[i][1] - cp.z)) i = k;
-    for (const [kind, ahead, side] of [['car', 4, 2.4], ['bike', 2, -2.8]]) {
-      const j = Math.min(route.length - 2, i + ahead), [ax, az] = route[j], [bx, bz] = route[j + 1], l = Math.hypot(bx - ax, bz - az) || 1;
+    parked[n].forEach((kind, k) => {
+      const j = Math.min(route.length - 2, i + (k ? 2 : 5));
+      const [ax, az] = route[j], [bx, bz] = route[j + 1], l = Math.hypot(bx - ax, bz - az) || 1, side = k ? -2.8 : 2.4;
       park(kind, ax + (bz - az) / l * side, az - (bx - ax) / l * side, Math.atan2(bx - ax, bz - az));
-    }
-  }
+    });
+  });
 
-  // Metres along the same way used by the land. Each district keeps its own traffic behind its gates.
-  const lengths = [0];
-  for (let i = 1; i < route.length; i++) lengths.push(lengths[i - 1] + Math.hypot(route[i][0] - route[i - 1][0], route[i][1] - route[i - 1][1]));
-  const nearest = (x, z) => {
-    let best = Infinity, at = 0;
-    for (let i = 0; i < route.length - 1; i++) {
-      const [ax, az] = route[i], [bx, bz] = route[i + 1], dx = bx - ax, dz = bz - az, len = lengths[i + 1] - lengths[i];
-      const t = Math.max(0, Math.min(1, ((x - ax) * dx + (z - az) * dz) / (len * len)));
-      const d = Math.hypot(x - ax - dx * t, z - az - dz * t);
-      if (d < best) { best = d; at = lengths[i] + len * t; }
-    }
-    return at;
-  };
-  function lane(at, dir) {
-    at = Math.max(0, Math.min(lengths.at(-1) - 0.001, at));
-    let i = 0;
-    while (lengths[i + 1] < at) i++;
-    const [ax, az] = route[i], [bx, bz] = route[i + 1], len = lengths[i + 1] - lengths[i], t = (at - lengths[i]) / len;
-    const fx = (bx - ax) / len * dir, fz = (bz - az) / len * dir;
-    return { x: ax + (bx - ax) * t - fz * 1.5, z: az + (bz - az) * t + fx * 1.5, yaw: Math.atan2(fx, fz) };
-  }
-  for (const [i, cp] of checkpoints.entries()) {
-    const lo = nearest(cp.x, cp.z) + 12, hi = nearest(checkpoints[i + 1]?.x ?? route.at(-1)[0], checkpoints[i + 1]?.z ?? route.at(-1)[1]) - 14;
-    if (hi - lo < 12) continue;
-    const dir = i % 2 ? -1 : 1, at = (lo + hi) / 2, p = lane(at, dir);
-    const v = park(i % 3 === 1 ? 'bike' : 'car', p.x, p.z, p.yaw);
-    v.traffic = { lo, hi, dir, cruise: 7 + i % 3, wait: 0 };
+  // Traffic keeps to a grid lane (a street or an avenue), in the right-hand side, and turns round at the map edge.
+  // A street runs across the gates, so these trips are not stopped by a closed level.
+  const beats = [
+    { kind: 'car', axis: 'x', line: 160, dir: 1, at: 20 },
+    { kind: 'sports', axis: 'x', line: 80, dir: -1, at: -24 },
+    { kind: 'pickup', axis: 'x', line: 40, dir: 1, at: 56 },
+    { kind: 'car', axis: 'x', line: 0, dir: -1, at: -48 },
+    { kind: 'sports', axis: 'x', line: -40, dir: 1, at: 16 },
+    { kind: 'pickup', axis: 'z', line: 120, dir: -1, at: 24 },
+  ];
+  for (const b of beats) {
+    const side = 1.6 * (b.axis === 'x' ? -b.dir : b.dir);
+    const x = b.axis === 'x' ? b.at : b.line + side, z = b.axis === 'z' ? b.at : b.line + side;
+    const yaw = b.axis === 'x' ? (b.dir > 0 ? Math.PI / 2 : -Math.PI / 2) : (b.dir > 0 ? 0 : Math.PI);
+    const v = park(b.kind, x, z, yaw);
+    v.driver = true; v.traffic = { axis: b.axis, dir: b.dir, line: b.line, cruise: 8, wait: 0, flee: 0, swerve: 1, horn: 0 };
     if (v.rider) v.rider.visible = true;
   }
 
   function trafficInput(v, dt) {
-    const t = v.traffic, at = nearest(v.x, v.z), remaining = t.dir > 0 ? t.hi - at : at - t.lo;
-    const sp = Math.hypot(v.vx, v.vz);
-    // A trip ends at the district boundary. Recycle only out of sight, with an empty starting lane.
-    if (remaining < 2 && sp < 0.7 && Math.hypot(v.x - player.feet.x, v.z - player.feet.z) > 95) {
-      const p = lane(t.dir > 0 ? t.lo : t.hi, t.dir);
-      if (Math.hypot(p.x - player.feet.x, p.z - player.feet.z) > 95 && !rides.some(o => o !== v && Math.hypot(o.x - p.x, o.z - p.z) < 7)) {
-        Object.assign(v, p, { y: heightAt(p.x, p.z), vx: 0, vz: 0, vy: 0, tilt: 0, tipped: false, rollRate: 0, spinRate: 0, air: 0, liable: 0 });
-      }
+    const t = v.traffic, sp = Math.hypot(v.vx, v.vz);
+    const along = t.axis === 'x' ? v.x : v.z;
+    // The lattice ends. Turning round keeps the same six cars in the city.
+    if ((t.dir > 0 && along > GRID_MAX - 16) || (t.dir < 0 && along < GRID_MIN + 16)) t.dir *= -1;
+    const ahead = 6 + sp * 0.45, side = 1.6 * (t.axis === 'x' ? -t.dir : t.dir);
+    const tx = t.axis === 'x' ? v.x + t.dir * ahead : t.line + side;
+    const tz = t.axis === 'z' ? v.z + t.dir * ahead : t.line + side;
+    const fx = Math.sin(v.yaw), fz = Math.cos(v.yaw);
+    let angle = wrap(Math.atan2(tx - v.x, tz - v.z) - v.yaw);
+    if (t.flee > 0) { t.flee -= dt; angle += t.swerve * 0.55; }
+    let want = Math.min(t.flee > 0 ? t.cruise + 4 : t.cruise, Math.abs(angle) > 0.6 ? 4 : Infinity);
+    // The other road of a crossing: stop when someone is already in it, otherwise roll through.
+    const lines = t.axis === 'x' ? AVENUES : STREETS;
+    const cross = lines.find(p => { const d = (p - along) * t.dir; return d > 1 && d < 9; });
+    if (cross != null && t.flee <= 0) {
+      const ix = t.axis === 'x' ? cross : t.line, iz = t.axis === 'z' ? cross : t.line;
+      const busy = rides.some(o => o !== v && Math.hypot(o.x - ix, o.z - iz) < 6 && Math.hypot(o.vx, o.vz) > 0.8)
+        || hunt.enemies.some(e => !e.dead && !e.gone && Math.hypot(e.x - ix, e.z - iz) < 5);
+      if (busy) want = 0;
     }
-    const target = lane(at + t.dir * Math.max(5, sp * 0.8), t.dir), fx = Math.sin(v.yaw), fz = Math.cos(v.yaw);
-    const angle = wrap(Math.atan2(target.x - v.x, target.z - v.z) - v.yaw);
-    let want = Math.min(t.cruise, Math.sqrt(Math.max(0, remaining - 2) * 5), Math.abs(angle) > 0.5 ? 4 : Infinity);
     const stopping = 3 + sp * sp / (2 * v.spec.brake) + sp * 0.4;
     const blocked = (x, z, radius) => {
-      const dx = x - v.x, dz = z - v.z, ahead = dx * fx + dz * fz - v.spec.len / 2;
-      return ahead > -0.5 && ahead < stopping + radius && Math.abs(dx * fz - dz * fx) < v.spec.wid / 2 + radius + 0.5;
+      const dx = x - v.x, dz = z - v.z, gap = dx * fx + dz * fz - v.spec.len / 2;
+      return gap > -0.5 && gap < stopping + radius && Math.abs(dx * fz - dz * fx) < v.spec.wid / 2 + radius + 0.5;
     };
-    if (v.tipped || hunt.enemies.some(e => !e.dead && !e.gone && blocked(e.x, e.z, 0.45)) ||
+    if (v.tipped || v.wrecked || hunt.enemies.some(e => !e.dead && !e.gone && blocked(e.x, e.z, 0.45)) ||
       (!driven && blocked(player.feet.x, player.feet.z, 0.6)) || rides.some(o => o !== v && blocked(o.x, o.z, o.spec.wid / 2))) want = 0;
     t.wait = Math.max(0, t.wait - dt);
     if (t.wait > 0) want = 0;
-    return { throttle: want === 0 && sp < 0.7 ? 0 : want > sp + 0.3 ? 0.55 : want < sp - 0.1 ? -1 : 0.15, steer: Math.max(-1, Math.min(1, -angle * 2.5)), hand: want === 0 && sp < 0.7 };
+    if (t.horn > 0) {
+      t.horn -= dt;
+      if (!t.honked && Math.hypot(v.x - player.feet.x, v.z - player.feet.z) < 30) { t.honked = true; hunt.hud.flashText('Honk'); }
+    }
+    return { throttle: want === 0 && sp < 0.7 ? 0 : want > sp + 0.3 ? 0.55 : want < sp - 0.1 ? -1 : 0.15, steer: Math.max(-1, Math.min(1, -angle * 2.4)), hand: want === 0 && sp < 0.7 };
   }
 
   /** Puts the solids where the numbers say: heading, the land's tilt, a bike's lean, the body's squat, the wheels. */
@@ -257,11 +300,19 @@ export async function createRides({ scene, shared, player, heightAt, hunt, route
     v.shell.rotation.set(v.squat, 0, s.lean ? 0 : -v.lean * 0.16); // a car's body rolls out of the turn its tyres hold
     v.spin += v.vf * dt / s.wheel;
     for (const w of v.wheels) { w.spin.rotation.x = v.spin; if (w.front) w.pivot.rotation.y = -v.steer; }
+    if (v.rider) v.rider.visible = v === driven || v.driver;
+    const hurt = v.spec.hull;
+    v.smoke.visible = v.hp < hurt * 0.66;
+    v.fire.visible = v.hp < hurt * 0.34 || v.boom > 0;
+    if (v.smoke.visible || v.fire.visible) {
+      const bob = 1 + Math.sin((v.boom > 0 ? v.boom : v.hp) * 18 + (v.smoke.visible ? 1 : 0)) * 0.15;
+      v.smoke.position.y = 1.3 + bob * 0.35; v.fire.position.y = 1.05 + bob * 0.2;
+      if (v.boom > 0) { v.boom = Math.max(0, v.boom - dt); v.fire.scale.setScalar(1 + (0.45 - v.boom) * 6); }
+      else v.fire.scale.setScalar(1);
+    }
     v.body.setTranslation({ x: v.x, y: v.y + 0.7 + lift, z: v.z }, true);
     v.body.setRotation(v.root.quaternion, true);
   }
-
-  let driven = null, eyeBefore = 0, lookIdle = 0, told = 0;
 
   function sweep(v, ux, uz, dist) {
     return world.castShape({ x: v.x, y: v.y + 0.8, z: v.z }, { x: 0, y: Math.sin(v.yaw / 2), z: 0, w: Math.cos(v.yaw / 2) },
@@ -277,11 +328,36 @@ export async function createRides({ scene, shared, player, heightAt, hunt, route
     v.x += dx / dist * Math.min(dist, go); v.z += dz / dist * Math.min(dist, go);
   }
 
+  function scar(v, otherMass, closing) {
+    if (closing < 5 || v.wrecked) return;
+    v.hp = Math.max(0, v.hp - closing * otherMass / 1400);
+    if (v.hp <= 0) wreck(v);
+  }
+  function wreck(v) {
+    if (v.wrecked) return;
+    v.wrecked = true; v.hp = 0; v.boom = 0.45;
+    if (v.traffic) v.traffic = null;
+    if (v === driven) bail(v, 'Wrecked');
+    else hunt.jolt(0.08);
+  }
+  /** Out of the seat and off to one side. `why` is the line he sees. */
+  function bail(v, why) {
+    const lx = Math.cos(v.yaw), lz = -Math.sin(v.yaw);
+    leave(true);
+    const x = v.x + lx * (v.spec.wid / 2 + 0.9), z = v.z + lz * (v.spec.wid / 2 + 0.9);
+    player.teleport(x, heightAt(x, z), z);
+    player.yaw = player.lastYaw = v.yaw;
+    settle();
+    if (why) hunt.hud.flashText(why);
+  }
   function step(v, dt, input) {
     const s = v.spec, before = v.vf;
     v.liable = Math.max(0, v.liable - dt);
     if (v === driven) v.liable = 5;
-    drive(v, s, input, dt, v.air <= 0 && !v.tipped);
+    if (v.wrecked) input = { throttle: 0, steer: 0, hand: true };
+    // Dirt (off the asphalt mask) gives the tyres less to push against.
+    const paved = wayDist(v.x, v.z) < ROAD + 0.8;
+    drive(v, s, input, dt, v.air <= 0 && !v.tipped, paved ? 1 : 0.4);
     if (v.tipped) { const drag = Math.exp(-2.5 * dt); v.vx *= drag; v.vz *= drag; }
     v.yaw += v.spinRate * dt; v.spinRate *= Math.exp(-3 * dt);
     rock(v, dt);
@@ -304,15 +380,18 @@ export async function createRides({ scene, shared, player, heightAt, hunt, route
           v.rollRate += (nx * fz - nz * fx) * into * (s.lean ? 0.9 : 0.55);
           if (v === driven && -into > 5) hunt.jolt(Math.min(0.22, -into * 0.012));
           if (v === driven && -into > 11) hunt.crash(Math.min(18, (-into - 11) * 1.4));
+          // A wall has no mass of its own; the blow is the speed he brought into it.
+          scar(v, 900, -into);
         }
       }
-      if (sp > RAM.min && v.liable > 0) {
+      if (sp > RAM.min && v.liable > 0 && !v.wrecked) {
         for (const e of hunt.enemies) {
           if (e.dead || e.gone) continue;
           const dx = e.x - v.x, dz = e.z - v.z, r = e.cap?.[0] ?? 0.3;
           if (Math.abs(dx * fz - dz * fx) > s.wid / 2 + r || Math.abs(dx * fx + dz * fz) > s.len / 2 + r) continue;
           if (dx * ux + dz * uz < -0.4 || Math.abs(heightAt(e.x, e.z) + (e.air ?? 0) - v.y) > 2) continue; // behind it, or over it
-          if (hunt.ram(e, sp, ux, uz)) { const keep = e.kind === 'brute' ? 0.25 : s.heft; v.vx *= keep; v.vz *= keep; hunt.jolt(0.07); }
+          // Heavier metal keeps more of its speed and hits harder. The sedan is the 1.0 the street checks measure.
+          if (hunt.ram(e, sp, ux, uz, s.mass / 1200)) { const keep = e.kind === 'brute' ? 0.25 : s.heft; v.vx *= keep; v.vz *= keep; hunt.jolt(0.07); }
         }
       }
     }
@@ -334,11 +413,15 @@ export async function createRides({ scene, shared, player, heightAt, hunt, route
     v.lean += (Math.max(-0.6, Math.min(0.6, -v.yawRate * v.vf / 9.8)) - v.lean) * (1 - Math.exp(-8 * dt));
     v.squat += (Math.max(-0.06, Math.min(0.06, dt > 0 ? (before - v.vf) / dt * 0.004 : 0)) - v.squat) * ease;
     v.vf = v.vx * Math.sin(v.yaw) + v.vz * Math.cos(v.yaw);
+    // A bike's lean at speed, or any rollover while he is in the seat, throws him.
+    if (v === driven && (v.tipped || (s.throw && Math.abs(v.vf) > Math.max(8, s.top * 0.75) && Math.abs(v.lean) > 0.5))) bail(v, 'Thrown');
   }
 
   function enter(v) {
-    driven = v; v.traffic = null; v.liable = 5; eyeBefore = follow.want; follow.want = Math.max(follow.want, v.spec.eye);
+    const stolen = v.driver;
+    driven = v; v.traffic = null; v.driver = false; v.liable = 5; eyeBefore = follow.want; follow.want = Math.max(follow.want, v.spec.eye);
     if (v.rider) v.rider.visible = true;
+    if (stolen) hunt.carjack();
     hunt.hud.toast(`${v.spec.name} · W A S D drive · Space handbrake · G out`);
   }
 
@@ -378,6 +461,8 @@ export async function createRides({ scene, shared, player, heightAt, hunt, route
       if (driven && Math.hypot(driven.vx, driven.vz) > BAIL) { if (told <= 0) { told = 2; hunt.hud.flashText('Too fast to bail'); } }
       else if (driven) leave();
       else if (near && Math.hypot(near.vx, near.vz) > 2) hunt.hud.flashText('Wait for it to stop');
+      else if (near && !hunt.roam && hunt.unlocked && !hunt.unlocked(near.kind)) hunt.hud.flashText('Not yours yet');
+      else if (near?.wrecked) hunt.hud.flashText('It is finished');
       else if (near?.tipped) {
         Object.assign(near, { tilt: 0, rollRate: 0, spinRate: 0, tipped: false, vx: 0, vz: 0, vy: 0, air: 0 });
         hunt.hud.toast('Back on its wheels · G to drive');
@@ -389,7 +474,7 @@ export async function createRides({ scene, shared, player, heightAt, hunt, route
       // left far from home and out of sight, it is brought back: every cairn keeps its wheels
       if (!v.traffic && Math.hypot(v.x - v.home.x, v.z - v.home.z) > 60 && Math.hypot(v.x - player.feet.x, v.z - player.feet.z) > 110) {
         Object.assign(v, { x: v.home.x, z: v.home.z, yaw: v.home.yaw, y: heightAt(v.home.x, v.home.z), pitch: 0, roll: 0, lean: 0,
-          tilt: 0, tipped: false, rollRate: 0, spinRate: 0, vx: 0, vz: 0, vf: 0, vy: 0, air: 0, liable: 0 });
+          tilt: 0, tipped: false, rollRate: 0, spinRate: 0, vx: 0, vz: 0, vf: 0, vy: 0, air: 0, liable: 0, hp: v.spec.hull, wrecked: false, boom: 0 });
       }
     }
     // Physics gets small steps even on a long frame: no jumping through another bike or a pedestrian.
@@ -404,8 +489,8 @@ export async function createRides({ scene, shared, player, heightAt, hunt, route
         const va = rides[a], vb = rides[b], ax = va.x, az = va.z, bx = vb.x, bz = vb.z, impact = collide(va, vb);
         correct(va, ax, az); correct(vb, bx, bz); // separation must not push a parked car through a wall
         if (impact > 3) {
-          if (va.traffic) va.traffic.wait = 2;
-          if (vb.traffic) vb.traffic.wait = 2;
+          scar(va, vb.spec.mass, impact); scar(vb, va.spec.mass, impact);
+          for (const t of [va, vb]) if (t.traffic && impact > 6) { t.traffic.wait = 0.35; t.traffic.flee = 2.4; t.traffic.swerve = Math.random() < 0.5 ? -1 : 1; t.traffic.horn = 0.5; t.traffic.honked = false; }
           if (va === driven || vb === driven) {
             hunt.jolt(Math.min(0.22, impact * 0.012));
             if (impact > 11) hunt.crash(Math.min(18, (impact - 11) * 1.4));
@@ -423,9 +508,11 @@ export async function createRides({ scene, shared, player, heightAt, hunt, route
       // the eye swings in behind once the mouse has been still a moment
       lookIdle = Math.abs(inp.look.x) + Math.abs(inp.look.y) > 1e-4 ? 0 : lookIdle + dt;
       if (lookIdle > 0.7 && v.vf > 2) follow.yaw += wrap(v.yaw - follow.yaw) * Math.min(1, 2.4 * dt);
-    }
+      follow.boost = Math.min(4.2, Math.hypot(v.vx, v.vz) * 0.13);
+    } else if (follow) follow.boost = 0;
     const v = driven ?? near;
-    hunt.hud.ride(v ? { driving: !!driven, name: v.spec.name, kmh: Math.hypot(v.vx, v.vz) * 3.6, sliding: v.sliding, air: v.air > 0.15, tipped: v.tipped } : null);
+    const hurt = v && (v.wrecked ? 'dead' : v.hp < v.spec.hull * 0.34 ? 'fire' : v.hp < v.spec.hull * 0.66 ? 'smoke' : '');
+    hunt.hud.ride(v ? { driving: !!driven, name: v.spec.name, kmh: Math.hypot(v.vx, v.vz) * 3.6, sliding: v.sliding, air: v.air > 0.15, tipped: v.tipped, hurt, driver: v.driver } : null);
     return !!driven;
   }
 
@@ -456,8 +543,17 @@ export function demoRide() {
     if (v.yaw !== 0 || Math.abs(v.vz - 10) > 1e-9) throw new Error(kind + ' has no say in the air');
     for (const n of [v.yaw, v.vx, v.vz, v.steer]) if (!Number.isFinite(n)) throw new Error(kind + ' numbers');
   }
+  if (!(RIDES.sports.top > RIDES.bike.top && RIDES.bike.top > RIDES.car.top && RIDES.car.top > RIDES.pickup.top && RIDES.pickup.top > RIDES.bicycle.top)) throw new Error('sports, bike, sedan, pickup, bicycle');
+  if (!(RIDES.pickup.mass > RIDES.car.mass && RIDES.car.mass > RIDES.sports.mass && RIDES.sports.mass > RIDES.bike.mass && RIDES.bike.mass > RIDES.bicycle.mass)) throw new Error('mass order');
+  if (!(RIDES.pickup.heft > RIDES.car.heft && RIDES.bike.throw && RIDES.bicycle.throw && !RIDES.car.throw && RIDES.pickup.hull > RIDES.car.hull)) throw new Error('the truck keeps its speed and the bikes throw you');
   if (!(RIDES.bike.top > RIDES.car.top && RIDES.bike.heft < RIDES.car.heft)) throw new Error('the bike is the quick one, the car the heavy one');
   if (!(BAIL < RIDES.car.top / 2)) throw new Error('no stepping out at speed');
+  const slipOf = (mul) => {
+    const c = { yaw: 0, vx: 0, vz: 14, steer: 0 };
+    for (let i = 0; i < 40; i++) drive(c, RIDES.car, { throttle: 0.5, steer: 1 }, 1 / 60, true, mul);
+    return Math.abs(c.vx * Math.cos(c.yaw) - c.vz * Math.sin(c.yaw));
+  };
+  if (!(slipOf(0.4) > slipOf(1) * 1.15)) throw new Error('dirt lets the tail out');
   const chassis = (spec, x, z, vx = 0, vz = 0) => ({ spec, x, z, y: 0, yaw: 0, vx, vz, tilt: 0, rollRate: 0, spinRate: 0 });
   const a = chassis(RIDES.car, 0, 0, 0, 20), b = chassis(RIDES.car, 0, 4);
   const energy = (v) => v.spec.mass * (v.vx ** 2 + v.vz ** 2) / 2;

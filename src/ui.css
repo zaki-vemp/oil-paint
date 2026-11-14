@@ -233,7 +233,12 @@ html[data-clean] #game-header, html[data-clean] #hud, html[data-clean] #hint, ht
   background: linear-gradient(160deg, #0d131ae8, #06090de8); border: 1px solid var(--hot); clip-path: polygon(0 0, calc(100% - 10px) 0, 100% 10px, 100% 100%, 10px 100%, 0 calc(100% - 10px)); }
 .ride-prompt kbd { background: var(--hot); color: #05070a; border: 0; font-size: 12px; padding: 3px 7px; }
 .heat { position: absolute; top: 112px; left: 50%; transform: translateX(-50%); display: flex; align-items: center; gap: 12px; padding: 6px 14px; background: var(--red); color: #05070a; font: 700 12px var(--mono); letter-spacing: .2em; text-transform: uppercase; animation: blink .8s steps(2) infinite; }
-.heat span { font-variant-numeric: tabular-nums; }
+.heat span { font-variant-numeric: tabular-nums; letter-spacing: .15em; }
+.cash { color: var(--hot); font: 700 12px var(--mono); letter-spacing: .08em; }
+.story { position: absolute; left: 50%; top: 18%; transform: translateX(-50%); width: min(460px, calc(100% - 48px)); padding: 16px 18px 12px; pointer-events: auto; background: repeating-linear-gradient(0deg, #ffffff05 0 1px, transparent 1px 3px), #080b10f2; border: 1px solid color-mix(in srgb, var(--chapter-accent) 50%, transparent); }
+.story[hidden] { display: none; }
+.story p { margin: 0 0 10px; font: 18px/1.35 var(--display); }
+.story button { border: 0; background: transparent; color: var(--hot); letter-spacing: .16em; text-transform: uppercase; font: 700 11px var(--mono); }
 #hud.driving .actions { opacity: .3; }
 @media (max-width: 640px) { .ride { left: 16px; bottom: 200px; } .ride b { font-size: 54px; } .ride-prompt { bottom: 250px; font-size: 11px; } .heat { top: 240px; font-size: 10px; } }
 @media (prefers-reduced-motion: reduce) { .ride.loose i, .heat { animation: none; } }

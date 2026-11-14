@@ -1,15 +1,15 @@
-// Solid, reusable scenery for the trail, now a night city: towers with lit windows, neon signs on their
-// walls, street lamps and lane studs along the way, crates, weeds in the cracks and a smog-lit sky.
-// Instancing keeps the whole district to a handful of draws. Every placement uses the land's heightAt,
-// and every colour comes from the active chapter's shared palette: `foliage` and `leafLight` are the
-// district's two neons, `grass` its pavement, `path` its road. Light is paint here too: a lit window or a
-// sign is simply drawn in its own colour, never added as lighting.
+// Solid, reusable scenery for the night city: blocks on a road grid, towers with lit windows, neon
+// signs, street lamps and lane studs, crates, weeds and a smog-lit sky. Each district is its own
+// instanced draw so a district behind the camera is skipped. Every placement uses heightAt.
+// Building colour comes from where it stands (four districts). The story chapter still tints the
+// sky and the figures. Light is paint: a lit window is drawn in its own colour, never added as lighting.
 import * as THREE from 'three';
 import { COMMON } from '../oilpaint/common.js';
 import { heightAt, wayDist, clearingAt, rng, way, ROAD } from './land.js';
-import { CHAPTERS, chapterAt, SCALE } from '../game/chapters.js';
+import { CHAPTERS, chapterAt } from '../game/chapters.js';
 import { LEVELS, GOAL } from '../game/levels.js';
 import { DUELS } from '../game/duel.js';
+import { blockLots, AVENUES, STREETS, GRID_MIN, GRID_MAX, ZONES, ZONE_SPLIT, zoneAt } from './grid.js';
 
 // Roles: 0 tower, 1 sign, 2 weeds, 3 crate, 4 lamp head / lane stud, 5 smog, 6 pole.
 function cel(shared, role, sway = 0) {
@@ -41,6 +41,9 @@ function cel(shared, role, sway = 0) {
       layout(location = 0) out vec4 outC;
       float hash(vec2 p) { return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453); }
       void main() {
+        vec3 fol = zonePick(vWorld.xz, uZoneFoliage[0], uZoneFoliage[1], uZoneFoliage[2], uZoneFoliage[3]);
+        vec3 pale = zonePick(vWorld.xz, uZoneLeaf[0], uZoneLeaf[1], uZoneLeaf[2], uZoneLeaf[3]);
+        vec3 pave = zonePick(vWorld.xz, uZoneGrass[0], uZoneGrass[1], uZoneGrass[2], uZoneGrass[3]);
         vec3 n = normalize(vNormal);
         vec3 base = vec3(0.09, 0.10, 0.13), glow = vec3(0.0);
         float own = 0.0; // how much of this spot is its own light rather than a lit surface
@@ -52,25 +55,25 @@ function cel(shared, role, sway = 0) {
           float pane = step(0.16, f.x) * step(f.x, 0.84) * step(0.24, f.y) * step(f.y, 0.80) * side;
           float h = hash(floor(cell) + vSeed * 91.7);
           // most lit rooms are the district's pale light, a few its neon; the rest are dark glass
-          glow = mix(uLeafLight, uFoliage, step(0.9, h)) * (0.7 + 0.3 * h);
+          glow = mix(pale, fol, step(0.9, h)) * (0.7 + 0.3 * h);
           own = pane * step(0.64, h);
           base = mix(base, base * 1.7 + 0.02, pane * (1.0 - own));
           // a line of neon under the roof
           float trim = step(vSize.y * 0.5 - 0.28, vObj.y) * side;
-          glow = mix(glow, uFoliage, trim); own = max(own, trim);
+          glow = mix(glow, fol, trim); own = max(own, trim);
         } else if (uRole < 1.5) {
           // a sign: bars of its colour that read as characters, with a tired flicker
           float bars = step(0.42, fract(vObj.y * 1.25 + vSeed * 7.0)) * step(abs(vObj.z), vSize.z * 0.38);
           float flick = 0.86 + 0.14 * step(0.12, fract(sin(floor(uTime * 9.0) + vSeed * 40.0) * 91.3));
-          glow = mix(uFoliage, uLeafLight, step(0.5, vSeed)) * mix(0.42, 1.0, bars) * flick; own = 1.0;
+          glow = mix(fol, pale, step(0.5, vSeed)) * mix(0.42, 1.0, bars) * flick; own = 1.0;
         } else if (uRole < 2.5) {
-          base = mix(uGrass * 1.5, uFoliage * 0.3, vSeed * 0.6);
+          base = mix(pave * 1.5, fol * 0.3, vSeed * 0.6);
         } else if (uRole < 3.5) {
           base = mix(vec3(0.10, 0.11, 0.15), vec3(0.17, 0.18, 0.22), vSeed);
           glow = vec3(0.99, 0.87, 0.08);
           own = step(abs(vObj.y - vSize.y * 0.12), vSize.y * 0.07) * step(0.5, fract((vObj.x + vObj.z) * 2.2));
         } else if (uRole < 4.5) {
-          glow = mix(uFoliage, uLeafLight, step(0.5, vSeed)); own = 1.0;
+          glow = mix(fol, pale, step(0.5, vSeed)); own = 1.0;
         } else if (uRole < 5.5) {
           base = mix(uSkyHigh * 2.2 + 0.02, uHaze * 1.25, max(-n.y, 0.0)); // smog, lit from the streets below
         }
@@ -88,6 +91,14 @@ function cel(shared, role, sway = 0) {
 }
 
 export function createAnimeWorld(shared) {
+  ZONES.forEach((zone, i) => {
+    const c = CHAPTERS[zone.chapter];
+    shared.uZoneGrass.value[i].set(...c.grass);
+    shared.uZoneFoliage.value[i].set(...c.foliage);
+    shared.uZoneLeaf.value[i].set(...c.leafLight);
+    shared.uZonePath.value[i].set(...c.path);
+  });
+  shared.uZoneSplit.value.set(ZONE_SPLIT.downtown, ZONE_SPLIT.market, ZONE_SPLIT.east);
   const rand = rng(71029), group = new THREE.Group(), shade = new THREE.Group(), colliders = [];
   const dummy = new THREE.Object3D();
   const record = (x, y, z, sx, sy, sz, ry = 0, rz = 0) => ({ x, y, z, sx, sy, sz, ry, rz });
@@ -102,39 +113,50 @@ export function createAnimeWorld(shared) {
     });
     mesh.instanceMatrix.needsUpdate = true;
     mesh.computeBoundingSphere();
+    // The sun's pass draws the shade group from a camera that must see every tower.
+    mesh.frustumCulled = parent === group;
     parent.add(mesh);
     return mesh;
+  }
+  // ponytail: one mesh per district, culled by the camera. Stream buffers if a district shows up in the frame profile.
+  function scatter(geometry, material, items) {
+    const bins = [[], [], [], []];
+    for (const p of items) bins[zoneAt(p.x, p.z)].push(p);
+    return bins.filter((bin) => bin.length).map((bin) => {
+      const mesh = instances(geometry, material, bin);
+      mesh.userData.full = bin.length;
+      return mesh;
+    });
   }
 
   // Nothing is built where a fight happens: every spawn, duel, cairn and gate keeps its room.
   const keep = [GOAL, ...DUELS, ...LEVELS.flatMap((L) => [L.checkpoint, ...L.spots, ...(L.gate ? [L.gate] : [])])];
   const SINK = 3; // metres a tower goes into the ground, so a slope never shows under it
   const towers = [], signs = [];
-  // The street stays open to the sky: low blocks front it and the towers rise behind them.
-  // Only the blocks a street or two back are real; past that the sky's painted skyline takes over in the smog.
-  for (let i = 0; i < 9000; i++) {
-    const x = (rand() - 0.5) * 290, z = (rand() - 0.5) * 500, wd = wayDist(x, z);
-    const w = 3.5 + rand() * 3.5, d = 3.5 + rand() * 3.5, reach = Math.max(w, d) * 0.75;
-    if (wd < ROAD + 6.5 + reach || wd > 120 || clearingAt(x, z) > 0.4) continue;
-    if (keep.some((p) => Math.hypot(p.x - x, p.z - z) < 7.5 + reach)) continue;
-    if (towers.some((p) => Math.hypot(p.x - x, p.z - z) < 8.5)) continue;
-    const y = heightAt(x, z), h = 6 + rand() * 8 + Math.min(24, Math.max(0, wd - 10) * 0.8) * rand(), ry = (rand() - 0.5) * 0.6;
-    towers.push({ ...record(x, y + (h - SINK) / 2, z, w, h + SINK, d, ry), wd });
+  const capH = [28, 16, 18, 9];
+  for (const lot of blockLots()) {
+    const x = lot.x + (rand() - 0.5) * 2, z = lot.z + (rand() - 0.5) * 2;
+    const w = 4.2 + rand() * 2.4, d = 4.2 + rand() * 2.4, reach = Math.max(w, d) * 0.5;
+    if (wayDist(x, z) < ROAD + 3.2 + reach || clearingAt(x, z) > 0.35) continue;
+    if (keep.some((p) => Math.hypot(p.x - x, p.z - z) < 16 + reach)) continue;
+    if (LEVELS.some((L) => L.gate && Math.abs(L.gate.z - z) < reach + 4)) continue;
+    const y = heightAt(x, z);
+    let h = capH[lot.zone] * (0.5 + rand() * 0.55);
+    if (lot.heart) h *= 1.35;
+    const ry = (rand() - 0.5) * 0.1;
+    towers.push({ ...record(x, y + (h - SINK) / 2, z, w, h + SINK, d, ry), wd: wayDist(x, z), zone: lot.zone });
     colliders.push({ x, y: y + (h - SINK) / 2, z, box: [w / 2, (h + SINK) / 2, d / 2], ry });
-    for (let j = rand() < 0.45 ? 2 : 1; j > 0; j--) {
-      // a wall of the four, and a slab standing just off it
-      const k = Math.floor(rand() * 4), alongX = k % 2 === 0, out = (k < 2 ? 1 : -1) * ((alongX ? w : d) / 2 + 0.16);
-      const nx = alongX ? Math.cos(ry) : Math.sin(ry), nz = alongX ? -Math.sin(ry) : Math.cos(ry);
-      const sh = Math.min(h * 0.5, 2.4 + rand() * 4), sw = Math.min((alongX ? d : w) * 0.4, 0.8 + rand() * 1.2);
-      signs.push(record(x + nx * out, y + sh / 2 + 2.4 + rand() * Math.max(0, h - sh - 3.2), z + nz * out, 0.2, sh, sw, alongX ? ry : ry + Math.PI / 2));
-    }
+    const k = Math.floor(rand() * 4), alongX = k % 2 === 0, out = (k < 2 ? 1 : -1) * ((alongX ? w : d) / 2 + 0.16);
+    const nx = alongX ? Math.cos(ry) : Math.sin(ry), nz = alongX ? -Math.sin(ry) : Math.cos(ry);
+    const sh = Math.min(h * 0.45, 2.2 + rand() * 3.2), sw = Math.min((alongX ? d : w) * 0.4, 0.8 + rand() * 1.1);
+    signs.push({ ...record(x + nx * out, y + sh / 2 + 2.2 + rand() * Math.max(0, h - sh - 3), z + nz * out, 0.2, sh, sw, alongX ? ry : ry + Math.PI / 2), zone: lot.zone });
   }
   const boxGeo = new THREE.BoxGeometry(1, 1, 1);
   // Drawn nearest the street first: seen from it, the towers behind are mostly hidden and their pixels are never shaded.
   towers.sort((a, b) => a.wd - b.wd);
-  instances(boxGeo, cel(shared, 0), towers);
-  instances(boxGeo, cel(shared, 1), signs);
-  instances(boxGeo, new THREE.MeshBasicMaterial(), towers, shade);
+  scatter(boxGeo, cel(shared, 0), towers);
+  scatter(boxGeo, cel(shared, 1), signs);
+  if (towers.length) instances(boxGeo, new THREE.MeshBasicMaterial(), towers, shade);
 
   // Lamps lean over the way from alternate sides; lit dashes mark both of its edges.
   const poles = [], lights = [];
@@ -149,8 +171,36 @@ export function createAnimeWorld(shared) {
     poles.push(record(x, y + 2.1, z, 0.07, 4.2, 0.07));
     lights.push(record(x - nx * 0.7 * s, y + 4.2, z - nz * 0.7 * s, 1.5, 0.12, 0.3, Math.atan2(-nz, nx)));
   }
-  instances(new THREE.CylinderGeometry(1, 1, 1, 6), cel(shared, 6), poles);
-  instances(boxGeo, cel(shared, 4), lights);
+  // The same dashes and lamps along every avenue and street. Skip the crossing itself; the trail covers its own.
+  const crossing = (x, z, avenues) => (avenues ? STREETS : AVENUES).some((v) => Math.abs((avenues ? z : x) - v) < 6);
+  for (const x of AVENUES) {
+    for (let z = GRID_MIN, n = 0; z <= GRID_MAX; z += 8, n++) {
+      if (crossing(x, z, true)) continue;
+      for (const side of [-1, 1]) {
+        const lx = x + (ROAD - 0.55) * side;
+        lights.push(record(lx, heightAt(lx, z) + 0.045, z, 0.1, 0.04, 0.55, 0));
+      }
+      if (n % 4 !== 0) continue;
+      const side = n % 8 === 0 ? 1 : -1, lx = x + (ROAD + 2.4) * side, y = heightAt(lx, z);
+      poles.push(record(lx, y + 2.1, z, 0.07, 4.2, 0.07));
+      lights.push(record(lx - 0.7 * side, y + 4.2, z, 1.5, 0.12, 0.3, Math.PI / 2));
+    }
+  }
+  for (const z of STREETS) {
+    for (let x = GRID_MIN, n = 0; x <= GRID_MAX; x += 8, n++) {
+      if (crossing(x, z, false)) continue;
+      for (const side of [-1, 1]) {
+        const lz = z + (ROAD - 0.55) * side;
+        lights.push(record(x, heightAt(x, lz) + 0.045, lz, 0.55, 0.04, 0.1, 0));
+      }
+      if (n % 4 !== 0) continue;
+      const side = n % 8 === 0 ? 1 : -1, lz = z + (ROAD + 2.4) * side, y = heightAt(x, lz);
+      poles.push(record(x, y + 2.1, lz, 0.07, 4.2, 0.07));
+      lights.push(record(x, y + 4.2, lz - 0.7 * side, 0.3, 0.12, 1.5, 0));
+    }
+  }
+  scatter(new THREE.CylinderGeometry(1, 1, 1, 6), cel(shared, 6), poles);
+  scatter(boxGeo, cel(shared, 4), lights);
 
   // A clump is six broad blades in one geometry, with a stable seed and a bend at its tip.
   const tuft = new THREE.BufferGeometry(), vertices = [];
@@ -161,21 +211,22 @@ export function createAnimeWorld(shared) {
   tuft.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
   tuft.computeVertexNormals();
   const weeds = [], crates = [];
-  for (let i = 0; i < 16000; i++) {
-    const x = (rand() - 0.5) * 130, z = (-115 + rand() * 220) * SCALE, d = wayDist(x, z);
-    if (d < ROAD + 1.2 || d > 46) continue;
+  for (let i = 0; i < 8000; i++) {
+    const x = GRID_MIN + rand() * (GRID_MAX - GRID_MIN), z = GRID_MIN + rand() * (GRID_MAX - GRID_MIN), d = wayDist(x, z);
+    if (d < ROAD + 1.2 || d > 16) continue;
     const s = 0.5 + rand() * 0.7;
     weeds.push(record(x, heightAt(x, z) - 0.015, z, s, s, s, rand() * 6.28));
   }
-  for (let i = 0; i < 380; i++) {
-    const x = (rand() - 0.5) * 120, z = (-110 + rand() * 215) * SCALE;
+  for (let i = 0; i < 700 && crates.length < 280; i++) {
+    const x = GRID_MIN + rand() * (GRID_MAX - GRID_MIN), z = GRID_MIN + rand() * (GRID_MAX - GRID_MIN);
     if (wayDist(x, z) < ROAD + 2.5) continue; // the road itself stays clear for wheels
+    if (keep.some((p) => Math.hypot(p.x - x, p.z - z) < 8)) continue;
     const s = 0.5 + rand() * 1.0, y = heightAt(x, z);
     crates.push(record(x, y + s * 0.4, z, s * 1.5, s, s * 1.2, rand() * 6.28));
     colliders.push({ x, y: y + s * 0.15, z, r: s * 0.8, rock: true });
   }
-  const grass = instances(tuft, cel(shared, 2, 0.12), weeds);
-  instances(boxGeo, cel(shared, 3), crates);
+  const grasses = scatter(tuft, cel(shared, 2, 0.12), weeds);
+  scatter(boxGeo, cel(shared, 3), crates);
 
   // Smog banks are real silhouettes, lit from below, so the skyline always has a legible backdrop.
   const clouds = [];
@@ -232,5 +283,5 @@ export function createAnimeWorld(shared) {
     shared.uBounce.value.copy(shared.uHaze.value).multiplyScalar(0.3);
   }
   return { group, shade, colliders, counts: { trees: towers.length, grass: weeds.length, flowers: lights.length, rocks: crates.length }, update,
-    setQuality(low) { grass.count = low ? Math.floor(weeds.length * 0.4) : weeds.length; } };
+    setQuality(low) { for (const g of grasses) g.count = low ? Math.floor(g.userData.full * 0.4) : g.userData.full; } };
 }

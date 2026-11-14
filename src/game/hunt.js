@@ -24,7 +24,10 @@ import { createHUD } from './hud.js';
 import { ATTACKS, createCombatPose, demoCombat } from './combat.js';
 import { DUELS, MOVES, createDuel, stepDuel, duelHit, damageRival, demoDuels } from './duel.js';
 import { createRivalAppearance } from '../figure/avatar.js';
-import { LEVELS, GOAL, KINDS, POWERS, POWER_ORDER, powersFor, loadProgress, saveProgress, demoLevels } from './levels.js';
+import { LEVELS, GOAL, KINDS, POWERS, POWER_ORDER, STORY, powersFor, unlocksFor, loadProgress, saveProgress, demoLevels } from './levels.js';
+import { nextPavement } from '../world/grid.js';
+import { GUILT, CASH, MOB, WITNESS, RAM, HEAT, demoConfig } from './config.js';
+export { GUILT, MOB, RAM, HEAT, CASH, WITNESS };
 
 export const POWER_MAX = 3;
 export const POWER_FILL = 42; // seconds from empty to full, inside the asked 30–50s
@@ -52,10 +55,13 @@ Object.assign(KIND, {
   civ: { civ: true, dmg: 7, roam: 1.3, chase: 4.1, aggro: 0, reach: 1.5, leash: 45, home: 3, scale: 1.08, boltR: 0.8, wind: 0.55, push: 3, cap: [0.3, 0.5] },
   thief: { civ: true, dmg: 7, roam: 4.5, chase: 4.5, aggro: 0, reach: 1.5, leash: 90, home: 3, scale: 1.05, boltR: 0.8, wind: 0.55, push: 3, cap: [0.3, 0.5] },
 });
-export const GUILT = 15; // health a hurt citizen costs him; a killed one costs twice that and the street's temper
-export const MOB = { radius: 34, time: 30 }; // who turns on him, and for how long
-export const RAM = { per: 5, max: 130, crew: 42, min: 4 }; // people are vulnerable; armed crews brace, so a bumper opens a fight rather than clearing it
-const KERB = 5.4; // metres from the middle of the way to where people walk
+/** Which band a hit of `force` (m/s, times mass against a sedan) lands in. Crews are not banded; bystanders are. */
+export function ramBand(force) {
+  if (force < RAM.min) return 'none';
+  if (force < RAM.stumble) return 'stumble';
+  if (force < RAM.kill) return 'knock';
+  return 'kill';
+}
 // Who plays each kind: the file, the one prop kept in hand, and the clip that is its attack.
 const CAST = {
   punk: { file: 'punk.gltf', keep: 'Knife_1', attack: 'Punch' },
@@ -197,26 +203,19 @@ export async function createHunt({ scene, shared, man, animator, player, heightA
   };
   const enemies = spots.map((p) => make(p));
   if (segs && route) {
-    // Each level's pavement gets three citizens walking a short beat and one hooded runner doing its whole length.
-    const off = (i, side, d) => {
-      const j = Math.max(0, Math.min(route.length - 2, i)), [ax, az] = route[j], [bx, bz] = route[j + 1], l = Math.hypot(bx - ax, bz - az) || 1;
-      return [ax + (bz - az) / l * d * side, az - (bx - ax) / l * d * side];
-    };
+    // A fixed pool. Bodies the player has left behind are reused on a sidewalk near him; a long wait
+    // means something parked them on purpose (the headless checks do), and they stay there.
     const loot = new THREE.MeshBasicMaterial({ color: 0xff2a6d });
-    for (const [i, L] of segs.entries()) {
-      // the stretch of the way that is this level's: a body never has to cross a gate
-      const top = L.checkpoint.z - 5, bottom = (L.gate?.z ?? GOAL.z + 26) + 7;
-      const mine = route.map(([, z], k) => (z < top && z > bottom ? k : -1)).filter((k) => k >= 0);
-      const lo = Math.min(...mine), hi = Math.max(...mine);
-      for (let k = 0; k < 4; k++) {
-        const side = k % 2 ? 1 : -1, runner = k === 3, at = Math.round(lo + (hi - lo) * (0.14 + 0.24 * k));
-        const walk = runner ? [off(lo + 1, side, KERB - 1), off(hi - 1, side, KERB - 1)] : [off(at, side, KERB), off(Math.max(lo, Math.min(hi, at + (k ? 9 : -9))), side, KERB)];
-        const e = make({ kind: runner ? 'thief' : 'civ', x: walk[0][0], z: walk[0][1], walk, leg: 0, angry: 0, thief: runner && i % 3 !== 2 }, i * 4 + k);
-        [e.tx, e.tz] = walk[1]; e.leg = 1; e.wait = Math.random() * 4;
-        // what a thief has on him: small, and only on the one side
-        if (e.thief) put(e.mesh, new THREE.BoxGeometry(0.2, 0.24, 0.12), loot, (m) => m.position.set(0.24, 0.82, -0.14));
-        enemies.push(e);
-      }
+    const CROWD = 40;
+    for (let i = 0; i < CROWD; i++) {
+      const runner = i % 5 === 0, thief = runner && i % 10 !== 0;
+      const spot = nextPavement(player.feet.x + ((i % 8) - 3.5) * 8, player.feet.z - 6 - Math.floor(i / 8) * 8, i % 2 ? 1 : -1, false);
+      const e = make({ kind: runner ? 'thief' : 'civ', x: spot.x, z: spot.z, leg: 0, angry: 0, thief, pool: true, dir: i % 2 ? 1 : -1, seed: i, snatch: 0 }, i);
+      e.homeX = spot.x; e.homeZ = spot.z;
+      const nxt = nextPavement(spot.x, spot.z, e.dir, false);
+      e.tx = nxt.x; e.tz = nxt.z; e.wait = Math.random() * 2;
+      if (e.thief) put(e.mesh, new THREE.BoxGeometry(0.2, 0.24, 0.12), loot, (m) => m.position.set(0.24, 0.82, -0.14));
+      enemies.push(e);
     }
   }
   if (segs) {
@@ -258,6 +257,24 @@ export async function createHunt({ scene, shared, man, animator, player, heightA
       for (let k = -4; k <= 4; k++) put(g, new THREE.BoxGeometry(0.045, 3.3, 0.03), mat('gold'), m => m.position.set(k * 1.15, 1.9, 0));
       g.position.set(s.gate.x, heightAt(s.gate.x, s.gate.z), s.gate.z);
       scene.add(g);
+      // The collider already crosses the whole city. Posts show that, and follow the slope so a side street is not a secret way through.
+      const posts = [];
+      for (const side of [-1, 1]) {
+        for (let x = 14; x <= 206; x += 14) {
+          const wx = s.gate.x + side * x;
+          posts.push({ x: side * x, y: heightAt(wx, s.gate.z) - g.position.y });
+        }
+      }
+      const wallDummy = new THREE.Object3D();
+      const wall = new THREE.InstancedMesh(new THREE.BoxGeometry(14.2, 2.3, 0.45), new THREE.MeshBasicMaterial({ color: 0x1a2430 }), posts.length);
+      const stripe = new THREE.InstancedMesh(new THREE.BoxGeometry(14.2, 0.16, 0.5), new THREE.MeshBasicMaterial({ color: 0xfcee0a }), posts.length);
+      posts.forEach((p, n) => {
+        wallDummy.position.set(p.x, p.y + 1.15, 0); wallDummy.updateMatrix(); wall.setMatrixAt(n, wallDummy.matrix);
+        wallDummy.position.set(p.x, p.y + 2.2, 0); wallDummy.updateMatrix(); stripe.setMatrixAt(n, wallDummy.matrix);
+      });
+      wall.instanceMatrix.needsUpdate = stripe.instanceMatrix.needsUpdate = true;
+      wall.computeBoundingSphere(); stripe.computeBoundingSphere();
+      g.add(wall, stripe);
       const collider = player.world.createCollider(player.R.ColliderDesc.cuboid(260, 4, 0.4).setTranslation(s.gate.x, g.position.y + 3, s.gate.z));
       gates.push({ group: g, seg: i, collider });
     }
@@ -278,9 +295,12 @@ export async function createHunt({ scene, shared, man, animator, player, heightA
     const mx = m.x + (segs ? 8 : 0);
     g.position.set(mx, heightAt(mx, m.z), m.z);
     if (segs) {
-      // On the long street a cairn has to be found from a block away: it stands tall and throws a line of light up.
-      g.scale.setScalar(2.3);
-      g.add(new THREE.Mesh(new THREE.BoxGeometry(0.07, 26, 0.07), new THREE.MeshBasicMaterial({ color: 0xfcee0a, transparent: true, opacity: 0.45, depthWrite: false })).translateY(14));
+      // The ring is the trigger you can see from a block away; the column stays bright through the smog.
+      g.scale.setScalar(2.6);
+      const ring = new THREE.Mesh(new THREE.RingGeometry(2.45, 3.25, 48), new THREE.MeshBasicMaterial({ color: 0xfcee0a, transparent: true, opacity: 0.75, side: THREE.DoubleSide, depthWrite: false }));
+      ring.rotation.x = -Math.PI / 2; ring.position.y = 0.08; g.add(ring); m.ring = ring;
+      const beam = new THREE.Mesh(new THREE.BoxGeometry(0.55, 32, 0.55), new THREE.MeshBasicMaterial({ color: 0xfcee0a, transparent: true, opacity: 0.55, depthWrite: false }));
+      beam.position.y = 16; g.add(beam); m.beam = beam;
     }
     scene.add(g);
     m.used = false;
@@ -310,7 +330,10 @@ export async function createHunt({ scene, shared, man, animator, player, heightA
   let hp = MAX_HP, power = POWER_MAX, swing = -1, swingH = false, struck = new Set(), invuln = 0, won = false;
   let dashCool = 0, flareCool = 0, gateToastT = 0, lockToastT = 0, saveWarned = false, runTold = false;
   let attackBuffer = 0, queuedHeavy = false, comboIndex = -1, comboWindow = 0, swingType = 'cut';
-  let hitPause = 0, cameraKick = 0, hurtPose = 0, castPose = 0, slowMo = 0, combo = 0, comboT = 0;
+  let hitPause = 0, cameraKick = 0, hurtPose = 0, castPose = 0, slowMo = 0, combo = 0, comboT = 0, poolT = 0;
+  let clock = 0, toldOpen = false, toldHeat = false;
+  const shown = new Set();
+  let heat = 0, cash = 0, cops = [], block = null;
   let saveWarningPending = false, plunge = false;
 
   // --- level state -----------------------------------------------------------------
@@ -323,7 +346,7 @@ export async function createHunt({ scene, shared, man, animator, player, heightA
   function persist(cleared) {
     if (!segs || roam) return;
     const cp = segs[Math.min(cleared, segs.length - 1)].checkpoint;
-    if (!saveProgress({ cleared, x: +cp.x.toFixed(2), z: +cp.z.toFixed(2) }) && !saveWarned) {
+    if (!saveProgress({ cleared, x: +cp.x.toFixed(2), z: +cp.z.toFixed(2), cash, unlocked: unlocksFor(cleared) }) && !saveWarned) {
       saveWarned = true;
       saveWarningPending = true;
     }
@@ -338,6 +361,7 @@ export async function createHunt({ scene, shared, man, animator, player, heightA
       }
       for (let i = 0; i < n; i++) marks[i].used = true;
       powers = powersFor(n);
+      cash = saved.cash || 0;
       moveSpawn(saved.x, saved.z);
       down();
       toast(n >= segs.length ? 'The clearing lies ahead' : `Level ${n + 1} · ${segs[n].name}`);
@@ -346,31 +370,74 @@ export async function createHunt({ scene, shared, man, animator, player, heightA
     for (const m of marks) m.cool = 0;
   }
   function toast(msg) { hud.toast(msg); }
+  function say(id) {
+    if (!segs || roam || shown.has(id)) return;
+    const beat = STORY.find((s) => s.id === id);
+    if (!beat) return;
+    shown.add(id); hud.story(beat.line);
+  }
+  /** Why this cairn will not take him yet, or null when the job is done. */
+  function heldAt(mi) {
+    if (mi === 2 && enemies.some((e) => e.mark && !e.dead && !e.gone)) return 'The runner is still out';
+    if (mi === 3 && heat >= HEAT.stars[0]) return 'Lose the tail first';
+    if (mi === 4) {
+      const v = globalThis.window?.lab?.rides?.driven;
+      if (!v || v.wrecked || v.hp < v.spec.hull * 0.6) return 'Bring a car that still runs';
+    }
+    return null;
+  }
 
-  /** What hurting one of the street's own costs. A thief costs nothing; so does anyone already coming at him. */
+  /** A witness sees the player unless a wall sits between them. Anyone close enough does not need the ray. */
+  function sees(o) {
+    const x = player.feet.x, z = player.feet.z, d = Math.hypot(x - o.x, z - o.z);
+    if (d > WITNESS.radius) return false;
+    if (d < WITNESS.close) return true;
+    const dx = x - o.x, dz = z - o.z;
+    const hit = player.castRay({ x: o.x, y: heightAt(o.x, o.z) + 1.4, z: o.z }, { x: dx / d, y: 0, z: dz / d }, d, o.collider);
+    return hit == null || hit > d - 1.2;
+  }
+
+  /** What hurting one of the street's own costs. A thief pays cash and nothing else. A hostile one is fair game. */
   function blame(e, killed, provoked) {
-    if (e.thief) { if (killed) { toast('A thief. Nobody saw a thing.'); power = Math.min(POWER_MAX, power + 1); } return; }
+    if (e.thief) {
+      if (killed) { cash += CASH.thief; power = Math.min(POWER_MAX, power + 1); hud.flashText('Thief — no penalty'); toast(`+${CASH.thief}`); }
+      return;
+    }
     if (provoked) return;
     hp = Math.max(1, hp - GUILT * (killed ? 2 : 1));
+    heat = Math.min(HEAT.max, heat + (killed ? HEAT.kill : HEAT.hurt));
+    cameraKick = Math.max(cameraKick, killed ? 0.22 : 0.09);
     combo = 0; hud.combo(0);
-    if (!killed) return void hud.flashText('Citizen hurt');
+    hud.flashText('Innocent!');
+    if (!killed) return;
     let n = 0;
     for (const o of enemies) {
-      if (!o.civ || o.thief || o.dead || o.gone || Math.hypot(o.x - e.x, o.z - e.z) > MOB.radius) continue;
-      o.angry = MOB.time; o.aggro = 18; o.mode = 'chase'; o.wait = 0; n++;
+      if (!o.civ || o.thief || o.dead || o.gone || o === e || !sees(o)) continue;
+      o.angry = WITNESS.time; o.aggro = 18; o.mode = 'chase'; o.wait = 0; n++;
     }
-    hud.flashText('Citizen down');
     toast(n ? `The street saw that — ${n} coming for you` : 'A citizen is dead. That one is on you.');
   }
 
   /** A vehicle's blow (ride.js): damage by speed, thrown along its travel. Returns false if there was nothing to hit. */
-  function ram(e, speed, ux, uz) {
+  function ram(e, speed, ux, uz, scale = 1) {
     if (e.dead || e.gone || e.rammed > 0 || e.duel && (!e.ready || e.phase === 'waiting')) return false;
+    // force = speed × (mass / sedan). A truck's scale is about 2, a bicycle's a fraction.
+    const band = e.civ ? ramBand(speed * scale) : (speed < RAM.min ? 'none' : 'kill');
+    if (band === 'none') return false;
     e.rammed = 0.5;
-    hurt(e, Math.min(e.civ ? RAM.max : RAM.crew, speed * RAM.per), 'ram');
+    if (band === 'kill') {
+      // scale is the vehicle's mass against a sedan. The cap moves with it, so a truck is not stopped at the same bruise.
+      hurt(e, Math.min((e.civ ? RAM.max : RAM.crew) * scale, speed * RAM.per * scale), 'ram');
+    } else {
+      // A nudge bruises and annoys. A harder one throws them and stops one short of killing.
+      hurt(e, band === 'stumble' ? 6 : Math.min(18, Math.max(0, e.hp - 1)), 'ram');
+      if (e.hp > 0) { e.angry = Math.max(e.angry ?? 0, 10); e.aggro = 14; e.mode = 'chase'; e.wait = 0; }
+      e.stagger = Math.max(e.stagger, band === 'knock' ? 1.15 : 0.4);
+    }
     if (!e.duel) {
-      const k = speed * 0.9 * HEFT[e.kind];
-      e.kx = ux * k; e.kz = uz * k; e.vy = Math.max(e.vy, Math.min(7.5, speed * 0.4) * HEFT[e.kind]);
+      const mul = band === 'stumble' ? 0.28 : band === 'knock' ? 0.7 : 0.9;
+      const k = speed * mul * HEFT[e.kind];
+      e.kx = ux * k; e.kz = uz * k; e.vy = Math.max(e.vy, Math.min(7.5, speed * (band === 'stumble' ? 0.12 : 0.4)) * HEFT[e.kind]);
     }
     return true;
   }
@@ -406,7 +473,8 @@ export async function createHunt({ scene, shared, man, animator, player, heightA
     }
     if (e.civ) blame(e, e.hp <= 0, provoked);
     if (e.hp <= 0) {
-      e.dead = 0.001; e.tell.visible = false; if (!e.civ) power = Math.min(POWER_MAX, power + 0.35);
+      e.dead = 0.001; e.tell.visible = false;
+      if (!e.civ && !e.duel) { cash += CASH.enemy; power = Math.min(POWER_MAX, power + 0.35); hud.flashText(`+${CASH.enemy}`); }
       player.world.removeRigidBody(e.body); e.body = e.collider = null;
       if (!e.duel) { e.kx *= 1.7; e.kz *= 1.7; e.vy = Math.max(e.vy, 3.5 * HEFT[e.kind]); } // the fallen are thrown
       if (e.duel) { toast(`${e.name} — lesson mastered`); hitPause = 0.12; cameraKick = 0.16; }
@@ -562,7 +630,15 @@ export async function createHunt({ scene, shared, man, animator, player, heightA
     lockToastT = Math.max(0, lockToastT - dt);
     attackBuffer = Math.max(0, attackBuffer - dt);
     if (camera) frustum.setFromProjectionMatrix(viewMatrix.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse));
-    for (const m of marks) { m.crystal.rotation.y += dt; m.crystal.position.y = 1.5 + Math.sin(m.crystal.rotation.y * 1.8) * 0.12; }
+    for (const m of marks) {
+      m.crystal.rotation.y += dt;
+      m.crystal.position.y = 1.5 + Math.sin(m.crystal.rotation.y * 1.8) * 0.12;
+      if (!m.ring) continue;
+      const s = 0.5 + 0.5 * Math.sin(m.crystal.rotation.y * 2.2), hot = !m.used;
+      m.ring.scale.setScalar((hot ? 0.96 : 0.9) + (hot ? 0.22 : 0.06) * s);
+      m.ring.material.opacity = (hot ? 0.35 : 0.18) + (hot ? 0.55 : 0.2) * s;
+      m.beam.material.opacity = (hot ? 0.25 : 0.15) + (hot ? 0.5 : 0.2) * s;
+    }
     const px = player.feet.x, pz = player.feet.z;
     let yaw = player.yaw;
     const c = segs ? clearedCount() : 0;
@@ -628,6 +704,19 @@ export async function createHunt({ scene, shared, man, animator, player, heightA
       lockToastT = 4; toast('Clear Chapter 2 to learn the dash');
     }
 
+    // One body a second follows him onto a nearby sidewalk. A long wait is a body a check parked on purpose.
+    poolT -= dt;
+    if (poolT <= 0) {
+      poolT = 0.9;
+      const far = enemies.find(e => e.pool && !e.dead && !e.gone && e.wait < 6 && !(e.angry > 0) && Math.hypot(e.x - px, e.z - pz) > 52);
+      if (far) {
+        const spot = nextPavement(px + ((far.seed % 5) - 2) * 7, pz + ((far.seed % 3) - 1) * 8, far.dir, false);
+        far.x = far.homeX = spot.x; far.z = far.homeZ = spot.z; far.kx = far.kz = far.vy = far.air = 0;
+        const nxt = nextPavement(spot.x, spot.z, far.dir, false);
+        far.tx = nxt.x; far.tz = nxt.z;
+      }
+    }
+
     for (const e of enemies) {
       e.flash = Math.max(0, e.flash - dt);
       e.rammed = Math.max(0, (e.rammed ?? 0) - dt);
@@ -660,7 +749,15 @@ export async function createHunt({ scene, shared, man, animator, player, heightA
       // Far beasts keep their pose but skip the thinking: the frame stays cheap.
       if (pd > 36) { e.going = 0; e.cool = Math.max(0, e.cool - dt); if (!e.duel) e.mesh.visible = seen(e, pd); lay(e, 0); continue; }
       if (!e.duel) e.mesh.visible = seen(e, pd);
-      if (e.angry > 0 && (e.angry -= dt) <= 0) { e.aggro = 0; e.mode = 'roam'; [e.tx, e.tz] = e.walk[e.leg]; }
+      if (e.angry > 0 && e.civ && !e.thief && pd < WITNESS.pull && window.lab?.rides?.driven && Math.random() < dt * 1.2) {
+        window.lab.rides.leave();
+        hud.flashText('Dragged out');
+      }
+      if (e.angry > 0 && (e.angry -= dt) <= 0) {
+        e.aggro = 0; e.mode = 'roam';
+        if (e.walk) [e.tx, e.tz] = e.walk[e.leg];
+        else if (e.pool) { const n = nextPavement(e.x, e.z, e.dir, false); e.tx = n.x; e.tz = n.z; }
+      }
       if (e.duel) {
         const ready = roam ? e === closestRival : !enemies.some(b => !b.duel && b.seg === e.seg && !b.dead);
         if (ready && !e.body) addBody(e);
@@ -687,7 +784,7 @@ export async function createHunt({ scene, shared, man, animator, player, heightA
         lay(e, dt); continue;
       }
       if (e.mode === 'roam' && pd < e.aggro && !gated(e.z)) e.mode = 'chase';
-      if (e.mode === 'chase' && (pd > e.aggro + 5 || homeD > e.leash)) {
+      if (e.mode === 'chase' && !(e.angry > 0) && (pd > e.aggro + 5 || homeD > e.leash)) {
         e.mode = 'roam'; e.tx = e.homeX; e.tz = e.homeZ; e.wait = 0;
       }
       let speed = 0;
@@ -702,7 +799,18 @@ export async function createHunt({ scene, shared, man, animator, player, heightA
         e.tx = e.homeX + Math.sin(a) * r; e.tz = e.homeZ + Math.cos(a) * r;
         // the street's people keep to their beat: there and back along the pavement
         if (e.walk) { e.leg ^= 1; [e.tx, e.tz] = e.walk[e.leg]; e.wait = e.thief || e.kind === 'thief' ? 0.2 : Math.random() * 3; }
-      } else speed = e.roam;
+        else if (e.pool) {
+          // nextPavement only actually crosses when this point is already in the intersection.
+          const nxt = nextPavement(e.x, e.z, e.dir, e.thief || Math.random() < 0.4);
+          e.tx = nxt.x; e.tz = nxt.z; e.wait = e.thief ? 0.15 : Math.random() * 1.4;
+          // A thief beside a civilian sometimes grabs and runs. The bag is the tell; the grab is the other one.
+          if (e.thief && !(e.angry > 0) && Math.random() < 0.35) {
+            const mark = enemies.find(o => o.kind === 'civ' && !o.dead && !o.gone && !(o.angry > 0) && Math.hypot(o.x - e.x, o.z - e.z) < 2.4);
+            if (mark) { e.dir *= -1; e.snatch = 2.5; mark.stagger = 0.55; mark.kx = (mark.x - e.x) * 1.5; mark.kz = (mark.z - e.z) * 1.5; }
+          }
+        }
+      } else speed = (e.snatch > 0 ? e.roam * 1.5 : e.roam);
+      if (e.snatch > 0) e.snatch -= dt;
       const mx = e.tx - e.x, mz = e.tz - e.z, md = Math.hypot(mx, mz) || 1;
       if (e.windup > 0 || e.stagger > 0) speed = 0;
       let step = Math.min(speed * dt, md);
@@ -903,13 +1011,26 @@ export async function createHunt({ scene, shared, man, animator, player, heightA
           if (m.goal) {
             if (c >= segs.length) {
               m.used = true; moveSpawn(m.x, m.z); hp = MAX_HP; won = true; persist(c);
+              say('end');
               toast('The clearing is safe — you did it');
             } else if (gateToastT <= 0) {
               gateToastT = 4;
               toast(`The clearing is not safe yet — ${remaining()} still out`);
             }
           } else if (mi <= c) {
+            const held = heldAt(mi);
+            if (held) { if (gateToastT <= 0) { gateToastT = 4; toast(held); } continue; }
             m.used = true; moveSpawn(m.x, m.z); hp = MAX_HP; invuln = Math.max(invuln, 1.5); persist(c);
+            if (mi === 1) toast(clock <= (STORY.find((s) => s.id === 'late')?.seconds ?? 180) ? 'You made the drop' : 'Late. The ring noticed.');
+            if (mi === 1) {
+              const runner = enemies.find((e) => e.thief && !e.dead && !e.gone);
+              if (runner) {
+                runner.mark = true; runner.pool = false;
+                const spot = nextPavement(px, pz - 28, -1, false);
+                runner.x = runner.homeX = runner.tx = spot.x; runner.z = runner.homeZ = runner.tz = spot.z;
+              }
+            }
+            say(STORY.find((s) => s.at === mi && s.on !== 'clear' && s.on !== 'heat')?.id);
             toast(`Checkpoint · ${m.name}`);
           }
         } else if (segs && roam) {
@@ -931,17 +1052,48 @@ export async function createHunt({ scene, shared, man, animator, player, heightA
     player.world.propagateModifiedBodyPositionsToColliders();
     // Show save failure after other progress messages, so an unlock cannot overwrite the warning.
     if (saveWarningPending) { toast('Progress is not saving in this browser'); saveWarningPending = false; }
+    if (segs && !roam && !marks[1]?.used) clock += dt;
+    if (segs && !roam && !toldOpen) { toldOpen = true; say('late'); }
+    if (segs && !roam) for (const beat of STORY) if (beat.on === 'clear' && c > beat.at) say(beat.id);
+    if (segs && !roam && !toldHeat && heat >= HEAT.stars[0]) { toldHeat = true; say('seen'); }
+    const nextMark = marks.findIndex((m) => !m.used);
+    const task = !segs || roam || won ? '' : nextMark === 1 ? `Make the arcade · ${Math.max(0, Math.ceil((STORY.find((s) => s.id === 'late')?.seconds ?? 180) - clock))}s` : nextMark === 2 && enemies.some((e) => e.mark && !e.dead && !e.gone) ? 'Catch the runner' : nextMark === 3 && heat >= HEAT.stars[0] ? 'Lose the heat' : nextMark === 4 ? 'Deliver a car that still runs' : nextMark === 5 ? 'Break the convoy' : nextMark === 6 ? 'Face Ren' : '';
     const boss = enemies.find(e => e.duel && !e.dead && e.ready && e.phase !== 'waiting' && Math.hypot(e.x - player.feet.x, e.z - player.feet.z) < 18);
-    const heat = enemies.reduce((t, e) => (e.dead ? t : Math.max(t, e.angry ?? 0)), 0);
-    hud.update(dt, { hp, power, cleared: c, won, enemies, player, has, dashCool, flareCool, invuln, boss, heat });
+    const watched = enemies.some(e => e.angry > 0 && !e.dead && !e.gone && sees(e));
+    const atCairn = marks?.some(m => Math.hypot(m.x - px, m.z - pz) < 8);
+    if (atCairn) heat = Math.max(0, heat - HEAT.safe * dt);
+    else if (!watched) heat = Math.max(0, heat - HEAT.decay * dt);
+    const stars = HEAT.stars.filter(t => heat >= t).length;
+    if (segs && stars >= 2) {
+      const alive = cops.filter(e => !e.dead && !e.gone);
+      if (cops.length < HEAT.cops) {
+        const spot = nextPavement(px + 16, pz - 10, 1, false);
+        const cop = make({ kind: 'enforcer', x: spot.x, z: spot.z, police: true, seg: -1 }, cops.length);
+        cop.homeX = spot.x; cop.homeZ = spot.z; cop.aggro = 36; cop.leash = 80; cop.mode = 'chase';
+        addBody(cop); enemies.push(cop); cops.push(cop);
+        if (alive.length === 0) toast('Police are in the district');
+      }
+    }
+    if (stars >= 3 && !block) {
+      const x = px + Math.sin(player.yaw) * 16, z = pz + Math.cos(player.yaw) * 16, y = heightAt(x, z);
+      const mesh = new THREE.Mesh(new THREE.BoxGeometry(12, 1.3, 0.7), new THREE.MeshBasicMaterial({ color: 0x141c28 }));
+      mesh.position.set(x, y + 0.65, z); mesh.rotation.y = player.yaw; scene.add(mesh);
+      const col = player.world.createCollider(player.R.ColliderDesc.cuboid(6, 0.65, 0.35).setTranslation(x, y + 0.65, z).setRotation({ x: 0, y: Math.sin(player.yaw / 2), z: 0, w: Math.cos(player.yaw / 2) }));
+      block = { mesh, col };
+    } else if (stars < 3 && block) {
+      scene.remove(block.mesh); player.world.removeCollider(block.col, true); block = null;
+    }
+    hud.update(dt, { hp, power, cleared: c, won, enemies, player, has, dashCool, flareCool, invuln, boss, heat, cash, stars, task });
   }
 
   return { update, pose, enemies, hud, ram,
     /** For the vehicles: a jolt through the camera, and a knock he takes from his own crash. */
     jolt(k) { cameraKick = Math.max(cameraKick, k); }, crash(n) { hp -= n; hurtPose = 1; if (hp <= 0) die(); },
+    carjack() { hp = Math.max(1, hp - GUILT); heat = Math.min(HEAT.max, heat + HEAT.carjack); cameraKick = Math.max(cameraKick, 0.12); hud.flashText('Innocent!'); toast('That driver did not hand you the keys.'); },
     get hp() { return hp; }, get power() { return power; },
     get seg() { return segs ? clearedCount() : 0; }, get powers() { return { ...powers }; },
     get roam() { return roam; }, get won() { return won; }, get hitPause() { return hitPause; }, get cameraKick() { return cameraKick; },
+    unlocked: (kind) => unlocksFor(roam ? LEVELS.length : clearedCount()).includes(kind),
     /** How fast the world runs this frame: hit-stop, then the perfect-dodge slow motion. */
     get timeScale() { return hitPause > 0 ? 0.12 : slowMo > 0 ? 0.35 : 1; },
     get combo() { return swingType; }, get chain() { return combo; } };
@@ -987,13 +1139,16 @@ export function demo() {
     if (!KIND[k].civ || KIND[k].aggro !== 0 || KIND[k].dmg <= 0 || !CAST[k] || !HEFT[k]) throw new Error('the street\'s people are bystanders until provoked, then can fight back: ' + k);
     if (HIT.hp[k] - HIT.sword[k] <= 0) throw new Error('one careless swing hurts, it does not kill: ' + k);
     if (HIT.hp[k] - 2 * HIT.sword[k] > 0) throw new Error('a second swing is a choice, and it kills: ' + k);
-    if (RAM.per * 12 < HIT.hp[k]) throw new Error('a car at speed kills on the pavement: ' + k);
+    if (RAM.per * RAM.kill < HIT.hp[k]) throw new Error('a car at speed kills on the pavement: ' + k);
+    if (!(ramBand(RAM.stumble - 0.1) === 'stumble' && ramBand(RAM.kill - 0.1) === 'knock' && ramBand(RAM.kill) === 'kill')) throw new Error('a bump, a knockdown, then a kill');
+    if (!(6 < HIT.hp[k] - 1 && 18 < HIT.hp[k])) throw new Error('the lower bands do not kill by themselves: ' + k);
   }
   if (KINDS.includes('civ') || KINDS.includes('thief')) throw new Error('bystanders are never part of a level\'s crew');
   if (!(GUILT * 2 < MAX_HP && GUILT > 0)) throw new Error('guilt hurts but one mistake is not death');
   if (!(RAM.per * RAM.min < HIT.hp.punk && RAM.max < HIT.hp.brute)) throw new Error('a nudge is not a kill, and no car drops the mech in one');
   if (!(RAM.crew < HIT.hp.punk && RAM.crew * 2 >= HIT.hp.punk)) throw new Error('a punk survives one ram, but not two committed hits');
   if (!(PERFECT > 0 && PERFECT < 0.5)) throw new Error('perfect-dodge window');
+  demoConfig();
   demoLevels();
   demoDuels(); demoCombat();
   const earned = powersFor(LEVELS.length);

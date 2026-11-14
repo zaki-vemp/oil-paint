@@ -27,6 +27,7 @@ export class Follow {
     this.yaw -= look.x;
     this.pitch = THREE.MathUtils.clamp(this.pitch + look.y, -0.75, 1.2);
     this.want = THREE.MathUtils.clamp(this.want + zoom * 0.5, 2.8, 13);
+    const reach = Math.min(18, this.want + (this.boost || 0));
     const goal = new THREE.Vector3(target.x, target.y + 1.35, target.z);
     if (this.pivot.lengthSq() === 0) this.pivot.copy(goal);
     this.pivot.x = damp(this.pivot.x, goal.x, 10, dt);
@@ -35,15 +36,15 @@ export class Follow {
     const cp = Math.cos(this.pitch), sp = Math.sin(this.pitch);
     const back = new THREE.Vector3(-Math.sin(this.yaw) * cp, sp, -Math.cos(this.yaw) * cp);
     const right = new THREE.Vector3(-Math.cos(this.yaw), 0, Math.sin(this.yaw));
-    const k = Math.min(1, this.want / 6.4);
+    const k = Math.min(1, reach / 6.4);
     const from = this.pivot.clone().addScaledVector(right, this.side * k);
     // Sweep three rays across the camera's near plane so its edges cannot clip a trunk.
     let hit = null;
     for (const offset of [-0.22, 0, 0.22]) {
-      const d = castRay(from.clone().addScaledVector(right, offset), back, this.want + 0.4);
+      const d = castRay(from.clone().addScaledVector(right, offset), back, reach + 0.4);
       if (d != null) hit = hit == null ? d : Math.min(hit, d);
     }
-    const free = hit == null ? this.want : Math.max(0.8, hit - 0.3);
+    const free = hit == null ? reach : Math.max(0.8, hit - 0.3);
     this.distance = free < this.distance ? damp(this.distance, free, 18, dt) : damp(this.distance, free, 2.5, dt);
     cam.position.copy(from).addScaledVector(back, this.distance);
     const floor = groundAt(cam.position.x, cam.position.z) + 0.45;

@@ -25,7 +25,7 @@ try {
     const results = {};
     const Z0 = plan[0].checkpoint.z; // the start: every fixed place below is measured from it, whatever the map's scale
     // This run measures combat and progression. The street's people are moved out of it; tools/street.mjs is theirs.
-    for (const e of h.enemies) if (e.civ) e.x = e.homeX = e.tx = 240;
+    for (const e of h.enemies) if (e.civ) { e.x = e.homeX = e.tx = 240; e.wait = 1e4; }
     // A second crew member must not hit during the single-attacker dodge check. Traffic is tested in street.mjs.
     for (const e of h.enemies) if (!e.duel) { e.aggro = 0; e.mode = 'roam'; e.wait = 1e4; e.windup = 0; }
     for (const [i, v] of L.rides.rides.entries()) if (v.traffic) {

@@ -99,6 +99,28 @@ export const LEVELS = BASE.map((L) => {
 
 export const GOAL = at({ x: 11, z: -96, name: 'The clearing' });
 
+// Ten beats on the six gates. The fight does not change; the cairn sometimes waits on the job.
+// time: reach the next stile before the clock. chase: a marked runner. heat: no star on you.
+// deliver: a car still above 60% hull. convoy and boss are the crew and the last duel, already required.
+export const STORY = [
+  { id: 'late', at: 0, mission: 'time', seconds: 180, line: 'You carry other people’s packages. This one was already late.' },
+  { id: 'waiting', at: 0, on: 'clear', line: 'They were not waiting for you. They were waiting for the parcel.' },
+  { id: 'runner', at: 1, mission: 'chase', line: 'A runner lifted it off a civilian. Catch them before the heights.' },
+  { id: 'heights', at: 2, mission: 'chase', line: 'The runner’s route ends here. No runner, no handoff.' },
+  { id: 'seen', at: 2, on: 'heat', line: 'Someone talked. The district has your description.' },
+  { id: 'tail', at: 3, mission: 'heat', line: 'Lose every witness. The stacks will not take a parcel with a tail on it.' },
+  { id: 'whole', at: 4, mission: 'deliver', line: 'Bring a car that still holds together. A wreck is not a delivery.' },
+  { id: 'convoy', at: 3, on: 'clear', mission: 'convoy', line: 'The stacks were a convoy in the ring’s colours. Cut through.' },
+  { id: 'name', at: 5, mission: 'boss', line: 'The name on every manifest is Ren. This is the last run.' },
+  { id: 'end', at: 6, mission: 'boss', line: 'The ring was one person using your routes. The next package is yours to refuse.' },
+];
+
+const GARAGE = ['car', 'bicycle', 'bike', 'sports', 'pickup'];
+/** What the garage will give him after `cleared` segments. The sedan and the bicycle are his from the start. */
+export function unlocksFor(cleared) {
+  return GARAGE.slice(0, Math.min(GARAGE.length, 2 + Math.max(0, cleared)));
+}
+
 export const SAVE_KEY = 'oilpaint.levels.v1';
 
 /** Powers earned by clearing `cleared` segments. Derived, never stored. */
@@ -121,7 +143,8 @@ export function loadProgress() {
     if (!Number.isInteger(s?.cleared) || s.cleared < 0 || s.cleared > LEVELS.length) return null;
     // The place is always the cleared level's own cairn: a save written before the map grew still lands on it.
     const cp = LEVELS[Math.min(s.cleared, LEVELS.length - 1)].checkpoint;
-    return { cleared: s.cleared, x: cp.x, z: cp.z };
+    const unlocked = Array.isArray(s.unlocked) ? s.unlocked.filter((k) => GARAGE.includes(k)) : unlocksFor(s.cleared);
+    return { cleared: s.cleared, x: cp.x, z: cp.z, cash: Number.isFinite(s.cash) ? Math.max(0, s.cash) : 0, unlocked };
   } catch {
     return null;
   }
@@ -160,6 +183,11 @@ export function demoLevels() {
   const p = powersFor(2);
   if (!p.spark || !p.dash || p.heavy || p.flare || p.whirl) throw new Error('powers for 2 cleared');
   for (const k of POWER_ORDER) if (!POWERS[k] || LEVELS.filter((L) => L.grant === k).length !== 1) throw new Error('one level grants ' + k);
+  if (STORY.length < 8 || STORY.length > 12) throw new Error('story length ' + STORY.length);
+  for (const kind of ['time', 'chase', 'heat', 'deliver', 'convoy', 'boss']) {
+    if (!STORY.some((s) => s.mission === kind)) throw new Error('missing mission ' + kind);
+  }
+  if (unlocksFor(0).join() !== 'car,bicycle' || !unlocksFor(4).includes('pickup')) throw new Error('the garage opens with the road');
 }
 
 if (globalThis.process?.argv?.[1]?.endsWith('levels.js')) demoLevels();
