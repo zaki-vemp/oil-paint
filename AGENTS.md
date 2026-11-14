@@ -32,6 +32,8 @@ node src/game/levels.js    # level-data validation
 node src/game/ride.js      # handling, momentum, energy loss and rollover self-checks
 node tools/assets.mjs      # imported GLB geometry, rig, clip and finite-data checks
 node tools/street.mjs      # headless: traffic, collisions, rollover, ramming, citizens, mob, thief (build + serve + CHROME)
+node server/room.mjs --check   # online room server: join, relay, host handover, full room
+npm run room               # room server on :5407 (vite dev proxies /room to it)
 node --check <file>        # syntax-check any edited module
 node tools/fps.mjs --seconds 8   # frame-rate of the built page (needs browser)
 ```
@@ -43,6 +45,8 @@ Key URLs (dev server):
 | `?scene=autumn` | Level game (default mode) |
 | `?scene=autumn&mode=roam` | Free roam |
 | `?scene=autumn&fresh` | Ignore the saved checkpoint |
+| `?scene=autumn&mode=online` | Online city, quick match into an open room (needs `npm run room`; `&server=wss://…` elsewhere) |
+| `?scene=autumn&mode=online&room=xyz` | Online city, private room `xyz` (invite link; never matched into) |
 | `?scene=aurora` | Night scene |
 | `?quality=low` | Fewer pixels/leaves, no sun-shafts (perf fallback) |
 | `?capture` / `?clean` | Deterministic stepping / no HUD chrome (tools) |
@@ -148,6 +152,7 @@ mindmap
 | Sky / aurora / mist | `src/world/sky.js`, `src/night/sky.js`, `oilpaint/common.js` | Shared uniforms live in `common.js` |
 | HUD / page chrome | `index.html` + `src/game/hud.js` + `src/ui.css` | Cyberpunk plates: cut corners, cell bars, `--hot` + `--chapter-accent` (neon, from `chapters.js`). No backdrop blur |
 | Night-scene gameplay | `src/night/main.js` | Passes `marks`/`spots` to `createHunt` — keep that API working |
+| Online city | `server/room.mjs` + `src/game/net.js` + `hunt.js` (`net`, `puppet()`, `remote()`) | Server owns membership and host; host page runs crew AI |
 | Perf regression hunt | `tools/fps.mjs`, `?quality=low` | Compare before/after; see Performance below |
 
 ## Core concepts an agent must not break
@@ -206,6 +211,11 @@ mindmap
   the figure is hidden while driving. The clickable G prompt also works for exiting on touch.
 - Free roam: no gates, all powers, enemies respawn after 20 s, cairns
   heal repeatedly (10 s cooldown). Roam never writes the level save.
+- Online city (`mode=online`): roam rules, up to 8 per room. No `room` = quick match (server fills the fullest open `pub-*` room); a named room is private, reached only by its invite link. The host page (oldest
+  visible player, chosen by `server/room.mjs`) runs the crews (`netId` = spot index) and sends their state at 10 Hz;
+  other pages draw them as puppets and send blows as `hit`. Strikes and gunner shots are broadcast and each page tests
+  them against its own wanderer. Citizens, thieves, rivals, police and vehicles stay local. Online never slows or
+  pauses the world (`timeScale` is 1, the menu keeps ticking). The contract (break one district's crew) pays the room.
 - Back-compat: `createHunt` without `levels` (night scene) must keep the
   old behaviour — one-shot cairns, `F` swings, no powers HUD.
 

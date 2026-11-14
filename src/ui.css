@@ -330,3 +330,15 @@ html[data-clean] #game-header, html[data-clean] #hud, html[data-clean] #hint, ht
   .ride-prompt kbd { display: none; }
   #hud.driving .ride-prompt { bottom: max(106px, calc(env(safe-area-inset-bottom) + 94px)); }
 }
+
+/* Online city: names over the other wanderers, the room plate in the menu, a player count by the menu button. */
+.net-tags span { position: fixed; z-index: 2; left: 0; top: 0; padding: 3px 8px; pointer-events: none; white-space: nowrap; font: 700 11px var(--mono); letter-spacing: .08em; color: #05070a; background: var(--cyan); clip-path: polygon(0 0, calc(100% - 6px) 0, 100% 6px, 100% 100%, 6px 100%, 0 calc(100% - 6px)); }
+.net-tags span.driving::after { content: ' · driving'; }
+html[data-clean] .net-tags { display: none; }
+#net-pill { pointer-events: none; margin-left: 10px; font: 700 10px var(--mono); letter-spacing: .16em; text-transform: uppercase; color: var(--cyan); text-shadow: 0 1px 0 #000; }
+#online-panel { display: grid; gap: 7px; }
+#online-panel .net-name { font: 700 10px var(--mono); letter-spacing: .2em; text-transform: uppercase; color: var(--cyan); }
+#net-name { background: var(--plate); border: 1px solid var(--edge); color: inherit; font: 13px var(--mono); padding: 9px 10px; }
+#net-name:focus-visible { outline: 2px solid var(--hot); outline-offset: 2px; }
+#net-status { font: 11px var(--mono); overflow-wrap: anywhere; opacity: .85; }
+#online-panel > div { flex-wrap: wrap; } #online-panel > div button { min-width: 30%; }

@@ -1,6 +1,7 @@
 {
   "version": "0.0.1",
   "configurations": [
-    { "name": "dev", "runtimeExecutable": "npm", "runtimeArgs": ["run", "dev"], "port": 5406 }
+    { "name": "dev", "runtimeExecutable": "npm", "runtimeArgs": ["run", "dev"], "port": 5406 },
+    { "name": "room", "runtimeExecutable": "npm", "runtimeArgs": ["run", "room"], "port": 5407 }
   ]
 }

@@ -122,7 +122,7 @@ export function strikeHits(e, x, y, z, groundY) {
 
 const CLIP = (clip) => clip.name.split('|').pop().replace(/ \d+$/, '');
 
-export async function createHunt({ scene, shared, man, animator, player, heightAt, marks, spots, moveSpawn, down, levels = null, roam = false, route = null, camera = null }) {
+export async function createHunt({ scene, shared, man, animator, player, heightAt, marks, spots, moveSpawn, down, levels = null, roam = false, route = null, camera = null, net = null }) {
   // Level mode builds its own marks and cairns from the level list; the night
   // scene passes marks and spots directly, which keeps working as before.
   const segs = levels ? levels.map((L) => ({ ...L })) : null;
@@ -204,6 +204,11 @@ export async function createHunt({ scene, shared, man, animator, player, heightA
     return { ...s, ...KIND[s.kind], mesh, tell, aim, air: 0, vy: 0, hp: HIT.hp[s.kind], maxHp: HIT.hp[s.kind], homeX: s.x, homeZ: s.z, tx: s.x, tz: s.z, yaw: Math.random() * 6.28, wait: Math.random() * 1.5, mode: 'roam', cool: 0, windup: 0, stagger: 0, phase: Math.random() * 6, flash: 0, dead: 0, gone: false, going: 0, seg: s.seg ?? -1, respawnT: 0, kx: 0, kz: 0 };
   };
   const enemies = spots.map((p) => make(p));
+  // Online, the crews (not the street's people, not the rivals) are shared: netId is their place in the level list.
+  if (net) enemies.forEach((e, i) => { if (!e.civ) e.netId = i; });
+  /** A shared body some other page's host is thinking for: this page only shows it and reports its own blows. */
+  const puppet = (e) => !!net && e.netId != null && !net.host;
+  const r2 = (v) => Math.round(v * 100) / 100;
   if (segs && route) {
     // A fixed pool. Bodies the player has left behind are reused on a sidewalk near him; a long wait
     // means something parked them on purpose (the headless checks do), and they stay there.
@@ -451,25 +456,30 @@ export async function createHunt({ scene, shared, man, animator, player, heightA
     return true;
   }
 
-  function hurt(e, n, source = 'sword') {
+  // `from` is another wanderer's blow, passed on by the host: no hit-stop or combo for him here, knocked from there.
+  function hurt(e, n, source = 'sword', from = null) {
     if (e.dead) return;
+    const shadow = !from && puppet(e);
+    if (shadow) net.send({ t: 'hit', i: e.netId, n: Math.round(n), src: source, x: r2(player.feet.x), z: r2(player.feet.z) });
+    if (!from) e.mineT = performance.now();
     const provoked = e.angry > 0;
     if (e.duel && (!e.ready || e.phase === 'intro' || e.phase === 'waiting')) return;
     const guarded = e.duel && e.phase !== 'recovery';
     if (e.duel) n = damageRival(e, n, source);
     if (guarded && e.phase === 'recovery') toast('Guard broken — strike now!');
-    e.hp -= n;
+    if (!shadow) e.hp -= n;
     e.flash = 0.16;
-    combo++; comboT = 2.2; hud.combo(combo);
+    if (!from) { combo++; comboT = 2.2; hud.combo(combo); }
     if (!e.duel) {
       e.stagger = n > 40 ? 0.55 : 0.22; e.windup = 0;
-      const k = (KNOCK[source] ?? 3) * (HEFT[e.kind] ?? 1), dx = e.x - player.feet.x, dz = e.z - player.feet.z, d = Math.hypot(dx, dz) || 1;
+      const by = from ?? player.feet;
+      const k = (KNOCK[source] ?? 3) * (HEFT[e.kind] ?? 1), dx = e.x - by.x, dz = e.z - by.z, d = Math.hypot(dx, dz) || 1;
       e.kx = dx / d * k; e.kz = dz / d * k;
       // a heavy blow takes the light ones off their feet; in the air they cannot answer
       if ((source === 'heavy' || source === 'whirl') && e.air <= 0) e.vy = LAUNCH * HEFT[e.kind];
     }
     e.cool = Math.max(e.cool, 0.45);
-    if (!guarded || e.duel && e.phase === 'recovery' || source === 'flare') {
+    if (!from && (!guarded || e.duel && e.phase === 'recovery' || source === 'flare')) {
       const big = source === 'heavy' || source === 'whirl' || source === 'thrust';
       hitPause = Math.max(hitPause, (big ? 0.075 : 0.045) + Math.min(combo, 8) * 0.004); cameraKick = big ? 0.12 : 0.055;
     }
@@ -481,13 +491,29 @@ export async function createHunt({ scene, shared, man, animator, player, heightA
       impacts.push({ mesh, x: e.x, y: heightAt(e.x, e.z) + (e.duel ? 1.15 : 0.75), z: e.z, vx: (Math.random() - 0.5) * 9, vy: 2 + Math.random() * 3, vz: (Math.random() - 0.5) * 9, life: 0.3 });
     }
     if (e.civ) blame(e, e.hp <= 0, provoked);
-    if (e.hp <= 0) {
-      e.dead = 0.001; e.tell.visible = false;
-      if (!e.civ && !e.duel) { cash += CASH.enemy; power = Math.min(POWER_MAX, power + 0.35); hud.flashText(`+${CASH.enemy}`); }
-      player.world.removeRigidBody(e.body); e.body = e.collider = null;
-      if (!e.duel) { e.kx *= 1.7; e.kz *= 1.7; e.vy = Math.max(e.vy, 3.5 * HEFT[e.kind]); } // the fallen are thrown
-      if (e.duel) { toast(`${e.name} — lesson mastered`); hitPause = 0.12; cameraKick = 0.16; }
-    }
+    if (!shadow && e.hp <= 0) fall(e);
+  }
+
+  // Online, everyone who struck a body in its last seconds is paid for it: an assist is a kill.
+  function fall(e) {
+    e.dead = 0.001; e.tell.visible = false;
+    if (!e.civ && !e.duel && performance.now() - (e.mineT ?? -1e9) < 4000) { cash += CASH.enemy; power = Math.min(POWER_MAX, power + 0.35); hud.flashText(`+${CASH.enemy}`); }
+    if (e.body) player.world.removeRigidBody(e.body);
+    e.body = e.collider = null;
+    if (!e.duel) { e.kx *= 1.7; e.kz *= 1.7; e.vy = Math.max(e.vy, 3.5 * HEFT[e.kind]); } // the fallen are thrown
+    if (e.duel) { toast(`${e.name} — lesson mastered`); hitPause = 0.12; cameraKick = 0.16; }
+  }
+
+  /** A puppet goes where the host last put it, a little behind; its windup runs down between word from the host. */
+  function follow(e, dt) {
+    const s = net.foe(e);
+    if (!s) return;
+    const k = Math.min(1, dt * 10);
+    if (Math.hypot(s.x - e.x, s.z - e.z) > 6) { e.x = s.x; e.z = s.z; } else { e.x += (s.x - e.x) * k; e.z += (s.z - e.z) * k; }
+    e.yaw += Math.atan2(Math.sin(s.yaw - e.yaw), Math.cos(s.yaw - e.yaw)) * k;
+    e.going = s.going; e.hp = s.hp;
+    if (e.netAt !== s.at) { e.netAt = s.at; e.windup = s.windup; } else e.windup = Math.max(0, e.windup - dt);
+    if (e.windup > 0) e.attackYaw = e.yaw;
   }
 
   function takeHit(damage, from = null, shove = 5) {
@@ -613,13 +639,15 @@ export async function createHunt({ scene, shared, man, animator, player, heightA
     }
   }
 
-  function fire(e) {
+  /** A gunner's shot at `to` (him, or online whoever it tracks), or with the rise `vy` the host already chose. */
+  function fire(e, to, vy) {
     const sx = Math.sin(e.attackYaw), sz = Math.cos(e.attackYaw);
     const mesh = put(scene, new THREE.SphereGeometry(0.12, 6, 5), shotMat);
     mesh.scale.set(1, 1, 3.2); mesh.rotation.y = e.attackYaw;
-    const y = heightAt(e.x, e.z) + 1.25, flight = Math.hypot(player.feet.x - e.x, player.feet.z - e.z) / e.shot;
-    bolts.push({ mesh, foe: e.dmg, g: 0, life: 1.3, x: e.x + sx * 0.7, y, z: e.z + sz * 0.7,
-      vx: sx * e.shot, vy: Math.max(-4, Math.min(4, (player.feet.y + 1.05 - y) / Math.max(flight, 0.2))), vz: sz * e.shot });
+    const y = heightAt(e.x, e.z) + 1.25;
+    vy ??= Math.max(-4, Math.min(4, (to.y + 1.05 - y) / Math.max(Math.hypot(to.x - e.x, to.z - e.z) / e.shot, 0.2)));
+    bolts.push({ mesh, foe: e.dmg, g: 0, life: 1.3, x: e.x + sx * 0.7, y, z: e.z + sz * 0.7, vx: sx * e.shot, vy, vz: sz * e.shot });
+    return vy;
   }
 
   const swingMul = () => swingH ? 3 : swingType === 'spin' ? WHIRL : swingType === 'thrust' ? 1.3 : 1;
@@ -653,6 +681,18 @@ export async function createHunt({ scene, shared, man, animator, player, heightA
     const closestRival = roam ? enemies.filter(e => e.duel && !e.dead).sort((a, b) => Math.hypot(a.x - px, a.z - pz) - Math.hypot(b.x - px, b.z - pz))[0] : null;
     // A closed gate stands between two z values: neither side's teeth reach through.
     const gated = (ez) => segs && !roam && !won && gates.some((g) => c <= g.seg && (ez - g.group.position.z) * (pz - g.group.position.z) < 0);
+    /** His own blade against one body. */
+    function swingAt(e) {
+      if (!hitting || struck.has(e) || gated(e.z) || Math.abs(player.feet.y - heightAt(e.x, e.z)) >= 1.7 || !inFront(px, pz, yaw, e.x, e.z, ATTACKS[swingType].reach, swingType === 'spin' ? Math.PI : swingH ? 1.6 : 1.2)) return;
+      struck.add(e);
+      // A blow landed in the last moment of his windup turns the strike aside.
+      const parry = !e.shot && e.windup > 0 && e.windup < PARRY;
+      hurt(e, swingMul() * HIT.sword[e.kind] * (parry ? PARRY_MUL : 1), swingSource());
+      if (parry && !e.dead) {
+        e.stagger = 1.2; power = Math.min(POWER_MAX, power + 0.5); slowMo = Math.max(slowMo, 0.25);
+        hud.flashText('Parry');
+      }
+    }
     if (input?.attack || input?.heavy && (!segs || has('heavy'))) {
       attackBuffer = 0.55;
       queuedHeavy = !!(segs && input?.heavy && has('heavy'));
@@ -731,7 +771,7 @@ export async function createHunt({ scene, shared, man, animator, player, heightA
       e.stagger = Math.max(0, e.stagger - dt);
       if (e.gone) {
         // In free roam the fallen come back after a while, at home and calm.
-        if ((roam || e.civ) && (e.respawnT -= dt) <= 0) { // the street refills in level mode too
+        if (puppet(e) ? (net.foe(e)?.hp ?? 0) > 0 : (roam || e.civ) && (e.respawnT -= dt) <= 0) { // the street refills in level mode too
           e.hp = e.maxHp; e.dead = 0; e.gone = false;
           e.x = e.homeX; e.z = e.homeZ; e.tx = e.homeX; e.tz = e.homeZ;
           e.mode = 'roam'; e.cool = e.windup = e.stagger = e.air = e.vy = e.kx = e.kz = 0; e.wait = 1; e.mesh.visible = true;
@@ -740,6 +780,7 @@ export async function createHunt({ scene, shared, man, animator, player, heightA
           if (!e.duel) addBody(e);
         } else continue;
       }
+      if (puppet(e) && !e.dead && (net.foe(e)?.hp ?? 1) <= 0) fall(e);
       if (e.dead) {
         e.dead += dt;
         e.going = 0;
@@ -751,12 +792,18 @@ export async function createHunt({ scene, shared, man, animator, player, heightA
         }
         continue;
       }
+      const ld = Math.hypot(px - e.x, pz - e.z);
+      if (puppet(e)) { follow(e, dt); e.mesh.visible = seen(e, ld); swingAt(e); lay(e, dt); continue; }
       shove(e, dt);
-      const dxp = px - e.x, dzp = pz - e.z, pd = Math.hypot(dxp, dzp);
+      // Online the host's crews go for the nearest wanderer, his or another page's.
+      let ax = px, az = pz, ay = player.feet.y;
+      const other = net && e.netId != null ? net.near(e.x, e.z) : null;
+      if (other && other.d < ld) { ax = other.x; az = other.z; ay = other.y; }
+      const dxp = ax - e.x, dzp = az - e.z, pd = Math.hypot(dxp, dzp);
       const homeD = Math.hypot(e.x - e.homeX, e.z - e.homeZ);
       // Far beasts keep their pose but skip the thinking: the frame stays cheap.
-      if (pd > 36) { e.going = 0; e.cool = Math.max(0, e.cool - dt); if (!e.duel) e.mesh.visible = seen(e, pd); lay(e, 0); continue; }
-      if (!e.duel) e.mesh.visible = seen(e, pd);
+      if (pd > 36) { e.going = 0; e.cool = Math.max(0, e.cool - dt); if (!e.duel) e.mesh.visible = seen(e, ld); lay(e, 0); continue; }
+      if (!e.duel) e.mesh.visible = seen(e, ld);
       if (e.angry > 0 && e.civ && !e.thief && pd < WITNESS.pull && window.lab?.rides?.driven && Math.random() < dt * 1.2) {
         window.lab.rides.leave();
         hud.flashText('Dragged out');
@@ -797,7 +844,7 @@ export async function createHunt({ scene, shared, man, animator, player, heightA
       }
       let speed = 0;
       if (e.mode === 'chase') {
-        e.tx = px; e.tz = pz; speed = pd > e.reach * 0.83 ? e.chase : 0;
+        e.tx = ax; e.tz = az; speed = pd > e.reach * 0.83 ? e.chase : 0;
         if (e.keep && pd < e.keep) { e.tx = e.x - dxp; e.tz = e.z - dzp; speed = e.chase; } // rushed, a gunner gives ground
       }
       else if (e.wait > 0) e.wait -= dt;
@@ -836,32 +883,29 @@ export async function createHunt({ scene, shared, man, animator, player, heightA
       } else if (e.shot && e.mode === 'chase' && e.windup <= 0) e.yaw = Math.atan2(dxp, dzp);
       e.phase += dt * (3 + e.going * 2);
       e.cool = Math.max(0, e.cool - dt);
-      const near = Math.hypot(px - e.x, pz - e.z);
+      const near = pd;
       if (e.windup > 0) {
-        if (e.shot && e.windup > AIM_LOCK) e.yaw = e.attackYaw = Math.atan2(px - e.x, pz - e.z);
+        if (e.shot && e.windup > AIM_LOCK) e.yaw = e.attackYaw = Math.atan2(ax - e.x, az - e.z);
         if (e.lunge && e.windup < 0.2) sweep(e, Math.sin(e.attackYaw), Math.cos(e.attackYaw), e.lunge / 0.2 * dt);
         e.windup = Math.max(0, e.windup - dt);
-        if (e.windup === 0 && e.shot) { if (hp > 0 && !gated(e.z)) fire(e); }
-        else if (e.windup === 0 && invuln <= 0 && hp > 0 && !gated(e.z) && strikeHits(e, px, player.feet.y, pz, heightAt(e.x, e.z))) {
-          takeHit(e.dmg, e, e.push);
+        // Shared strikes and shots are announced; every page tests them against its own wanderer.
+        if (e.windup === 0 && e.shot) {
+          if (hp > 0 && !gated(e.z)) {
+            const vy = fire(e, { x: ax, y: ay, z: az });
+            if (net && e.netId != null) net.send({ t: 'ev', k: 'bolt', i: e.netId, yaw: r2(e.attackYaw), vy: r2(vy) });
+          }
+        } else if (e.windup === 0) {
+          if (net && e.netId != null) net.send({ t: 'ev', k: 'strike', i: e.netId });
+          if (invuln <= 0 && hp > 0 && !gated(e.z) && strikeHits(e, px, player.feet.y, pz, heightAt(e.x, e.z))) takeHit(e.dmg, e, e.push);
         }
         if (e.windup === 0 && e.kind === 'brute') { pulse(e.x, heightAt(e.x, e.z) + 0.06, e.z, 0xff9f7a, true); cameraKick = Math.max(cameraKick, 0.06); }
       } else if (e.mode === 'chase' && near < e.reach + 0.25 + (e.lunge ?? 0) && e.cool <= 0 && e.stagger <= 0 && hp > 0 && !gated(e.z)) {
         e.windup = e.wind;
-        e.attackYaw = Math.atan2(px - e.x, pz - e.z);
+        e.attackYaw = Math.atan2(ax - e.x, az - e.z);
         e.yaw = e.attackYaw;
         e.cool = e.windup + 1.0;
       }
-      if (hitting && !struck.has(e) && !gated(e.z) && Math.abs(player.feet.y - heightAt(e.x, e.z)) < 1.7 && inFront(px, pz, yaw, e.x, e.z, ATTACKS[swingType].reach, swingType === 'spin' ? Math.PI : swingH ? 1.6 : 1.2)) {
-        struck.add(e);
-        // A blow landed in the last moment of his windup turns the strike aside.
-        const parry = !e.shot && e.windup > 0 && e.windup < PARRY;
-        hurt(e, swingMul() * HIT.sword[e.kind] * (parry ? PARRY_MUL : 1), swingSource());
-        if (parry && !e.dead) {
-          e.stagger = 1.2; power = Math.min(POWER_MAX, power + 0.5); slowMo = Math.max(slowMo, 0.25);
-          hud.flashText('Parry');
-        }
-      }
+      swingAt(e);
       lay(e, dt);
     }
     for (let i = 0; i < enemies.length; i++) {
@@ -1065,7 +1109,7 @@ export async function createHunt({ scene, shared, man, animator, player, heightA
     if (segs && !roam) for (const beat of STORY) if (beat.on === 'clear' && c > beat.at) say(beat.id);
     if (segs && !roam && !toldHeat && heat >= HEAT.stars[0]) { toldHeat = true; say('seen'); }
     const nextMark = marks.findIndex((m) => !m.used);
-    const task = !segs || roam || won ? '' : nextMark === 1 ? `Make the arcade · ${Math.max(0, Math.ceil((STORY.find((s) => s.id === 'late')?.seconds ?? 180) - clock))}s` : nextMark === 2 && enemies.some((e) => e.mark && !e.dead && !e.gone) ? 'Catch the runner' : nextMark === 3 && heat >= HEAT.stars[0] ? 'Lose the heat' : nextMark === 4 ? 'Deliver a car that still runs' : nextMark === 5 ? 'Break the convoy' : nextMark === 6 ? 'Face Ren' : '';
+    const task = net ? net.task(player) : !segs || roam || won ? '' : nextMark === 1 ? `Make the arcade · ${Math.max(0, Math.ceil((STORY.find((s) => s.id === 'late')?.seconds ?? 180) - clock))}s` : nextMark === 2 && enemies.some((e) => e.mark && !e.dead && !e.gone) ? 'Catch the runner' : nextMark === 3 && heat >= HEAT.stars[0] ? 'Lose the heat' : nextMark === 4 ? 'Deliver a car that still runs' : nextMark === 5 ? 'Break the convoy' : nextMark === 6 ? 'Face Ren' : '';
     const boss = enemies.find(e => e.duel && !e.dead && e.ready && e.phase !== 'waiting' && Math.hypot(e.x - player.feet.x, e.z - player.feet.z) < 18);
     const watched = enemies.some(e => e.angry > 0 && !e.dead && !e.gone && sees(e));
     const atCairn = marks?.some(m => Math.hypot(m.x - px, m.z - pz) < 8);
@@ -1094,7 +1138,20 @@ export async function createHunt({ scene, shared, man, animator, player, heightA
     hud.update(dt, { hp, power, cleared: c, won, enemies, player, has, dashCool, flareCool, invuln, boss, heat, cash, stars, task });
   }
 
-  return { update, pose, enemies, hud, ram,
+  return { update, pose, enemies, hud, ram, get swing() { return swing; },
+    /** The room's payment for a finished contract. */
+    reward(n, text) { cash += n; hud.flashText(`+${n}`); toast(text); },
+    /** What another page sent about a shared body: a guest's blow (host only), a strike or a shot (guests). */
+    remote(m) {
+      const e = enemies[m.i];
+      if (!net || !e || e.netId !== m.i || e.dead) return;
+      if (m.t === 'hit') {
+        if (net.host) hurt(e, Math.max(0, Math.min(500, +m.n || 0)), KNOCK[m.src] != null || m.src === 'ram' ? m.src : 'sword', { x: +m.x || e.x, z: +m.z || e.z });
+      } else if (!puppet(e)) return;
+      else if (m.k === 'strike') {
+        if (invuln <= 0 && hp > 0 && strikeHits(e, player.feet.x, player.feet.y, player.feet.z, heightAt(e.x, e.z))) takeHit(e.dmg, e, e.push);
+      } else if (m.k === 'bolt' && e.shot) { e.attackYaw = +m.yaw || 0; fire(e, null, Math.max(-4, Math.min(4, +m.vy || 0))); }
+    },
     /** For the vehicles: a jolt through the camera, and a knock he takes from his own crash. */
     jolt(k) { cameraKick = Math.max(cameraKick, k); }, crash(n) { hp -= n; hurtPose = 1; if (hp <= 0) die(); },
     carjack() { hp = Math.max(1, hp - GUILT); heat = Math.min(HEAT.max, heat + HEAT.carjack); cameraKick = Math.max(cameraKick, 0.12); hud.flashText('Innocent!'); toast('That driver did not hand you the keys.'); },
@@ -1103,7 +1160,7 @@ export async function createHunt({ scene, shared, man, animator, player, heightA
     get roam() { return roam; }, get won() { return won; }, get hitPause() { return hitPause; }, get cameraKick() { return cameraKick; },
     unlocked: (kind) => unlocksFor(roam ? LEVELS.length : clearedCount()).includes(kind),
     /** How fast the world runs this frame: hit-stop, then the perfect-dodge slow motion. */
-    get timeScale() { return hitPause > 0 ? 0.12 : slowMo > 0 ? 0.35 : 1; },
+    get timeScale() { return net ? 1 : hitPause > 0 ? 0.12 : slowMo > 0 ? 0.35 : 1; }, // online the street never waits
     get combo() { return swingType; }, get chain() { return combo; } };
 }
 

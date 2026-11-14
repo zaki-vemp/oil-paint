@@ -94,7 +94,7 @@ if (coarse && !clean) {
 menu.addEventListener('cancel', e => { e.preventDefault(); pause(false); });
 addEventListener('keydown', e => {
   if (clean || !window.lab?.ready || e.repeat) return;
-  if (['Escape', 'KeyP', 'KeyH'].includes(e.code)) {
+  if (e.code === 'Escape' || ['KeyP', 'KeyH'].includes(e.code) && document.activeElement?.tagName !== 'INPUT') {
     e.preventDefault();
     pause(!window.__paused);
   }
@@ -112,7 +112,7 @@ for (const button of document.querySelectorAll('#scenes button')) {
   button.addEventListener('click', () => button.dataset.scene === SCENE ? resume() : showScene(button.dataset.scene));
 }
 for (const button of document.querySelectorAll('#mode button')) {
-  const selected = (q.get('mode') === 'roam' ? 'roam' : 'level') === button.dataset.mode;
+  const selected = (['roam', 'online'].includes(q.get('mode')) ? q.get('mode') : 'level') === button.dataset.mode;
   button.classList.toggle('on', selected);
   button.setAttribute('aria-pressed', String(selected));
   button.addEventListener('click', () => {
@@ -123,6 +123,31 @@ for (const button of document.querySelectorAll('#mode button')) {
   });
 }
 if (SCENE !== 'autumn') document.getElementById('mode').closest('section').hidden = true;
+// Online: no room in the address is a quick match with strangers; an invite is the page's link with its room named,
+// and a private room is a fresh random name only a link reaches.
+if (SCENE === 'autumn' && q.get('mode') === 'online' && !clean) {
+  document.getElementById('online-panel').hidden = document.getElementById('net-pill').hidden = false;
+  const status = document.getElementById('net-status');
+  document.getElementById('net-invite').addEventListener('click', async () => {
+    const room = window.lab?.net?.room;
+    if (!room) { status.textContent = 'Not in a room yet'; return; }
+    const link = new URL(location.href);
+    link.searchParams.set('room', room);
+    for (const key of ['fresh', 'capture', 'clean']) link.searchParams.delete(key);
+    try { await navigator.clipboard.writeText(link.href); status.textContent = 'Invite link copied'; }
+    catch { status.textContent = link.href; }
+  });
+  document.getElementById('net-match').addEventListener('click', () => {
+    const next = new URLSearchParams(location.search);
+    next.delete('room');
+    location.search = next.toString();
+  });
+  document.getElementById('net-private').addEventListener('click', () => {
+    const next = new URLSearchParams(location.search);
+    next.set('room', crypto.randomUUID().slice(0, 8));
+    location.search = next.toString();
+  });
+}
 const quality = document.getElementById('quality');
 quality.value = qualityMode(q.get('quality'));
 quality.addEventListener('change', () => {

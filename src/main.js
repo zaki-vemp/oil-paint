@@ -23,11 +23,13 @@ import { Input } from './figure/input.js';
 import { Follow } from './figure/camera.js';
 import { createHunt } from './game/hunt.js';
 import { createRides } from './game/ride.js';
+import { createNet } from './game/net.js';
 import { LEVELS } from './game/levels.js';
 
 const q = new URLSearchParams(location.search);
 const capture = q.has('capture');
-window.__mode = q.get('mode') === 'roam' ? 'roam' : 'level';
+window.__mode = ['roam', 'online'].includes(q.get('mode')) ? q.get('mode') : 'level';
+const online = window.__mode === 'online' && !capture;
 
 // Patch's page talks to the demo through this. There are no controls yet; it carries loading, ready and hiding.
 let shown = true;
@@ -153,6 +155,7 @@ function air(x, y, z, out) {
 }
 
 let rides = null;
+let net = null;
 /** After he has been put somewhere by hand: the animation starts from standing, not from where it was. */
 function settle() {
   animator.lock = null; animator.lockOff = null;
@@ -170,6 +173,8 @@ function tick(dt, draw = true) {
   const realDt = dt;
   dt *= hunt?.timeScale ?? 1;
   time += dt;
+  // Online the street goes on under the menu (the host runs it for everyone): he just stands still.
+  if (window.__paused) input.reset();
   const inp = input.read(realDt);
   // At the wheel his legs are left alone: the vehicle carries him and his hands are busy.
   const driving = rides?.update(dt, inp, follow) ?? false;
@@ -177,6 +182,7 @@ function tick(dt, draw = true) {
   // the district has no wall: far from the way he is turned gently back, and under the world he starts again
   if (!driving && (player.feet.y < heightAt(player.feet.x, player.feet.z) - 6 || wayDist(player.feet.x, player.feet.z) > 78)) respawn();
   hunt?.update(dt, driving ? { ...inp, attack: false, heavy: false, power: false, dash: false, flare: false, whirl: false } : inp, realDt);
+  net?.update(realDt, { player, driving });
   man.object.visible = !driving;
   forest.update(dt, player.feet.z, hunt?.seg, hunt?.roam);
   const root = player.visualRoot(dt);
@@ -234,15 +240,18 @@ window.lab = {
 };
 
 if (!capture) {
+  if (online) net = window.lab.net = createNet({ scene, shared, man, camera });
   hunt = await createHunt({
     scene, shared, man, animator, player, heightAt, camera,
     moveSpawn: (x, z) => spawn.set(x, heightAt(x, z), z),
     down: respawn,
     levels: LEVELS,
     route: way,
-    roam: (window.__mode ?? 'level') === 'roam',
+    roam: (window.__mode ?? 'level') !== 'level',
+    net,
   });
   window.lab.hunt = hunt;
+  net?.attach(hunt);
   rides = await createRides({ scene, shared, player, heightAt, hunt, route: way, checkpoints: LEVELS.map((L) => L.checkpoint),
     inBounds: (x, z) => wayDist(x, z) < 72, settle });
   window.lab.rides = rides;
@@ -290,7 +299,7 @@ function run() {
   renderer.setAnimationLoop(want ? () => {
     const now = performance.now();
     graphics.sample((now - last) / 1000, !window.__paused);
-    if (!window.__paused) {
+    if (!window.__paused || online) {
       accumulator += Math.min((now - last) / 1000, 0.1);
       while (accumulator >= 1 / 60) { tick(1 / 60, false); accumulator -= 1 / 60; }
     } else accumulator = 0;

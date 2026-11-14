@@ -7,7 +7,8 @@ export default {
   root: here,
   base: './',
   publicDir: 'public',
-  server: { host: '0.0.0.0', port: 5406, strictPort: true, allowedHosts: true },
+  // the online city's room server (npm run room) answers on the page's own origin at /room
+  server: { host: '0.0.0.0', port: 5406, strictPort: true, allowedHosts: true, proxy: { '/room': { target: 'ws://127.0.0.1:5407', ws: true } } },
   resolve: { alias: [{ find: /^patch-block$/, replacement: `${here}lib/patch-block.js` }] },
   build: {
     target: 'es2022',

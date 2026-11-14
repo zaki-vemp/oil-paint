@@ -27,7 +27,7 @@
     </defs></svg>
     <main id="view" aria-label="Komorebi game world"></main>
     <div id="loading"><div class="loading-mark"><svg viewBox="0 0 24 24"><use href="#i-leaf"/></svg></div><h1>Komorebi</h1><p>Syncing trail data</p><span class="loading-track"><i></i></span></div>
-    <header id="game-header"><div class="wordmark"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-leaf"/></svg><div>Komorebi<small>// spirit trail</small></div></div><button id="pause-button" aria-label="Pause and open game menu"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-menu"/></svg><span>Menu</span><kbd>Esc</kbd></button></header>
+    <header id="game-header"><div class="wordmark"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-leaf"/></svg><div>Komorebi<small>// spirit trail</small></div></div><button id="pause-button" aria-label="Pause and open game menu"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-menu"/></svg><span>Menu</span><kbd>Esc</kbd></button><output id="net-pill" hidden></output></header>
     <div id="hint"><span><kbd>W A S D</kbd> Move</span><span><kbd>Space</kbd> Jump</span><span><kbd>Shift</kbd> Sprint</span><span><kbd>G</kbd> Drive</span><span>Click to look & fight</span></div>
     <div id="touch-controls">
       <div id="stick" role="application" aria-label="Drag to move. Push to the edge to sprint"><i></i></div>
@@ -54,7 +54,8 @@
       <button id="resume" class="primary">Resume run <span>→</span></button>
       <button id="fill" type="button" class="secondary">Full screen</button>
       <p id="fill-status" class="screen-status" role="status" hidden></p>
-      <div class="menu-options"><section><h3>Mode</h3><div id="mode"><button data-mode="level">Story sectors</button><button data-mode="roam">Free roam</button></div></section>
+      <div class="menu-options"><section><h3>Mode</h3><div id="mode"><button data-mode="level">Story sectors</button><button data-mode="roam">Free roam</button><button data-mode="online">Online city</button></div></section>
+      <section id="online-panel" hidden><h3>Online city</h3><label class="net-name" for="net-name">Your name</label><input id="net-name" maxlength="16" autocomplete="nickname" spellcheck="false" /><output id="net-status" aria-live="polite">Connecting…</output><div><button id="net-match" type="button">Quick match</button><button id="net-invite" type="button">Copy invite link</button><button id="net-private" type="button">New private room</button></div></section>
       <section><h3>Travel to</h3><div id="scenes"><button data-scene="autumn">The spirit trail</button><button data-scene="aurora">Snowbound</button></div></section>
       <section class="quality-row"><label for="quality">Graphics</label><select id="quality" aria-describedby="quality-status"><option value="auto">Auto (recommended)</option><option value="high">High</option><option value="medium">Balanced</option><option value="low">Low</option></select><output id="quality-status" class="quality-status" aria-live="polite">Auto · Adjusting detail</output><p class="quality-note">Auto adjusts detail to keep play smooth.</p></section></div>
       <details><summary>Controls & combat notes</summary>
