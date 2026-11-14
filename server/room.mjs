@@ -3,15 +3,18 @@
 // sender, passes it on, and refuses foe state from anyone but the host. A page that hides tells the server it is
 // idle, and the host moves to a player who is still looking, so a backgrounded tab never freezes the street.
 // Quick match ({ match: true }, no room) puts a player in the fullest open room with space, or opens a new one; a
-// named room is private, joined only by its link, and never matched into.
-//   ws://host:5407/room   { t: 'hello', room | match, name } first, then { t: 'me' | 'foes' | 'ev' | 'hit' | 'name' | 'idle' }
+// named room is private, joined only by its link, and never matched into. Each scene (`pool`: autumn, aurora) has its
+// own rooms. `pub` is any player's event (a revive, a race time, a duel blow): to one player with `to`, else to all.
+//   ws://host:5407/room   { t: 'hello', room | match, pool, name, title, color } first,
+//   then { t: 'me' | 'foes' | 'ev' | 'hit' | 'pub' | 'name' | 'idle' }
 // ponytail: host-trusted, no rate limit. Move the crew AI here if strangers start cheating.
 import { WebSocketServer } from 'ws';
 import { randomUUID } from 'node:crypto';
 
 export const MAX = 8;
 const ROOM = /^[a-z0-9-]{1,24}$/;
-const clean = (name) => String(name ?? '').replace(/[^\p{L}\p{N} _.-]/gu, '').trim().slice(0, 16) || 'Wanderer';
+const clean = (name, max = 16, empty = 'Wanderer') => String(name ?? '').replace(/[^\p{L}\p{N} _.-]/gu, '').trim().slice(0, max) || empty;
+const tag = (c) => ({ id: c.id, name: c.name, title: c.title, color: c.color });
 
 export function startRoomServer({ port = 5407, server } = {}) {
   const wss = new WebSocketServer(server ? { server, path: '/room', maxPayload: 16384 } : { port, maxPayload: 16384 });
@@ -28,7 +31,8 @@ export function startRoomServer({ port = 5407, server } = {}) {
   }
 
   wss.on('connection', (ws) => {
-    const me = { ws, id: next++, name: 'Wanderer', room: null, idle: false };
+    const me = { ws, id: next++, name: 'Wanderer', title: '', color: 0, room: null, idle: false };
+    const dress = (m) => { me.name = clean(m.name); me.title = clean(m.title, 24, ''); me.color = Math.max(0, Math.min(7, m.color | 0)); };
     ws.on('message', (data) => {
       let m;
       try { m = JSON.parse(data); } catch { return; }
@@ -36,19 +40,21 @@ export function startRoomServer({ port = 5407, server } = {}) {
       const room = me.room;
       if (!room) {
         if (m.t !== 'hello') return ws.close(4000, 'bad hello');
+        const pool = m.pool === 'aurora' ? 'aurora' : 'autumn';
         let name = m.room;
         if (m.match) {
-          const open = [...rooms.values()].filter((r) => r.open && r.members.length < MAX).sort((a, b) => b.members.length - a.members.length)[0];
+          const open = [...rooms.values()].filter((r) => r.open && r.pool === pool && r.members.length < MAX).sort((a, b) => b.members.length - a.members.length)[0];
           name = open?.name ?? 'pub-' + randomUUID().slice(0, 6);
         }
         if (!ROOM.test(name)) return ws.close(4000, 'bad hello');
         // `open` also comes back with a matched player who reconnects, so a room emptied meanwhile stays matchable
-        const r = rooms.get(name) ?? { name, members: [], host: null, open: !!(m.match || m.open) };
+        const key = pool + '/' + name;
+        const r = rooms.get(key) ?? { key, name, pool, members: [], host: null, open: !!(m.match || m.open) };
         if (r.members.length >= MAX) return ws.close(4001, 'room full');
-        rooms.set(name, r);
-        me.name = clean(m.name); me.room = r; r.members.push(me);
-        send(me, { t: 'welcome', id: me.id, room: r.name, peers: r.members.filter((c) => c !== me).map((c) => ({ id: c.id, name: c.name })) });
-        others(r, me, { t: 'join', id: me.id, name: me.name });
+        rooms.set(key, r);
+        dress(m); me.room = r; r.members.push(me);
+        send(me, { t: 'welcome', id: me.id, room: r.name, peers: r.members.filter((c) => c !== me).map(tag) });
+        others(r, me, { t: 'join', ...tag(me) });
         // a hidden host gives way to a newcomer who is looking
         const before = r.host;
         me.idle = !!m.idle;
@@ -59,14 +65,19 @@ export function startRoomServer({ port = 5407, server } = {}) {
       if (m.t === 'me' && Array.isArray(m.s)) others(room, me, { t: 'me', id: me.id, s: m.s.slice(0, 10) });
       else if ((m.t === 'foes' || m.t === 'ev') && me === room.host) others(room, me, { ...m, id: me.id });
       else if (m.t === 'hit' && room.host && room.host !== me) send(room.host, { ...m, id: me.id });
-      else if (m.t === 'name') { me.name = clean(m.name); others(room, me, { t: 'name', id: me.id, name: me.name }); }
+      else if (m.t === 'pub') {
+        const out = { ...m, id: me.id };
+        if (m.to == null) others(room, me, out);
+        else { const to = room.members.find((c) => c.id === m.to); if (to) send(to, out); }
+      }
+      else if (m.t === 'name') { dress(m); others(room, me, { t: 'name', ...tag(me) }); }
       else if (m.t === 'idle') { me.idle = !!m.on; elect(room); }
     });
     ws.on('close', () => {
       const room = me.room;
       if (!room) return;
       room.members = room.members.filter((c) => c !== me);
-      if (!room.members.length) return void rooms.delete(room.name);
+      if (!room.members.length) return void rooms.delete(room.key);
       others(room, me, { t: 'leave', id: me.id });
       if (room.host === me) { room.host = null; elect(room); }
     });
@@ -80,10 +91,10 @@ export async function demo() {
   const wss = startRoomServer({ port: 0 });
   await new Promise((r) => wss.on('listening', r));
   const url = `ws://127.0.0.1:${wss.address().port}`;
-  const join = (name, room = 'test', idle = false) => new Promise((resolve) => {
+  const join = (name, room = 'test', idle = false, pool = 'autumn') => new Promise((resolve) => {
     const ws = new WebSocket(url), got = [];
     ws.on('message', (d) => got.push(JSON.parse(d)));
-    ws.on('open', () => ws.send(JSON.stringify(room ? { t: 'hello', room, name, idle } : { t: 'hello', match: true, name, idle })));
+    ws.on('open', () => ws.send(JSON.stringify(room ? { t: 'hello', room, name, idle, pool, title: 'Medic', color: 3 } : { t: 'hello', match: true, name, idle, pool })));
     resolve({ ws, got, say: (m) => ws.send(JSON.stringify(m)) });
   });
   const wait = () => new Promise((r) => setTimeout(r, 60));
@@ -125,6 +136,17 @@ export async function demo() {
   await wait();
   const spill = await join('spill', null); await wait();
   ok(roomOf(spill) && roomOf(spill) !== roomOf(m1), 'a full match room opens a new one');
+  const snow = await join('snow', null, false, 'aurora'); await wait();
+  ok(roomOf(snow) !== roomOf(spill) && roomOf(snow) !== roomOf(m1), 'each scene matches into its own rooms');
+  const p1 = await join('p1', 'pubs'); await wait();
+  const p2 = await join('p2', 'pubs'); await wait();
+  const p3 = await join('p3', 'pubs'); await wait();
+  ok(p2.got.find((m) => m.t === 'welcome').peers[0].title === 'Medic', 'titles travel with names');
+  const id2 = p2.got.find((m) => m.t === 'welcome').id;
+  p1.say({ t: 'pub', k: 'race', time: 41.2 }); p1.say({ t: 'pub', to: id2, k: 'revive' }); await wait();
+  ok(p3.got.some((m) => m.k === 'race') && !p3.got.some((m) => m.k === 'revive'), 'a pub goes to all, or only to its `to`');
+  ok(p2.got.some((m) => m.k === 'revive' && m.id), 'a targeted pub arrives, stamped');
+  for (const c of [snow, p1, p2, p3]) c.ws.close();
   for (const c of [b, ...crowd, m1, m2, ...more, spill]) c.ws.close();
   wss.close();
   console.log('room.mjs: ok');

@@ -410,6 +410,7 @@ export async function createRides({ scene, shared, player, heightAt, hunt, route
       else if (driven) leave();
       else if (near && Math.hypot(near.vx, near.vz) > 2) hunt.hud.flashText('Wait for it to stop');
       else if (near && !hunt.roam && hunt.unlocked && !hunt.unlocked(near.kind)) hunt.hud.flashText('Not yours yet');
+      else if (near?.net) hunt.hud.flashText('Someone is driving it');
       else if (near?.wrecked) hunt.hud.flashText('It is finished');
       else if (near?.tipped) {
         Object.assign(near, { tilt: 0, rollRate: 0, spinRate: 0, tipped: false, vx: 0, vz: 0, vy: 0, air: 0 });
@@ -418,7 +419,7 @@ export async function createRides({ scene, shared, player, heightAt, hunt, route
       else if (near && hunt.hp > 0) { enter(near); near = null; }
     }
     for (const v of rides) {
-      if (v === driven) continue;
+      if (v === driven || v.net) continue;
       // left far from home and out of sight, it is brought back: every cairn keeps its wheels
       if (!v.traffic && Math.hypot(v.x - v.home.x, v.z - v.home.z) > 60 && Math.hypot(v.x - player.feet.x, v.z - player.feet.z) > 110) {
         Object.assign(v, { x: v.home.x, z: v.home.z, yaw: v.home.yaw, y: heightAt(v.home.x, v.home.z), pitch: 0, roll: 0, lean: 0,
@@ -429,6 +430,7 @@ export async function createRides({ scene, shared, player, heightAt, hunt, route
     const count = Math.max(1, Math.ceil(dt * 120)), h = dt / count;
     for (let i = 0; i < count; i++) {
       for (const v of rides) {
+        if (v.net && v !== driven) continue;
         if (v === driven) step(v, h, { throttle: inp.move.y, steer: inp.move.x, hand: !!inp.jumpHeld });
         else if (v.traffic && Math.hypot(v.x - player.feet.x, v.z - player.feet.z) < 110) step(v, h, trafficInput(v, h));
         else if (Math.hypot(v.vx, v.vz) > 0.05 || v.air > 0 || Math.abs(v.rollRate) > 0.005) step(v, h, { hand: true });
@@ -445,6 +447,14 @@ export async function createRides({ scene, shared, player, heightAt, hunt, route
           }
         }
       }
+    }
+    // Online, another page drives this one (net.js sets v.net ten times a second): it glides to where that page says.
+    for (const v of rides) {
+      const n = v.net;
+      if (!n || v === driven) continue;
+      const k = Math.min(1, dt * 8), age = (performance.now() - n.at) / 1000;
+      v.x += (n.x + n.vx * age - v.x) * k; v.z += (n.z + n.vz * age - v.z) * k; v.y = heightAt(v.x, v.z);
+      v.yaw += wrap(n.yaw - v.yaw) * k; v.vx = n.vx; v.vz = n.vz; v.air = 0;
     }
     for (const v of rides) { v.vf = v.vx * Math.sin(v.yaw) + v.vz * Math.cos(v.yaw); place(v, dt); }
     world.propagateModifiedBodyPositionsToColliders();

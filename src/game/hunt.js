@@ -122,7 +122,7 @@ export function strikeHits(e, x, y, z, groundY) {
 
 const CLIP = (clip) => clip.name.split('|').pop().replace(/ \d+$/, '');
 
-export async function createHunt({ scene, shared, man, animator, player, heightAt, marks, spots, moveSpawn, down, levels = null, roam = false, route = null, camera = null, net = null }) {
+export async function createHunt({ scene, shared, man, animator, player, heightAt, marks, spots, moveSpawn, down, levels = null, roam = false, route = null, camera = null, net = null, events = false }) {
   // Level mode builds its own marks and cairns from the level list; the night
   // scene passes marks and spots directly, which keeps working as before.
   const segs = levels ? levels.map((L) => ({ ...L })) : null;
@@ -131,7 +131,7 @@ export async function createHunt({ scene, shared, man, animator, player, heightA
     spots = segs.flatMap((s, i) => s.spots.map((p) => ({ ...p, seg: i })));
   }
   const loader = new GLTFLoader();
-  const kinds = [...new Set([...spots.map((p) => p.kind), ...(segs && route ? ['civ', 'thief'] : [])])];
+  const kinds = [...new Set([...spots.map((p) => p.kind), ...(segs && route ? ['civ', 'thief'] : []), ...(events ? ['brute'] : [])])];
   const sources = Object.fromEntries(await Promise.all(kinds.map(async (k) => [k, await Promise.all(
     [CAST[k].file, CAST[k].alternate].filter(Boolean).map(file => loader.loadAsync('./enemies/' + file)))])));
   const white = new THREE.DataTexture(new Uint8Array([255, 255, 255, 255]), 1, 1);
@@ -204,6 +204,13 @@ export async function createHunt({ scene, shared, man, animator, player, heightA
     return { ...s, ...KIND[s.kind], mesh, tell, aim, air: 0, vy: 0, hp: HIT.hp[s.kind], maxHp: HIT.hp[s.kind], homeX: s.x, homeZ: s.z, tx: s.x, tz: s.z, yaw: Math.random() * 6.28, wait: Math.random() * 1.5, mode: 'roam', cool: 0, windup: 0, stagger: 0, phase: Math.random() * 6, flash: 0, dead: 0, gone: false, going: 0, seg: s.seg ?? -1, respawnT: 0, kx: 0, kz: 0 };
   };
   const enemies = spots.map((p) => make(p));
+  // Online events: one siege mech waits off stage until the host's page calls it into a district (summon()).
+  let mech = null;
+  if (events) {
+    mech = make({ kind: 'brute', x: spots[0].x, z: spots[0].z, seg: -1, event: true });
+    Object.assign(mech, { gone: true, dead: 1, hp: 0 }); mech.mesh.visible = false;
+    enemies.push(mech);
+  }
   // Online, the crews (not the street's people, not the rivals) are shared: netId is their place in the level list.
   if (net) enemies.forEach((e, i) => { if (!e.civ) e.netId = i; });
   /** A shared body some other page's host is thinking for: this page only shows it and reports its own blows. */
@@ -242,7 +249,7 @@ export async function createHunt({ scene, shared, man, animator, player, heightA
     e.body = player.world.createRigidBody(player.R.RigidBodyDesc.kinematicPositionBased().setTranslation(e.x, heightAt(e.x, e.z) + e.bodyLift, e.z));
     e.collider = player.world.createCollider(player.R.ColliderDesc.capsule(half, r).setFriction(0), e.body);
   }
-  for (const e of enemies) if (!e.duel) addBody(e);
+  for (const e of enemies) if (!e.duel && !e.gone) addBody(e);
 
   // Stone gates across the way, one at the end of every level but the last.
   // They stand while their level's beasts are still out and are taken away opened.
@@ -531,7 +538,18 @@ export async function createHunt({ scene, shared, man, animator, player, heightA
     animator.enter(animator.locoState({ strafe: false }), 0.08);
   }
 
-  function die() {
+  // Online a fall is not the end at once: he is down for DOWN seconds and a teammate who stands by him lifts him up.
+  const DOWN = 15;
+  let downT = 0;
+  function die(force = false) {
+    if (net && !force) {
+      if (downT > 0) return;
+      downT = DOWN; hp = 0; invuln = DOWN + 1; swing = -1; swingH = false; attackBuffer = 0;
+      window.lab?.rides?.leave(true);
+      toast('Down · a teammate can revive you by standing close');
+      return;
+    }
+    downT = 0;
     down();
     hp = MAX_HP;
     invuln = 2.6;
@@ -654,6 +672,7 @@ export async function createHunt({ scene, shared, man, animator, player, heightA
   const swingSource = () => swingH ? 'heavy' : swingType === 'spin' ? 'whirl' : swingType === 'thrust' ? 'thrust' : 'sword';
 
   function update(dt, input, realDt = dt) {
+    if (downT > 0 && (downT -= realDt) <= 0) die(true);
     hitPause = Math.max(0, hitPause - realDt);
     slowMo = Math.max(0, slowMo - realDt);
     if ((comboT -= realDt) <= 0 && combo) { combo = 0; hud.combo(0); }
@@ -771,7 +790,7 @@ export async function createHunt({ scene, shared, man, animator, player, heightA
       e.stagger = Math.max(0, e.stagger - dt);
       if (e.gone) {
         // In free roam the fallen come back after a while, at home and calm.
-        if (puppet(e) ? (net.foe(e)?.hp ?? 0) > 0 : (roam || e.civ) && (e.respawnT -= dt) <= 0) { // the street refills in level mode too
+        if (puppet(e) ? (net.foe(e)?.hp ?? 0) > 0 : (roam || e.civ) && !e.event && (e.respawnT -= dt) <= 0) { // the street refills in level mode too
           e.hp = e.maxHp; e.dead = 0; e.gone = false;
           e.x = e.homeX; e.z = e.homeZ; e.tx = e.homeX; e.tz = e.homeZ;
           e.mode = 'roam'; e.cool = e.windup = e.stagger = e.air = e.vy = e.kx = e.kz = 0; e.wait = 1; e.mesh.visible = true;
@@ -1141,6 +1160,19 @@ export async function createHunt({ scene, shared, man, animator, player, heightA
   return { update, pose, enemies, hud, ram, get swing() { return swing; },
     /** The room's payment for a finished contract. */
     reward(n, text) { cash += n; hud.flashText(`+${n}`); toast(text); },
+    get downed() { return downT > 0; }, get downLeft() { return downT; }, get mech() { return mech; },
+    /** A teammate stood by him long enough. */
+    revive() { if (downT <= 0) return false; downT = 0; hp = 45; invuln = 1.5; hurtPose = 0; toast('Back on your feet'); return true; },
+    /** Another wanderer's blade in the duel ring. */
+    hurtMe(n, from) { return downT <= 0 && takeHit(n, from, 4); },
+    /** The host calls the mech into the street at (x, z). */
+    summon(x, z) {
+      const e = mech;
+      if (!e) return;
+      Object.assign(e, { x, z, homeX: x, homeZ: z, tx: x, tz: z, hp: e.maxHp, dead: 0, gone: false, mode: 'roam', cool: 0, windup: 0, stagger: 0, air: 0, vy: 0, kx: 0, kz: 0, wait: 1 });
+      e.mesh.visible = true;
+      if (!e.body) addBody(e);
+    },
     /** What another page sent about a shared body: a guest's blow (host only), a strike or a shot (guests). */
     remote(m) {
       const e = enemies[m.i];

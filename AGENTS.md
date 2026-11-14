@@ -32,7 +32,8 @@ node src/game/levels.js    # level-data validation
 node src/game/ride.js      # handling, momentum, energy loss and rollover self-checks
 node tools/assets.mjs      # imported GLB geometry, rig, clip and finite-data checks
 node tools/street.mjs      # headless: traffic, collisions, rollover, ramming, citizens, mob, thief (build + serve + CHROME)
-node server/room.mjs --check   # online room server: join, relay, host handover, full room
+node server/room.mjs --check   # online room server: join, relay, host handover, full room, pools, pub events
+node src/game/net.js       # online titles/colours and race gate order
 npm run room               # room server on :5407 (vite dev proxies /room to it)
 node --check <file>        # syntax-check any edited module
 node tools/fps.mjs --seconds 8   # frame-rate of the built page (needs browser)
@@ -214,8 +215,15 @@ mindmap
 - Online city (`mode=online`): roam rules, up to 8 per room. No `room` = quick match (server fills the fullest open `pub-*` room); a named room is private, reached only by its invite link. The host page (oldest
   visible player, chosen by `server/room.mjs`) runs the crews (`netId` = spot index) and sends their state at 10 Hz;
   other pages draw them as puppets and send blows as `hit`. Strikes and gunner shots are broadcast and each page tests
-  them against its own wanderer. Citizens, thieves, rivals, police and vehicles stay local. Online never slows or
-  pauses the world (`timeScale` is 1, the menu keeps ticking). The contract (break one district's crew) pays the room.
+  them against its own wanderer. Citizens, thieves, rivals and police stay local. Online never slows or
+  pauses the world (`timeScale` is 1, the menu keeps ticking). Room activities (all in `net.js`, autumn street ones
+  keyed to `way` sample indices `RACE`/`RING`): the contract (a district's crew, paid to the room); revives (a
+  fall downs you for 15 s, `hunt.downed`, a teammate within 2.4 m for 2 s lifts you); the siege mech (`events`: one
+  extra shared brute the host `summon()`s every 3 min, assists paid); street races (start ring, 12 gates, times to
+  the room); the duel ring (PvP only inside it, kept away from shrines because they heal); shared cars (the driver's
+  page sends the ride index and pose, other pages set `v.net` and ride.js glides it); titles and name colours
+  unlocked by those stats, kept in `localStorage["oilpaint.online.v1"]`. Snowbound online uses pool `aurora`
+  (its own rooms) with crews, revives and titles only.
 - Back-compat: `createHunt` without `levels` (night scene) must keep the
   old behaviour — one-shot cairns, `F` swings, no powers HUD.
 

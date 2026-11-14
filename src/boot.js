@@ -122,10 +122,15 @@ for (const button of document.querySelectorAll('#mode button')) {
     location.search = next.toString();
   });
 }
-if (SCENE !== 'autumn') document.getElementById('mode').closest('section').hidden = true;
+// Snowbound has no free roam: it is played alone or online.
+if (SCENE !== 'autumn') {
+  document.querySelector('#mode [data-mode="roam"]').hidden = true;
+  document.querySelector('#mode [data-mode="level"]').textContent = 'Solo';
+  document.querySelector('#mode [data-mode="online"]').textContent = 'Online';
+}
 // Online: no room in the address is a quick match with strangers; an invite is the page's link with its room named,
 // and a private room is a fresh random name only a link reaches.
-if (SCENE === 'autumn' && q.get('mode') === 'online' && !clean) {
+if (q.get('mode') === 'online' && !clean) {
   document.getElementById('online-panel').hidden = document.getElementById('net-pill').hidden = false;
   const status = document.getElementById('net-status');
   document.getElementById('net-invite').addEventListener('click', async () => {

@@ -174,7 +174,7 @@ function tick(dt, draw = true) {
   dt *= hunt?.timeScale ?? 1;
   time += dt;
   // Online the street goes on under the menu (the host runs it for everyone): he just stands still.
-  if (window.__paused) input.reset();
+  if (window.__paused || hunt?.downed) input.reset(); // down online, he waits for a hand
   const inp = input.read(realDt);
   // At the wheel his legs are left alone: the vehicle carries him and his hands are busy.
   const driving = rides?.update(dt, inp, follow) ?? false;
@@ -240,7 +240,7 @@ window.lab = {
 };
 
 if (!capture) {
-  if (online) net = window.lab.net = createNet({ scene, shared, man, camera });
+  if (online) net = window.lab.net = createNet({ scene, shared, man, camera, heightAt, route: way, contract: true });
   hunt = await createHunt({
     scene, shared, man, animator, player, heightAt, camera,
     moveSpawn: (x, z) => spawn.set(x, heightAt(x, z), z),
@@ -249,12 +249,13 @@ if (!capture) {
     route: way,
     roam: (window.__mode ?? 'level') !== 'level',
     net,
+    events: online,
   });
   window.lab.hunt = hunt;
-  net?.attach(hunt);
   rides = await createRides({ scene, shared, player, heightAt, hunt, route: way, checkpoints: LEVELS.map((L) => L.checkpoint),
     inBounds: (x, z) => wayDist(x, z) < 72, settle });
   window.lab.rides = rides;
+  net?.attach(hunt, rides);
 }
 
 // --- warming up: every shader is built and drawn once, and the GPU has caught up, before anyone is let in ---

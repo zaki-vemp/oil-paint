@@ -19,6 +19,7 @@ import { Player } from '../figure/player.js';
 import { Input } from '../figure/input.js';
 import { Follow } from '../figure/camera.js';
 import { createHunt } from '../game/hunt.js';
+import { createNet } from '../game/net.js';
 import { prepareLand, createLand, heightAt, crestX, START, MOON, EXTENT, CABIN } from './land.js';
 import { createSnow } from './snow.js';
 import { createSky } from './sky.js';
@@ -179,6 +180,8 @@ graphics = createGraphics({ renderer, capture, apply(profile) {
 const wind = { x: WIND.x, z: WIND.y };
 let time = 0;
 let hunt = null;
+let net = null;
+const online = q.get('mode') === 'online' && !capture;
 function air(x, y, z, out) {
   const along = x * wind.x + z * wind.z, across = -x * wind.z + z * wind.x;
   const gust = THREE.MathUtils.clamp(0.5 + 0.8 * noise((along - time * 4) / 40, across / 90) + 0.3 * noise((along - time * 6.5) / 11, across / 17), 0, 1);
@@ -239,6 +242,8 @@ function tick(dt, draw = true) {
   const realDt = dt;
   dt *= hunt?.timeScale ?? 1;
   time += dt;
+  // Online the ridge goes on under the menu (the host runs it for everyone), and a downed wanderer waits for a hand.
+  if (window.__paused || hunt?.downed) input.reset();
   const inp = input.read(realDt);
   const isIn = cabin.inside(player.feet);
   first += ((firstKey || cabin.threshold(player.feet) ? 1 : 0) - first) * (1 - Math.exp(-6 * dt));
@@ -265,6 +270,7 @@ function tick(dt, draw = true) {
   man.object.updateMatrixWorld(true);
   holdLantern();
   hunt?.update(dt, inp, realDt);
+  net?.update(realDt, { player, driving: false });
   hunt?.pose();
   man.object.updateMatrixWorld(true);
   figure.updateCloak(dt, air, heightAt);
@@ -339,7 +345,9 @@ window.lab = {
 
 if (!capture) {
   const kinds = ['punk', 'punk', 'enforcer', 'punk', 'gunner', 'enforcer', 'blade'];
+  if (online) net = window.lab.net = createNet({ scene, shared, man, camera, heightAt, pool: 'aurora' });
   hunt = await createHunt({
+    net, roam: online, // online the crews come back, as in free roam
     scene, shared, man, animator, player, heightAt,
     moveSpawn: (x, z) => spawn.set(x, heightAt(x, z), z),
     down: () => place(spawn.x, spawn.z, Math.PI),
@@ -353,6 +361,7 @@ if (!capture) {
     })),
   });
   window.lab.hunt = hunt;
+  net?.attach(hunt);
 }
 
 say(0.68, 'Mixing paint');
@@ -394,7 +403,7 @@ function run() {
   renderer.setAnimationLoop(want ? () => {
     const now = performance.now();
     graphics.sample((now - last) / 1000, !window.__paused);
-    if (!window.__paused) {
+    if (!window.__paused || online) {
       accumulator += Math.min((now - last) / 1000, 0.1);
       while (accumulator >= 1 / 60) { tick(1 / 60, false); accumulator -= 1 / 60; }
     } else accumulator = 0;
