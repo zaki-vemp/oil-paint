@@ -21,7 +21,7 @@ export const POWERS = {
 const BASE = [
   {
     name: 'The strip',
-    checkpoint: { x: 0, z: 78, name: 'The start' },
+    checkpoint: { x: 0, z: 78, name: 'Sunleaf Relay' },
     gate: { x: -7.5, z: 54 },
     grant: 'spark',
     spots: [
@@ -31,7 +31,7 @@ const BASE = [
   },
   {
     name: 'The arcade',
-    checkpoint: { x: -7, z: 51, name: 'Arcade stile' },
+    checkpoint: { x: -7, z: 51, name: 'Arcade Relay' },
     gate: { x: 3.8, z: 30 },
     grant: 'dash',
     spots: [
@@ -42,7 +42,7 @@ const BASE = [
   },
   {
     name: 'The heights',
-    checkpoint: { x: 3.6, z: 28, name: 'Heights watch' },
+    checkpoint: { x: 3.6, z: 28, name: 'Heights Relay' },
     gate: { x: 10.5, z: 4 },
     grant: 'heavy',
     spots: [
@@ -53,7 +53,7 @@ const BASE = [
   },
   {
     name: 'The stacks',
-    checkpoint: { x: 10.3, z: 2, name: 'Stacks gate' },
+    checkpoint: { x: 10.3, z: 2, name: 'Stacks Relay' },
     gate: { x: 0, z: -30 },
     grant: 'flare',
     spots: [
@@ -64,7 +64,7 @@ const BASE = [
   },
   {
     name: 'The ashen hollow',
-    checkpoint: { x: 0, z: -32, name: 'Ash cairn' },
+    checkpoint: { x: 0, z: -32, name: 'Hollow Relay' },
     gate: { x: 1.6, z: -62 },
     grant: 'whirl',
     spots: [
@@ -76,7 +76,7 @@ const BASE = [
   },
   {
     name: 'The sanctuary run',
-    checkpoint: { x: 2.5, z: -64, name: 'Last cairn' },
+    checkpoint: { x: 2.5, z: -64, name: 'Sanctuary Relay' },
     gate: null,
     grant: null,
     spots: [
@@ -97,28 +97,28 @@ export const LEVELS = BASE.map((L) => {
   return { ...L, checkpoint: at(L.checkpoint), gate: at(L.gate), spots: [...spots, ...twins] };
 });
 
-export const GOAL = at({ x: 11, z: -96, name: 'The clearing' });
+export const GOAL = at({ x: 11, z: -96, name: 'Amber Sanctuary' });
 
-// Ten beats on the six gates. The fight does not change; the cairn sometimes waits on the job.
+// Ten beats on the six gates. The fight does not change; the relay sometimes waits on the job.
 // time: reach the next stile before the clock. chase: a marked runner. heat: no star on you.
 // deliver: a car still above 60% hull. convoy and boss are the crew and the last duel, already required.
 export const STORY = [
-  { id: 'late', at: 0, mission: 'time', seconds: 180, line: 'You carry other people’s packages. This one was already late.' },
+  { id: 'late', at: 0, mission: 'time', seconds: 180, line: 'Courier Zero-Seven, live link online. Ren locked the sector gates behind our neural tags.' },
   { id: 'waiting', at: 0, on: 'clear', line: 'They were not waiting for you. They were waiting for the parcel.' },
-  { id: 'runner', at: 1, mission: 'chase', line: 'A runner lifted it off a civilian. Catch them before the heights.' },
-  { id: 'heights', at: 2, mission: 'chase', line: 'The runner’s route ends here. No runner, no handoff.' },
-  { id: 'seen', at: 2, on: 'heat', line: 'Someone talked. The district has your description.' },
-  { id: 'tail', at: 3, mission: 'heat', line: 'Lose every witness. The stacks will not take a parcel with a tail on it.' },
-  { id: 'whole', at: 4, mission: 'deliver', line: 'Bring a car that still holds together. A wreck is not a delivery.' },
-  { id: 'convoy', at: 3, on: 'clear', mission: 'convoy', line: 'The stacks were a convoy in the ring’s colours. Cut through.' },
-  { id: 'name', at: 5, mission: 'boss', line: 'The name on every manifest is Ren. This is the last run.' },
-  { id: 'end', at: 6, mission: 'boss', line: 'The ring was one person using your routes. The next package is yours to refuse.' },
+  { id: 'runner', at: 1, mission: 'chase', line: 'A Syndicate runner lifted your cipher key. Intercept them and sync the Arcade Terminal.' },
+  { id: 'heights', at: 2, mission: 'chase', line: 'Jade Heights is flooding the grid. Shatter all three Corp Beacons.' },
+  { id: 'seen', at: 2, on: 'heat', line: 'Someone talked. Citizens spotted you—break sight or hit a Mission Relay.' },
+  { id: 'tail', at: 3, mission: 'heat', line: 'Lose every witness. Moonveil Stacks will not open with heat on your tail.' },
+  { id: 'whole', at: 4, mission: 'deliver', line: 'Smash the Syndicate Supply Caches in Ashen Hollow before Ren triggers the purge.' },
+  { id: 'convoy', at: 3, on: 'clear', mission: 'convoy', line: 'Carve through the Stacks Relay Rings and break the perimeter crew.' },
+  { id: 'name', at: 5, mission: 'boss', line: 'Every manifest points back to Ren. Overload the Shield Pylons and end his loop.' },
+  { id: 'end', at: 6, mission: 'boss', line: 'Sanctuary core stabilized. The city grid is yours to roam, Kael.' },
 ];
 
 const GARAGE = ['car', 'bicycle', 'bike', 'sports', 'pickup'];
-/** What the garage will give him after `cleared` segments. The sedan and the bicycle are his from the start. */
+/** What the garage will give him after `cleared` segments. Sedan, scooter and Razor bike are unlocked from the start. */
 export function unlocksFor(cleared) {
-  return GARAGE.slice(0, Math.min(GARAGE.length, 2 + Math.max(0, cleared)));
+  return GARAGE.slice(0, Math.min(GARAGE.length, 3 + Math.max(0, cleared)));
 }
 
 export const SAVE_KEY = 'oilpaint.levels.v1';
@@ -133,7 +133,7 @@ export function powersFor(cleared) {
   return out;
 }
 
-/** Saved progress: how many segments are cleared and where the checkpoint is. */
+/** Saved progress: how many segments are cleared and where the relay is. */
 export function loadProgress() {
   try {
     if (new URLSearchParams(globalThis.location?.search ?? '').has('fresh')) return null;
@@ -141,10 +141,11 @@ export function loadProgress() {
     if (!raw) return null;
     const s = JSON.parse(raw);
     if (!Number.isInteger(s?.cleared) || s.cleared < 0 || s.cleared > LEVELS.length) return null;
-    // The place is always the cleared level's own cairn: a save written before the map grew still lands on it.
+    // The place is always the cleared level's own relay: a save written before the map grew still lands on it.
     const cp = LEVELS[Math.min(s.cleared, LEVELS.length - 1)].checkpoint;
     const unlocked = Array.isArray(s.unlocked) ? s.unlocked.filter((k) => GARAGE.includes(k)) : unlocksFor(s.cleared);
-    return { cleared: s.cleared, x: cp.x, z: cp.z, cash: Number.isFinite(s.cash) ? Math.max(0, s.cash) : 0, unlocked };
+    const missions = Array.isArray(s.missions) ? s.missions : [];
+    return { cleared: s.cleared, x: cp.x, z: cp.z, cash: Number.isFinite(s.cash) ? Math.max(0, s.cash) : 0, unlocked, missions };
   } catch {
     return null;
   }
@@ -187,7 +188,7 @@ export function demoLevels() {
   for (const kind of ['time', 'chase', 'heat', 'deliver', 'convoy', 'boss']) {
     if (!STORY.some((s) => s.mission === kind)) throw new Error('missing mission ' + kind);
   }
-  if (unlocksFor(0).join() !== 'car,bicycle' || !unlocksFor(4).includes('pickup')) throw new Error('the garage opens with the road');
+  if (unlocksFor(0).join() !== 'car,bicycle,bike' || !unlocksFor(2).includes('pickup')) throw new Error('the garage opens with the road');
 }
 
 if (globalThis.process?.argv?.[1]?.endsWith('levels.js')) demoLevels();

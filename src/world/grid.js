@@ -1,9 +1,9 @@
 // The night city's blocks. Avenues run north–south, streets east–west, on one spacing,
-// inside the land map (EXTENT 256). The winding trail is a separate road drawn through
+// inside the land map (EXTENT 360). The winding trail is a separate road drawn through
 // this grid; land.js reports the distance to whichever is closer.
 export const SPACING = 40;
-export const GRID_MIN = -200;
-export const GRID_MAX = 200;
+export const GRID_MIN = -280;
+export const GRID_MAX = 280;
 
 const line = (a, b, step) => {
   const out = [];
@@ -14,7 +14,7 @@ export const AVENUES = line(GRID_MIN, GRID_MAX, SPACING);
 export const STREETS = AVENUES;
 
 // z above downtown, then above market, then x east of the split is the docks. Matches uZoneSplit.
-export const ZONE_SPLIT = { downtown: 90, market: -10, east: -30 };
+export const ZONE_SPLIT = { downtown: 120, market: -15, east: -35 };
 export const ZONES = [
   { name: 'Downtown', chapter: 0 },
   { name: 'Market', chapter: 1 },
@@ -65,7 +65,7 @@ export function gridDist(x, z) {
 // One lot per corner of a block, plus a heart tower where the district is tall. Inset so the
 // footprint stays off the kerb even after a metre of jitter.
 const SLOTS = [[-8, -8], [8, -8], [-8, 8], [8, 8], [0, 0]];
-const LOTS = [5, 4, 3, 2];
+const LOTS = [4, 3, 3, 2];
 export function blockLots() {
   const out = [];
   for (let i = 0; i < AVENUES.length - 1; i++) {
@@ -79,12 +79,12 @@ export function blockLots() {
 }
 
 export function demoGrid() {
-  if (AVENUES.length !== 11 || AVENUES[0] !== GRID_MIN || AVENUES.at(-1) !== GRID_MAX) throw new Error('avenues');
+  if (AVENUES.length !== 15 || AVENUES[0] !== GRID_MIN || AVENUES.at(-1) !== GRID_MAX) throw new Error('avenues');
   if (gridDist(0, 100) > 1e-6) throw new Error('on an avenue');
   if (Math.abs(gridDist(20, 20) - 20) > 1e-6) throw new Error('block centre');
-  if (zoneAt(0, 150) !== 0 || zoneAt(0, 20) !== 1 || zoneAt(40, -40) !== 2 || zoneAt(-80, -40) !== 3) throw new Error('zones');
+  if (zoneAt(0, 180) !== 0 || zoneAt(0, 20) !== 1 || zoneAt(40, -60) !== 2 || zoneAt(-80, -60) !== 3) throw new Error('zones');
   const lots = blockLots();
-  if (lots.length < 250) throw new Error('city is too small: ' + lots.length);
+  if (lots.length < 400) throw new Error('city is too small: ' + lots.length);
   for (const lot of lots) if (gridDist(lot.x, lot.z) < 12) throw new Error('lot on a road');
   const step = nextPavement(5.8, 100, 1, false);
   if (Math.abs(step.x - 5.8) > 0.01 || step.z <= 100 || step.crossed) throw new Error('sidewalk continues along the kerb');

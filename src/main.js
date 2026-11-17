@@ -8,7 +8,7 @@ import * as THREE from 'three';
 import { patchBlock } from 'patch-block';
 import recipe from '../recipe.json';
 import RAPIER from './figure/rapier/rapier.mjs';
-import { createShared, WIND } from './oilpaint/common.js';
+import { createShared, WIND, EXTENT } from './oilpaint/common.js';
 import { createBrushSheet } from './oilpaint/brush.js';
 import { prepareLand, createLand, heightAt, wayDist, noise, way, START } from './world/land.js';
 import { createAnimeWorld } from './world/anime.js';
@@ -22,9 +22,12 @@ import { Player } from './figure/player.js';
 import { Input } from './figure/input.js';
 import { Follow } from './figure/camera.js';
 import { createHunt } from './game/hunt.js';
+import { createMissions } from './game/missions.js';
 import { createRides } from './game/ride.js';
 import { createNet } from './game/net.js';
-import { LEVELS } from './game/levels.js';
+import { getAudio } from './game/audio.js';
+import { chapterAt } from './game/chapters.js';
+import { LEVELS, loadProgress } from './game/levels.js';
 
 const q = new URLSearchParams(location.search);
 const capture = q.has('capture');
@@ -93,8 +96,8 @@ forest.group.add(street.group);
 forest.shade.add(street.shade);
 forest.colliders.push(...street.colliders);
 lap('forest');
-// the baked shade has to hold the whole stretched district, not only the first small wood
-const shade = createShade(renderer, shared, forest.shade, { box: [460, 460], centre: [0, 24, 0], back: 800, far: 2000 });
+// the baked shade has to hold the whole expanded city district, not only the first small wood
+const shade = createShade(renderer, shared, forest.shade, { box: [640, 640], centre: [0, 24, 0], back: 950, far: 2400 });
 lap('shade');
 say(0.25, 'Fetching the wanderer');
 await turn();
@@ -156,6 +159,9 @@ function air(x, y, z, out) {
 
 let rides = null;
 let net = null;
+let missions = null;
+const audio = getAudio({ scene: 'autumn', silent: capture });
+let stepDist = 0;
 /** After he has been put somewhere by hand: the animation starts from standing, not from where it was. */
 function settle() {
   animator.lock = null; animator.lockOff = null;
@@ -168,6 +174,7 @@ function respawn() {
 }
 
 const size = new THREE.Vector2();
+const LIMIT = EXTENT - 16;
 function tick(dt, draw = true) {
   dt = Math.min(dt, 1 / 20);
   const realDt = dt;
@@ -179,10 +186,33 @@ function tick(dt, draw = true) {
   // At the wheel his legs are left alone: the vehicle carries him and his hands are busy.
   const driving = rides?.update(dt, inp, follow) ?? false;
   if (!driving) player.update(dt, inp, follow.yaw);
-  // the district has no wall: far from the way he is turned gently back, and under the world he starts again
-  if (!driving && (player.feet.y < heightAt(player.feet.x, player.feet.z) - 6 || wayDist(player.feet.x, player.feet.z) > 78)) respawn();
+  // Keep him cleanly inside the 720m city grid without killing exploration on side streets.
+  if (!driving) {
+    if (player.feet.y < heightAt(player.feet.x, player.feet.z) - 6) respawn();
+    else if (Math.abs(player.feet.x) > LIMIT || Math.abs(player.feet.z) > LIMIT) {
+      const cx = THREE.MathUtils.clamp(player.feet.x, -LIMIT + 1, LIMIT - 1);
+      const cz = THREE.MathUtils.clamp(player.feet.z, -LIMIT + 1, LIMIT - 1);
+      player.teleport(cx, heightAt(cx, cz), cz);
+      hunt?.hud?.flashText('City limits');
+    }
+  }
+  if (!driving && player.grounded && player.speed > 1.2) {
+    stepDist += player.speed * dt;
+    if (stepDist >= 2.2) { stepDist = 0; audio.play('step', Math.min(1.4, player.speed / 5)); }
+  } else if (!driving && player.grounded) {
+    stepDist = Math.min(stepDist, 1.5);
+  }
   hunt?.update(dt, driving ? { ...inp, attack: false, heavy: false, power: false, dash: false, flare: false, whirl: false } : inp, realDt);
   net?.update(realDt, { player, driving });
+  const activeBoss = hunt?.enemies?.some((e) => e.duel && !e.dead && e.ready && e.phase !== 'waiting' && Math.hypot(e.x - player.feet.x, e.z - player.feet.z) < 22);
+  audio.update(realDt, {
+    chapter: chapterAt(player.feet.z, hunt?.seg, hunt?.roam),
+    combat: hunt?.combat ?? 0,
+    boss: !!activeBoss,
+    driving,
+    speed: rides?.driven ? Math.hypot(rides.driven.vx, rides.driven.vz) : 0,
+    paused: !!window.__paused,
+  });
   man.object.visible = !driving;
   forest.update(dt, player.feet.z, hunt?.seg, hunt?.roam);
   const root = player.visualRoot(dt);
@@ -223,7 +253,7 @@ function renderScene() {
 }
 
 window.lab = {
-  THREE, player, follow, camera, input, animator, figure, shared, frame, renderer, graphics, street, timings, counts: forest.counts, heightAt, respawn, way, scene,
+  THREE, player, follow, camera, input, animator, figure, shared, frame, renderer, graphics, street, timings, counts: forest.counts, heightAt, respawn, way, scene, audio,
   step(dt = 1 / 60, n = 1, draw = true) { for (let i = 0; i < n; i++) tick(dt, draw && i === n - 1); },
   setInput(fn) { input.override = fn; },
   /** Puts him at (x, z) on the ground, facing (fx, fz), with the eye behind him. */
@@ -241,19 +271,26 @@ window.lab = {
 
 if (!capture) {
   if (online) net = window.lab.net = createNet({ scene, shared, man, camera, heightAt, route: way, contract: true });
+  const roam = (window.__mode ?? 'level') !== 'level';
+  const saved = !roam && !online ? loadProgress() : null;
+  missions = await createMissions({ scene, shared, player, heightAt, levels: LEVELS, roam: roam || online, audio, saved });
   hunt = await createHunt({
     scene, shared, man, animator, player, heightAt, camera,
     moveSpawn: (x, z) => spawn.set(x, heightAt(x, z), z),
     down: respawn,
     levels: LEVELS,
     route: way,
-    roam: (window.__mode ?? 'level') !== 'level',
+    roam,
     net,
     events: online,
+    audio,
+    missions,
   });
+  missions.bind(hunt);
   window.lab.hunt = hunt;
+  window.lab.missions = missions;
   rides = await createRides({ scene, shared, player, heightAt, hunt, route: way, checkpoints: LEVELS.map((L) => L.checkpoint),
-    inBounds: (x, z) => wayDist(x, z) < 72, settle });
+    inBounds: (x, z) => Math.abs(x) < LIMIT && Math.abs(z) < LIMIT, settle, audio, missions });
   window.lab.rides = rides;
   net?.attach(hunt, rides);
 }
@@ -303,7 +340,11 @@ function run() {
     if (!window.__paused || online) {
       accumulator += Math.min((now - last) / 1000, 0.1);
       while (accumulator >= 1 / 60) { tick(1 / 60, false); accumulator -= 1 / 60; }
-    } else accumulator = 0;
+    } else {
+      accumulator = 0;
+      audio.update(1 / 60, { paused: true, driving: false, speed: 0 });
+      audio.updateRide({ driving: false, paused: true });
+    }
     last = now;
     renderScene();
   } : null);

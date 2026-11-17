@@ -2,6 +2,7 @@
 // traveling or changing game modes reloads the world so its saves and mechanics stay consistent.
 import { SCENE, showScene } from './scenes.js';
 import { qualityMode } from './quality.js';
+import { getAudio } from './game/audio.js';
 
 const q = new URLSearchParams(location.search);
 const root = document.documentElement;
@@ -9,6 +10,7 @@ root.dataset.scene = SCENE;
 if (SCENE === 'aurora') { root.dataset.style = 'spirit'; root.style.setProperty('--chapter-accent', '#5ef2e0'); }
 const clean = q.has('capture') || q.has('clean');
 if (clean) root.dataset.clean = '';
+const audio = getAudio({ scene: SCENE, silent: q.has('capture') });
 const menu = document.getElementById('menu');
 const screenChoice = document.getElementById('screen-choice');
 function pause(on) {
@@ -21,11 +23,57 @@ function pause(on) {
   } else if (menu.open) menu.close();
 }
 const resume = () => {
+  audio.unlock();
   pause(false);
   if (matchMedia('(pointer: fine)').matches) window.lab?.renderer.domElement.requestPointerLock?.()?.catch?.(() => {});
 };
-document.getElementById('pause-button').addEventListener('click', () => pause(true));
+document.getElementById('pause-button').addEventListener('click', () => { audio.play('uiClick'); pause(true); });
 document.getElementById('resume').addEventListener('click', resume);
+
+const muteBtn = document.getElementById('mute-button');
+const menuMuteBtn = document.getElementById('audio-mute');
+const sliders = [
+  ['master', 'vol-master', 'out-master'],
+  ['music', 'vol-music', 'out-music'],
+  ['voice', 'vol-voice', 'out-voice'],
+  ['sfx', 'vol-sfx', 'out-sfx'],
+];
+function syncAudioUI(s) {
+  if (muteBtn) {
+    muteBtn.setAttribute('aria-pressed', String(s.muted));
+    muteBtn.classList.toggle('muted', s.muted);
+    muteBtn.querySelector('use')?.setAttribute('href', s.muted ? '#i-mute' : '#i-sound');
+    const span = muteBtn.querySelector('span');
+    if (span) span.textContent = s.muted ? 'Muted' : 'Audio';
+  }
+  if (menuMuteBtn) {
+    menuMuteBtn.textContent = s.muted ? 'Muted (click to unmute)' : 'Sound on';
+    menuMuteBtn.classList.toggle('on', !s.muted);
+    menuMuteBtn.setAttribute('aria-pressed', String(!s.muted));
+  }
+  for (const [key, inputId, outId] of sliders) {
+    const pct = Math.round((s[key] ?? 0) * 100);
+    const input = document.getElementById(inputId);
+    const out = document.getElementById(outId);
+    if (input) input.value = String(pct);
+    if (out) out.textContent = `${pct}%`;
+  }
+}
+syncAudioUI(audio.getSettings());
+audio.onChange(syncAudioUI);
+muteBtn?.addEventListener('click', () => { const s = audio.toggleMute(); if (!s.muted) audio.play('uiClick'); muteBtn.blur(); });
+menuMuteBtn?.addEventListener('click', () => { const s = audio.toggleMute(); if (!s.muted) audio.play('uiClick'); });
+for (const [key, inputId] of sliders) {
+  const input = document.getElementById(inputId);
+  input?.addEventListener('input', () => {
+    audio.unlock();
+    audio.setSettings({ [key]: Number(input.value) / 100, ...(Number(input.value) > 0 && key === 'master' ? { muted: false } : {}) });
+  });
+  input?.addEventListener('change', () => {
+    if (key === 'sfx') audio.play('missionStep');
+    else if (key === 'voice') audio.speak('Audio check, Courier Zero-Seven.', 'sora');
+  });
+}
 const coarse = matchMedia('(pointer: coarse)').matches;
 const fill = document.getElementById('fill');
 const fullscreen = () => document.fullscreenElement || document.webkitFullscreenElement;
@@ -71,6 +119,7 @@ if (coarse && !clean) {
     const full = document.getElementById('start-fullscreen');
     const normal = document.getElementById('start-normal');
     const start = () => {
+      audio.unlock();
       screenChoice.close();
       window.__paused = false;
       resolve();

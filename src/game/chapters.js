@@ -23,7 +23,7 @@ export const CHAPTERS = [
 ];
 
 /** The whole trail is laid out small and stretched by this: the way, every spawn, gate, duel and boundary. */
-export const SCALE = 2.2;
+export const SCALE = 3.0;
 const BOUNDARIES = [52, 29, 3, -31, -63].map((z) => z * SCALE);
 export function chapterAt(z, cleared = CHAPTERS.length, roam = false) {
   let i = 0;

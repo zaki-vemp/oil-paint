@@ -12,7 +12,7 @@ export { noise, rng };
 // --- the way through ---------------------------------------------------------------------------------------------
 const WAY = [[2, 96], [0, 80], [-7, 56], [3, 32], [10, 6], [3, -20], [-5, -44], [4, -68], [10, -90]].map(([x, z]) => [x * SCALE, z * SCALE]);
 export const START = { x: 0, z: 78 * SCALE };
-export const CLEARING = { x: 11 * SCALE, z: -96 * SCALE, r: 21 };
+export const CLEARING = { x: 11 * SCALE, z: -96 * SCALE, r: 26 };
 /** Half the width of the road, kerb to middle: wide enough to drive. */
 export const ROAD = 3.6;
 const waySamples = [];
@@ -45,7 +45,7 @@ export function wayDist(x, z) {
   const g = gridDist(x, z);
   // The trail only wanders near x = 0. Off that strip the grid is the whole answer, and the
   // million-point land map does not have to walk the trail samples.
-  if (Math.abs(x) > 48 || z > 230 || z < -236) return g;
+  if (x < -42 || x > 62 || z > 305 || z < -318) return g;
   const s = spineDist(x, z);
   return s < g ? s : g;
 }
@@ -75,7 +75,7 @@ export async function prepareLand(pause) {
   if (pause && j % 24 === 0) await pause(j / N);
   for (let i = 0; i < N; i++) {
     const x = -EXTENT + (i / (N - 1)) * 2 * EXTENT, z = -EXTENT + (j / (N - 1)) * 2 * EXTENT;
-    const covered = Math.abs(x) < 236 && Math.abs(z) < 242;
+    const covered = Math.abs(x) < EXTENT - 18 && Math.abs(z) < EXTENT - 14;
     const wd = covered ? wayDist(x, z) : 99;
     heights[i + j * N] = rawHeight(x, z, wd);
     const k = (i + j * N) * 4;
@@ -141,7 +141,7 @@ export function createLand(shared) {
           float road = smoothstep(0.14, 0.85, m.r);
           c = mix(c, roadCol, road);
           float dx = gridAxis(vWorld.x), dz = gridAxis(vWorld.z), gdist = min(dx, dz);
-          float inside = step(abs(vWorld.x), 202.0) * step(abs(vWorld.z), 202.0);
+          float inside = step(abs(vWorld.x), 282.0) * step(abs(vWorld.z), 282.0);
           float walk = smoothstep(uGrid.z - 0.15, uGrid.z + 0.35, gdist) * (1.0 - smoothstep(uGrid.z + 2.1, uGrid.z + 3.3, gdist));
           c = mix(c, pave * 1.35, walk * inside * (1.0 - road));
           float lane = 0.0;

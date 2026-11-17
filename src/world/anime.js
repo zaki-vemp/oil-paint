@@ -9,6 +9,7 @@ import { heightAt, wayDist, clearingAt, rng, way, ROAD } from './land.js';
 import { CHAPTERS, chapterAt } from '../game/chapters.js';
 import { LEVELS, GOAL } from '../game/levels.js';
 import { DUELS } from '../game/duel.js';
+import { EXTRA_KEEP } from '../game/story.js';
 import { blockLots, AVENUES, STREETS, GRID_MIN, GRID_MAX, ZONES, ZONE_SPLIT, zoneAt } from './grid.js';
 
 // Roles: 0 tower, 1 sign, 2 weeds, 3 crate, 4 lamp head / lane stud, 5 smog, 6 pole.
@@ -135,8 +136,8 @@ export function createAnimeWorld(shared) {
     });
   }
 
-  // Nothing is built where a fight happens: every spawn, duel, cairn and gate keeps its room.
-  const keep = [GOAL, ...DUELS, ...LEVELS.flatMap((L) => [L.checkpoint, ...L.spots, ...(L.gate ? [L.gate] : [])])];
+  // Nothing is built where a fight happens: every spawn, duel, mission target, kiosk, relay and gate keeps its room.
+  const keep = [GOAL, ...DUELS, ...EXTRA_KEEP, ...LEVELS.flatMap((L) => [L.checkpoint, ...L.spots, ...(L.gate ? [L.gate] : [])])];
   const SINK = 3; // metres a tower goes into the ground, so a slope never shows under it
   const towers = [], signs = [];
   const capH = [28, 16, 18, 9];
@@ -157,6 +158,41 @@ export function createAnimeWorld(shared) {
     const sh = Math.min(h * 0.45, 2.2 + rand() * 3.2), sw = Math.min((alongX ? d : w) * 0.4, 0.8 + rand() * 1.1);
     signs.push({ ...record(x + nx * out, y + sh / 2 + 2.2 + rand() * Math.max(0, h - sh - 3), z + nz * out, 0.2, sh, sw, alongX ? ry : ry + Math.PI / 2), zone: lot.zone });
   }
+  const poles = [], lights = [];
+  // Painted 3D landmarks: Avenue Neon Torii gateways, elevated skybridges, and the Amber Sanctuary spire.
+  for (const [gx, gz] of [[-120, 180], [120, 180], [-160, 60], [160, 60], [-120, -60], [120, -60], [-160, -140], [120, -220]]) {
+    const gy = heightAt(gx, gz);
+    for (const s of [-1, 1]) {
+      const px = gx + s * 5.2;
+      towers.push({ ...record(px, gy + 3.6, gz, 0.85, 8.2, 0.85, 0), wd: 6 });
+      colliders.push({ x: px, y: gy + 3.6, z: gz, box: [0.45, 4.1, 0.45], ry: 0 });
+      lights.push(record(px, gy + 4.1, gz + 0.46, 0.22, 6.2, 0.08));
+    }
+    towers.push({ ...record(gx, gy + 7.6, gz, 13.6, 0.72, 1.05, 0), wd: 6 });
+    towers.push({ ...record(gx, gy + 6.4, gz, 11.4, 0.44, 0.7, 0), wd: 6 });
+    lights.push(record(gx, gy + 8.05, gz, 13.2, 0.2, 1.15));
+    signs.push(record(gx, gy + 6.95, gz + 0.52, 0.16, 1.1, 4.2, Math.PI / 2));
+  }
+  for (const [bx, bz, bh] of [[-40, 180, 16], [40, 180, 19], [-80, 180, 17], [80, 180, 18], [-40, -60, 15], [80, -140, 17]]) {
+    const by = heightAt(bx, bz) + bh;
+    towers.push({ ...record(bx, by, bz, 18, 2.1, 3.4, 0), wd: 14 });
+    lights.push(record(bx, by - 0.8, bz + 1.75, 17.4, 0.2, 0.16));
+    lights.push(record(bx, by - 0.8, bz - 1.75, 17.4, 0.2, 0.16));
+  }
+  {
+    const sy = heightAt(GOAL.x, GOAL.z);
+    for (let i = 0; i < 4; i++) {
+      const a = i * (Math.PI / 2) + Math.PI / 4;
+      const px = GOAL.x + Math.cos(a) * 16.5, pz = GOAL.z + Math.sin(a) * 16.5, py = heightAt(px, pz);
+      towers.push({ ...record(px, py + 9.5, pz, 1.6, 20, 1.6, a), wd: 2 });
+      colliders.push({ x: px, y: py + 9.5, z: pz, box: [0.85, 10, 0.85], ry: a });
+      lights.push(record(px - Math.cos(a) * 0.85, py + 10, pz - Math.sin(a) * 0.85, 0.25, 16, 0.25, a));
+    }
+    towers.push({ ...record(GOAL.x, sy + 18.5, GOAL.z, 25, 1.1, 1.8, Math.PI / 4), wd: 2 });
+    towers.push({ ...record(GOAL.x, sy + 18.5, GOAL.z, 25, 1.1, 1.8, -Math.PI / 4), wd: 2 });
+    lights.push(record(GOAL.x, sy + 19.3, GOAL.z, 24, 0.3, 1.9, Math.PI / 4));
+    lights.push(record(GOAL.x, sy + 19.3, GOAL.z, 24, 0.3, 1.9, -Math.PI / 4));
+  }
   const boxGeo = new THREE.BoxGeometry(1, 1, 1);
   // Drawn nearest the street first: seen from it, the towers behind are mostly hidden and their pixels are never shaded.
   towers.sort((a, b) => a.wd - b.wd);
@@ -165,7 +201,6 @@ export function createAnimeWorld(shared) {
   if (towers.length) instances(boxGeo, new THREE.MeshBasicMaterial(), towers, shade);
 
   // Lamps lean over the way from alternate sides; lit dashes mark both of its edges.
-  const poles = [], lights = [];
   for (let i = 2; i < way.length - 1; i += 2) {
     const [ax, az] = way[i], [bx, bz] = way[i + 1], l = Math.hypot(bx - ax, bz - az) || 1, nx = (bz - az) / l, nz = -(bx - ax) / l;
     for (const s of [-1, 1]) {
@@ -180,27 +215,27 @@ export function createAnimeWorld(shared) {
   // The same dashes and lamps along every avenue and street. Skip the crossing itself; the trail covers its own.
   const crossing = (x, z, avenues) => (avenues ? STREETS : AVENUES).some((v) => Math.abs((avenues ? z : x) - v) < 6);
   for (const x of AVENUES) {
-    for (let z = GRID_MIN, n = 0; z <= GRID_MAX; z += 8, n++) {
+    for (let z = GRID_MIN, n = 0; z <= GRID_MAX; z += 12, n++) {
       if (crossing(x, z, true)) continue;
       for (const side of [-1, 1]) {
         const lx = x + (ROAD - 0.55) * side;
         lights.push(record(lx, heightAt(lx, z) + 0.045, z, 0.1, 0.04, 0.55, 0));
       }
-      if (n % 4 !== 0) continue;
-      const side = n % 8 === 0 ? 1 : -1, lx = x + (ROAD + 2.4) * side, y = heightAt(lx, z);
+      if (n % 3 !== 0) continue;
+      const side = n % 6 === 0 ? 1 : -1, lx = x + (ROAD + 2.4) * side, y = heightAt(lx, z);
       poles.push(record(lx, y + 2.1, z, 0.07, 4.2, 0.07));
       lights.push(record(lx - 0.7 * side, y + 4.2, z, 1.5, 0.12, 0.3, Math.PI / 2));
     }
   }
   for (const z of STREETS) {
-    for (let x = GRID_MIN, n = 0; x <= GRID_MAX; x += 8, n++) {
+    for (let x = GRID_MIN, n = 0; x <= GRID_MAX; x += 12, n++) {
       if (crossing(x, z, false)) continue;
       for (const side of [-1, 1]) {
         const lz = z + (ROAD - 0.55) * side;
         lights.push(record(x, heightAt(x, lz) + 0.045, lz, 0.55, 0.04, 0.1, 0));
       }
-      if (n % 4 !== 0) continue;
-      const side = n % 8 === 0 ? 1 : -1, lz = z + (ROAD + 2.4) * side, y = heightAt(x, lz);
+      if (n % 3 !== 0) continue;
+      const side = n % 6 === 0 ? 1 : -1, lz = z + (ROAD + 2.4) * side, y = heightAt(x, lz);
       poles.push(record(x, y + 2.1, lz, 0.07, 4.2, 0.07));
       lights.push(record(x, y + 4.2, lz - 0.7 * side, 0.3, 0.12, 1.5, 0));
     }
@@ -217,7 +252,7 @@ export function createAnimeWorld(shared) {
   tuft.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
   tuft.computeVertexNormals();
   const weeds = [], crates = [];
-  for (let i = 0; i < 8000; i++) {
+  for (let i = 0; i < 5500; i++) {
     const x = GRID_MIN + rand() * (GRID_MAX - GRID_MIN), z = GRID_MIN + rand() * (GRID_MAX - GRID_MIN), d = wayDist(x, z);
     if (d < ROAD + 1.2 || d > 16) continue;
     const s = 0.5 + rand() * 0.7;

@@ -25,6 +25,7 @@ import { ATTACKS, createCombatPose, demoCombat } from './combat.js';
 import { DUELS, MOVES, createDuel, stepDuel, duelHit, damageRival, demoDuels } from './duel.js';
 import { createRivalAppearance } from '../figure/avatar.js';
 import { LEVELS, GOAL, KINDS, POWERS, POWER_ORDER, STORY, powersFor, unlocksFor, loadProgress, saveProgress, demoLevels } from './levels.js';
+import { loadStreetAsset, streetClone } from '../street-assets.js';
 import { nextPavement } from '../world/grid.js';
 import { GUILT, CASH, MOB, WITNESS, RAM, HEAT, demoConfig } from './config.js';
 export { GUILT, MOB, RAM, HEAT, CASH, WITNESS };
@@ -122,8 +123,8 @@ export function strikeHits(e, x, y, z, groundY) {
 
 const CLIP = (clip) => clip.name.split('|').pop().replace(/ \d+$/, '');
 
-export async function createHunt({ scene, shared, man, animator, player, heightAt, marks, spots, moveSpawn, down, levels = null, roam = false, route = null, camera = null, net = null, events = false }) {
-  // Level mode builds its own marks and cairns from the level list; the night
+export async function createHunt({ scene, shared, man, animator, player, heightAt, marks, spots, moveSpawn, down, levels = null, roam = false, route = null, camera = null, net = null, events = false, audio = null, missions = null }) {
+  // Level mode builds its own marks and mission relays from the level list; the night
   // scene passes marks and spots directly, which keeps working as before.
   const segs = levels ? levels.map((L) => ({ ...L })) : null;
   if (segs) {
@@ -132,8 +133,12 @@ export async function createHunt({ scene, shared, man, animator, player, heightA
   }
   const loader = new GLTFLoader();
   const kinds = [...new Set([...spots.map((p) => p.kind), ...(segs && route ? ['civ', 'thief'] : []), ...(events ? ['brute'] : [])])];
-  const sources = Object.fromEntries(await Promise.all(kinds.map(async (k) => [k, await Promise.all(
-    [CAST[k].file, CAST[k].alternate].filter(Boolean).map(file => loader.loadAsync('./enemies/' + file)))])));
+  const [sourcesList, relayAsset] = await Promise.all([
+    Promise.all(kinds.map(async (k) => [k, await Promise.all(
+      [CAST[k].file, CAST[k].alternate].filter(Boolean).map(file => loader.loadAsync('./enemies/' + file)))])),
+    segs ? loadStreetAsset('terminal') : Promise.resolve(null),
+  ]);
+  const sources = Object.fromEntries(sourcesList);
   const white = new THREE.DataTexture(new Uint8Array([255, 255, 255, 255]), 1, 1);
   white.needsUpdate = true;
   const mats = new Map();
@@ -163,6 +168,7 @@ export async function createHunt({ scene, shared, man, animator, player, heightA
     mesh.add(model);
     // Materials belong to one body (same shader, so the same program) so a hit can flash just that one.
     const own = new Map();
+    const shadeMeshes = [];
     model.traverse((o) => {
       if (!o.isMesh) return;
       const key = o.material.name + (o.isSkinnedMesh ? '' : '|rigid');
@@ -176,7 +182,7 @@ export async function createHunt({ scene, shared, man, animator, player, heightA
       }
       o.material = own.get(key).m;
       o.frustumCulled = false;
-      o.layers.enable(1);
+      shadeMeshes.push(o);
     });
     const named = {};
     for (const clip of src.animations) named[CLIP(clip)] = clip;
@@ -184,7 +190,7 @@ export async function createHunt({ scene, shared, man, animator, player, heightA
     const mixer = new THREE.AnimationMixer(mesh);
     const action = mixer.clipAction(clips.Idle);
     action.play();
-    Object.assign(mesh.userData, { mixer, clips, action, clip: 'Idle', mats: [...own.values()] });
+    Object.assign(mesh.userData, { mixer, clips, action, clip: 'Idle', mats: [...own.values()], shadeMeshes, inShade: false });
     mesh.scale.setScalar(KIND[kind].scale);
     return mesh;
   }
@@ -240,7 +246,9 @@ export async function createHunt({ scene, shared, man, animator, player, heightA
       e.combat = createCombatPose(actor.man, shared, scene, { rival: true });
       e.tell = new THREE.Mesh(new THREE.RingGeometry(0.94, 1, 48), new THREE.MeshBasicMaterial({ color: 0xef9c77, transparent: true, opacity: 0.8, side: THREE.DoubleSide, depthWrite: false }));
       e.tell.rotation.x = -Math.PI / 2; e.tell.visible = false;
-      scene.add(e.mesh, e.tell); enemies.push(e);
+      e.beacon = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.28, 22, 8, 1, true), new THREE.MeshBasicMaterial({ color: 0xff2a6d, transparent: true, opacity: 0.28, side: THREE.DoubleSide, depthWrite: false }));
+      e.beacon.visible = false;
+      scene.add(e.mesh, e.tell, e.beacon); enemies.push(e);
     });
   }
   function addBody(e) {
@@ -274,7 +282,7 @@ export async function createHunt({ scene, shared, man, animator, player, heightA
       // The collider already crosses the whole city. Posts show that, and follow the slope so a side street is not a secret way through.
       const posts = [];
       for (const side of [-1, 1]) {
-        for (let x = 14; x <= 206; x += 14) {
+        for (let x = 14; x <= 280; x += 14) {
           const wx = s.gate.x + side * x;
           posts.push({ x: side * x, y: heightAt(wx, s.gate.z) - g.position.y });
         }
@@ -289,28 +297,24 @@ export async function createHunt({ scene, shared, man, animator, player, heightA
       wall.instanceMatrix.needsUpdate = stripe.instanceMatrix.needsUpdate = true;
       wall.computeBoundingSphere(); stripe.computeBoundingSphere();
       g.add(wall, stripe);
-      const collider = player.world.createCollider(player.R.ColliderDesc.cuboid(260, 4, 0.4).setTranslation(s.gate.x, g.position.y + 3, s.gate.z));
+      g.traverse((o) => { if (o.isMesh) o.layers.disable(1); });
+      const collider = player.world.createCollider(player.R.ColliderDesc.cuboid(320, 4, 0.4).setTranslation(s.gate.x, g.position.y + 3, s.gate.z));
       gates.push({ group: g, seg: i, collider });
     }
   }
 
   for (const m of marks) {
     const g = new THREE.Group();
-    for (let i = 0; i < 3; i++) {
-      put(g, GEO.rock, mat(m.goal && i === 2 ? 'gold' : 'stone'), (rock) => {
-        rock.scale.set(0.55 - i * 0.10, 0.23, 0.48 - i * 0.10);
-        rock.position.y = 0.18 + i * 0.3;
-        rock.rotation.y = i * 0.7;
-      });
-    }
-    const crystal = put(g, new THREE.OctahedronGeometry(0.28), mat('gold'), cap => cap.position.y = 1.5);
-    m.crystal = crystal;
-    // Place the shrine beside its trigger so the starting one never hides the traveler.
-    const mx = m.x + (segs ? 8 : 0);
-    g.position.set(mx, heightAt(mx, m.z), m.z);
-    if (segs) {
-      // The shrine sits beside its trigger, but the thin ring follows the real seven-metre healing area.
-      g.scale.setScalar(2.6);
+    if (segs && relayAsset) {
+      const relay = streetClone(relayAsset, shared);
+      relay.traverse((o) => { if (o.isMesh) o.layers.disable(1); });
+      relay.scale.setScalar(1.35);
+      g.add(relay);
+      m.relay = relay;
+      const crystal = put(g, new THREE.OctahedronGeometry(0.32), mat(m.goal ? 'gold' : 'shrine'), cap => cap.position.y = 2.7);
+      m.crystal = crystal;
+      const mx = m.x + 8;
+      g.position.set(mx, heightAt(mx, m.z), m.z);
       const ringGeo = new THREE.RingGeometry(6.8, 7, 64).rotateX(-Math.PI / 2);
       const positions = ringGeo.attributes.position;
       for (let i = 0; i < positions.count; i++) {
@@ -318,11 +322,24 @@ export async function createHunt({ scene, shared, man, animator, player, heightA
         positions.setXYZ(i, x, heightAt(x, z) + 0.045, z);
       }
       ringGeo.computeVertexNormals();
-      const ring = new THREE.Mesh(ringGeo, new THREE.MeshBasicMaterial({ color: 0x42d9ef, transparent: true, opacity: 0.25, side: THREE.DoubleSide, depthWrite: false }));
+      const ring = new THREE.Mesh(ringGeo, new THREE.MeshBasicMaterial({ color: m.goal ? 0xffb000 : 0x42d9ef, transparent: true, opacity: 0.28, side: THREE.DoubleSide, depthWrite: false }));
       scene.add(ring); m.ring = ring;
-      const beam = new THREE.Mesh(new THREE.BoxGeometry(0.045, 6, 0.045), new THREE.MeshBasicMaterial({ color: 0x42d9ef, transparent: true, opacity: 0.16, depthWrite: false }));
-      beam.position.y = 3; g.add(beam); m.beam = beam;
+      const beam = new THREE.Mesh(new THREE.BoxGeometry(0.14, 18, 0.14), new THREE.MeshBasicMaterial({ color: m.goal ? 0xffb000 : 0x42d9ef, transparent: true, opacity: 0.18, depthWrite: false }));
+      beam.position.y = 9; g.add(beam); m.beam = beam;
+    } else {
+      for (let i = 0; i < 3; i++) {
+        put(g, GEO.rock, mat(m.goal && i === 2 ? 'gold' : 'stone'), (rock) => {
+          rock.scale.set(0.55 - i * 0.10, 0.23, 0.48 - i * 0.10);
+          rock.position.y = 0.18 + i * 0.3;
+          rock.rotation.y = i * 0.7;
+        });
+      }
+      const crystal = put(g, new THREE.OctahedronGeometry(0.28), mat('gold'), cap => cap.position.y = 1.5);
+      m.crystal = crystal;
+      g.position.set(m.x, heightAt(m.x, m.z), m.z);
     }
+    g.traverse((o) => { if (o.isMesh) o.layers.disable(1); });
+    m.group = g;
     scene.add(g);
     m.used = false;
   }
@@ -347,66 +364,50 @@ export async function createHunt({ scene, shared, man, animator, player, heightA
     scene.add(mesh); pulses.push({ mesh, t: 0, ground });
   }
 
-  const hud = createHUD({ levels: segs, roam, marks, route });
+  const hud = createHUD({ levels: segs, roam, marks, route, camera, audio });
   let hp = MAX_HP, power = POWER_MAX, swing = -1, swingH = false, struck = new Set(), invuln = 0, won = false;
   let dashCool = 0, flareCool = 0, gateToastT = 0, lockToastT = 0, saveWarned = false, runTold = false;
   let attackBuffer = 0, queuedHeavy = false, comboIndex = -1, comboWindow = 0, swingType = 'cut';
   let hitPause = 0, cameraKick = 0, hurtPose = 0, castPose = 0, slowMo = 0, combo = 0, comboT = 0, poolT = 0;
-  let clock = 0, toldOpen = false, toldHeat = false;
-  const shown = new Set();
+  let toldHeat = false;
   let heat = 0, cash = 0, cops = [], block = null;
   let saveWarningPending = false, plunge = false;
 
   // --- level state -----------------------------------------------------------------
   // `cleared` is the count of fully cleared segments; the current level is segs[cleared].
   const segAlive = (i) => enemies.some((e) => e.seg === i && !e.dead);
-  const clearedCount = () => { let n = 0; if (segs) while (n < segs.length && !segAlive(n)) n++; return n; };
+  const segDone = (i) => !segAlive(i) && (!missions || roam || missions.isSectorDone(i));
+  const clearedCount = () => { let n = 0; if (segs) while (n < segs.length && segDone(n)) n++; return n; };
   const remaining = () => enemies.reduce((n, e) => n + (e.dead || e.civ ? 0 : 1), 0);
   let powers = roam && segs ? powersFor(segs.length) : { spark: false, dash: false, heavy: false, flare: false };
   const has = (k) => !segs || roam || powers[k];
   function persist(cleared) {
     if (!segs || roam) return;
     const cp = segs[Math.min(cleared, segs.length - 1)].checkpoint;
-    if (!saveProgress({ cleared, x: +cp.x.toFixed(2), z: +cp.z.toFixed(2), cash, unlocked: unlocksFor(cleared) }) && !saveWarned) {
+    if (!saveProgress({ cleared, x: +cp.x.toFixed(2), z: +cp.z.toFixed(2), cash, unlocked: unlocksFor(cleared), missions: missions?.doneSectors ?? [] }) && !saveWarned) {
       saveWarned = true;
       saveWarningPending = true;
     }
   }
   if (segs && !roam) {
-    marks[0].used = true; // he starts on the first checkpoint: no toast for standing still
+    marks[0].used = true; // he starts on the first relay: no toast for standing still
     const saved = loadProgress();
     if (saved && saved.cleared > 0) {
       const n = Math.min(saved.cleared, segs.length);
       for (const e of enemies) {
         if (e.seg >= 0 && e.seg < n) { scene.remove(e.mesh); if (e.body) player.world.removeRigidBody(e.body); e.body = e.collider = null; e.dead = 1; e.gone = true; }
       }
-      for (let i = 0; i < n; i++) marks[i].used = true;
+      for (let i = 0; i < n; i++) { marks[i].used = true; missions?.completeSector(i); }
       powers = powersFor(n);
       cash = saved.cash || 0;
       moveSpawn(saved.x, saved.z);
       down();
-      toast(n >= segs.length ? 'The clearing lies ahead' : `Level ${n + 1} · ${segs[n].name}`);
+      toast(n >= segs.length ? 'Amber Sanctuary lies ahead' : `Sector ${n + 1} · ${segs[n].name}`);
     }
   } else if (segs && roam) {
     for (const m of marks) m.cool = 0;
   }
   function toast(msg) { hud.toast(msg); }
-  function say(id) {
-    if (!segs || roam || shown.has(id)) return;
-    const beat = STORY.find((s) => s.id === id);
-    if (!beat) return;
-    shown.add(id); hud.story(beat.line);
-  }
-  /** Why this cairn will not take him yet, or null when the job is done. */
-  function heldAt(mi) {
-    if (mi === 2 && enemies.some((e) => e.mark && !e.dead && !e.gone)) return 'The runner is still out';
-    if (mi === 3 && heat >= HEAT.stars[0]) return 'Lose the tail first';
-    if (mi === 4) {
-      const v = globalThis.window?.lab?.rides?.driven;
-      if (!v || v.wrecked || v.hp < v.spec.hull * 0.6) return 'Bring a car that still runs';
-    }
-    return null;
-  }
 
   /** A witness sees the player unless a wall sits between them. Anyone close enough does not need the ray. */
   function sees(o) {
@@ -428,8 +429,10 @@ export async function createHunt({ scene, shared, man, animator, player, heightA
     hp = Math.max(1, hp - GUILT * (killed ? 2 : 1));
     heat = Math.min(HEAT.max, heat + (killed ? HEAT.kill : HEAT.hurt));
     cameraKick = Math.max(cameraKick, killed ? 0.22 : 0.09);
+    audio?.play('guilt');
     combo = 0; hud.combo(0);
     hud.flashText('Innocent!');
+    if (!toldHeat && heat >= HEAT.stars[0]) { toldHeat = true; missions?.speak?.('heat'); }
     if (!killed) return;
     let n = 0;
     for (const o of enemies) {
@@ -489,11 +492,13 @@ export async function createHunt({ scene, shared, man, animator, player, heightA
     if (!from && (!guarded || e.duel && e.phase === 'recovery' || source === 'flare')) {
       const big = source === 'heavy' || source === 'whirl' || source === 'thrust';
       hitPause = Math.max(hitPause, (big ? 0.075 : 0.045) + Math.min(combo, 8) * 0.004); cameraKick = big ? 0.12 : 0.055;
+      audio?.play(source === 'heavy' ? 'heavy' : 'hit', e.kind === 'brute' ? 0.72 : 1);
     }
     pulse(e.x, heightAt(e.x, e.z) + (e.duel ? 1.1 : 0.8), e.z, guarded ? 0xf3c77b : 0xb8f5ec);
     if (source === 'heavy') pulse(e.x, heightAt(e.x, e.z) + 0.07, e.z, 0xf6d493, true);
     for (let i = 0; i < 5 && impacts.length < 40; i++) {
       const mesh = put(scene, boltGeo, mat('gold'));
+      mesh.layers.disable(1);
       mesh.scale.setScalar(0.35);
       impacts.push({ mesh, x: e.x, y: heightAt(e.x, e.z) + (e.duel ? 1.15 : 0.75), z: e.z, vx: (Math.random() - 0.5) * 9, vy: 2 + Math.random() * 3, vz: (Math.random() - 0.5) * 9, life: 0.3 });
     }
@@ -526,6 +531,7 @@ export async function createHunt({ scene, shared, man, animator, player, heightA
   function takeHit(damage, from = null, shove = 5) {
     if (invuln > 0) return false;
     hp -= damage; invuln = 0.7; hurtPose = 1; hitPause = 0.07; cameraKick = 0.16;
+    audio?.play('playerHurt'); audio?.bark('hurt');
     combo = 0; hud.combo(0);
     if (from) player.knock(player.feet.x - from.x, player.feet.z - from.z, shove);
     if (hp <= 0) die();
@@ -566,7 +572,7 @@ export async function createHunt({ scene, shared, man, animator, player, heightA
     }
     plunge = false;
     for (const b of bolts) if (b.foe) b.life = 0;
-    toast('Back to the last checkpoint');
+    toast(segs ? 'Back to Mission Relay' : 'Back to the last checkpoint');
   }
 
   function playClip(e, name) {
@@ -581,9 +587,24 @@ export async function createHunt({ scene, shared, man, animator, player, heightA
     u.clip = name;
   }
 
+  function setShade(e, on) {
+    const u = e.mesh.userData;
+    if (u.shadeMeshes && u.inShade !== on) {
+      u.inShade = on;
+      for (const sm of u.shadeMeshes) on ? sm.layers.enable(1) : sm.layers.disable(1);
+    }
+  }
+
   function lay(e, dt) {
     if (e.duel) {
-      e.mesh.visible = !e.gone && (e.ready || !!e.dead) && Math.hypot(e.x - player.feet.x, e.z - player.feet.z) < 36;
+      if (e.beacon) {
+        e.beacon.visible = !e.dead && !e.gone && e.ready;
+        if (e.beacon.visible) {
+          e.beacon.position.set(e.x, heightAt(e.x, e.z) + 11, e.z);
+          e.beacon.material.color.setHex(e.phase === 'recovery' ? 0x00f0ff : 0xff2a6d);
+        }
+      }
+      e.mesh.visible = !e.gone && (e.ready || !!e.dead) && Math.hypot(e.x - player.feet.x, e.z - player.feet.z) < SEEN;
       e.combat.trail.visible = e.mesh.visible;
       if (!e.mesh.visible) { e.tell.visible = false; return; }
       e.mesh.position.set(e.x, heightAt(e.x, e.z), e.z); e.mesh.rotation.set(0, e.yaw, 0);
@@ -665,6 +686,7 @@ export async function createHunt({ scene, shared, man, animator, player, heightA
     const y = heightAt(e.x, e.z) + 1.25;
     vy ??= Math.max(-4, Math.min(4, (to.y + 1.05 - y) / Math.max(Math.hypot(to.x - e.x, to.z - e.z) / e.shot, 0.2)));
     bolts.push({ mesh, foe: e.dmg, g: 0, life: 1.3, x: e.x + sx * 0.7, y, z: e.z + sz * 0.7, vx: sx * e.shot, vy, vz: sz * e.shot });
+    audio?.play('bolt');
     return vy;
   }
 
@@ -688,7 +710,8 @@ export async function createHunt({ scene, shared, man, animator, player, heightA
     if (camera) frustum.setFromProjectionMatrix(viewMatrix.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse));
     for (const m of marks) {
       m.crystal.rotation.y += dt;
-      m.crystal.position.y = 1.5 + Math.sin(m.crystal.rotation.y * 1.8) * 0.12;
+      m.crystal.position.y = (segs ? 2.7 : 1.5) + Math.sin(m.crystal.rotation.y * 1.8) * 0.12;
+      if (m.relay) m.relay.visible = Math.hypot(m.x - player.feet.x, m.z - player.feet.z) < 75;
       if (!m.ring) continue;
       const s = 0.5 + 0.5 * Math.sin(m.crystal.rotation.y * 2.2), hot = !m.used;
       m.ring.material.opacity = (hot ? 0.18 : 0.08) + (hot ? 0.12 : 0.05) * s;
@@ -709,6 +732,7 @@ export async function createHunt({ scene, shared, man, animator, player, heightA
       hurt(e, swingMul() * HIT.sword[e.kind] * (parry ? PARRY_MUL : 1), swingSource());
       if (parry && !e.dead) {
         e.stagger = 1.2; power = Math.min(POWER_MAX, power + 0.5); slowMo = Math.max(slowMo, 0.25);
+        audio?.play('parry'); audio?.bark('parry');
         hud.flashText('Parry');
       }
     }
@@ -717,10 +741,11 @@ export async function createHunt({ scene, shared, man, animator, player, heightA
       queuedHeavy = !!(segs && input?.heavy && has('heavy'));
     }
     if (input?.whirl && segs && !has('whirl') && lockToastT <= 0) {
-      lockToastT = 4; toast('Clear Chapter 5 to learn the whirl');
+      lockToastT = 4; toast('Clear Sector 5 to learn the whirl');
     } else if (input?.whirl && has('whirl') && hp > 0 && (swing < 0 || swing > 0.6)) {
       if (power >= 1) {
         power -= 1; swingType = 'spin'; swing = 0; swingH = false; struck = new Set(); attackBuffer = 0; comboWindow = 0;
+        audio?.play('whirl');
         pulse(px, heightAt(px, pz) + 0.06, pz, 0xc9a8ff, true);
       } else if (lockToastT <= 0) { lockToastT = 3; toast('The whirl needs one spark'); }
     }
@@ -731,6 +756,8 @@ export async function createHunt({ scene, shared, man, animator, player, heightA
       // A strike in the air is a plunge: he drops on the blade and the landing does the rest.
       plunge = !player.grounded && player.feet.y - heightAt(px, pz) > 0.7;
       if (plunge) { swingType = 'heavy'; swingH = false; player.slam(26); }
+      if (queuedHeavy || plunge) { audio?.play('heavy'); audio?.bark('heavy'); }
+      else { audio?.play('slash', swingType === 'thrust' ? 0.85 : 1); audio?.bark('swing'); }
       const target = plunge ? null : enemies.filter(e => !e.dead && (!e.civ || e.angry > 0) && (!e.duel || e.ready) && !gated(e.z) && inFront(px, pz, yaw, e.x, e.z, 3.6, 1.8)).sort((a, b) => Math.hypot(a.x - px, a.z - pz) - Math.hypot(b.x - px, b.z - pz))[0];
       if (target) {
         const turn = Math.atan2(Math.sin(Math.atan2(target.x - px, target.z - pz) - yaw), Math.cos(Math.atan2(target.x - px, target.z - pz) - yaw)); yaw = player.yaw += Math.max(-0.7, Math.min(0.7, turn));
@@ -741,13 +768,18 @@ export async function createHunt({ scene, shared, man, animator, player, heightA
     }
     if (input?.heavy && segs && !has('heavy') && lockToastT <= 0) {
       lockToastT = 4;
-      toast('Clear Chapter 3 to learn the heavy swing');
+      toast('Clear Sector 3 to learn the heavy swing');
     }
     if (swing >= 0) { swing += dt / ATTACKS[swingType].duration; if (swing >= 1) { swing = -1; swingH = false; comboWindow = 0.7; } }
     const hitting = swing >= ATTACKS[swingType].hit[0] && swing <= ATTACKS[swingType].hit[1];
+    if (hitting) {
+      missions?.hitAt(px + Math.sin(yaw) * 1.4, pz + Math.cos(yaw) * 1.4, ATTACKS[swingType].reach, swingMul() * 34, swingSource(), struck, c);
+    }
     if (plunge && player.grounded) {
       plunge = false; cameraKick = Math.max(cameraKick, 0.14);
+      audio?.play('plunge');
       pulse(px, heightAt(px, pz) + 0.07, pz, 0xfcee0a, true);
+      missions?.hitAt(px, pz, 3.6, PLUNGE * 34, 'heavy', struck, c);
       for (const e of enemies) {
         if (e.dead || e.gone || e.duel && !e.ready || gated(e.z) || Math.hypot(e.x - px, e.z - pz) > 3.4) continue;
         struck.add(e); hurt(e, PLUNGE * HIT.sword[e.kind], 'heavy');
@@ -758,17 +790,19 @@ export async function createHunt({ scene, shared, man, animator, player, heightA
     if (input?.dash && has('dash') && dashCool <= 0 && hp > 0) {
       if (player.startDash()) {
         dashCool = 2.5; invuln = Math.max(invuln, 0.3);
+        audio?.play('dash');
         // Perfect: a strike was about to land on him.
         const close = enemies.some((e) => !e.dead && !e.gone && !gated(e.z) && (e.duel
           ? (e.phase === 'windup' && e.timer < PERFECT || e.phase === 'active') && Math.hypot(e.x - px, e.z - pz) < MOVES[e.move].reach + 1
           : e.windup > 0 && e.windup < PERFECT && Math.hypot(e.x - px, e.z - pz) < e.reach + 1));
         if (close) {
           slowMo = 0.7; invuln = Math.max(invuln, 0.6); power = Math.min(POWER_MAX, power + 1);
+          audio?.play('dodge');
           pulse(px, player.feet.y + 1, pz, 0xffffff); hud.flashText('Perfect dodge');
         }
       }
     } else if (input?.dash && !has('dash') && lockToastT <= 0) {
-      lockToastT = 4; toast('Clear Chapter 2 to learn the dash');
+      lockToastT = 4; toast('Clear Sector 2 to learn the dash');
     }
 
     // One body a second follows him onto a nearby sidewalk. A long wait is a body a check parked on purpose.
@@ -784,6 +818,12 @@ export async function createHunt({ scene, shared, man, animator, player, heightA
       }
     }
 
+    for (const g of gates) g.group.visible = Math.abs(pz - g.group.position.z) < 120;
+    for (const m of marks) {
+      const md = Math.hypot(px - m.x, pz - m.z);
+      if (m.group) m.group.visible = md < 120;
+      if (m.ring) m.ring.visible = md < 95;
+    }
     for (const e of enemies) {
       e.flash = Math.max(0, e.flash - dt);
       e.rammed = Math.max(0, (e.rammed ?? 0) - dt);
@@ -806,13 +846,14 @@ export async function createHunt({ scene, shared, man, animator, player, heightA
         shove(e, dt);
         lay(e, dt);
         if (e.dead > 2.2) {
+          setShade(e, false);
           if (roam || e.civ) { e.gone = true; e.respawnT = e.civ ? 45 : 20; e.mesh.visible = false; }
           else { scene.remove(e.mesh); e.gone = true; }
         }
         continue;
       }
       const ld = Math.hypot(px - e.x, pz - e.z);
-      if (puppet(e)) { follow(e, dt); e.mesh.visible = seen(e, ld); swingAt(e); lay(e, dt); continue; }
+      if (puppet(e)) { follow(e, dt); e.mesh.visible = seen(e, ld); setShade(e, !e.duel && e.mesh.visible && ld < 7.5); swingAt(e); lay(e, dt); continue; }
       shove(e, dt);
       // Online the host's crews go for the nearest wanderer, his or another page's.
       let ax = px, az = pz, ay = player.feet.y;
@@ -821,9 +862,10 @@ export async function createHunt({ scene, shared, man, animator, player, heightA
       const dxp = ax - e.x, dzp = az - e.z, pd = Math.hypot(dxp, dzp);
       const homeD = Math.hypot(e.x - e.homeX, e.z - e.homeZ);
       // Far beasts keep their pose but skip the thinking: the frame stays cheap.
-      if (pd > 36) { e.going = 0; e.cool = Math.max(0, e.cool - dt); if (!e.duel) e.mesh.visible = seen(e, ld); lay(e, 0); continue; }
-      if (!e.duel) e.mesh.visible = seen(e, ld);
-      if (e.angry > 0 && e.civ && !e.thief && pd < WITNESS.pull && window.lab?.rides?.driven && Math.random() < dt * 1.2) {
+      if (pd > 36) { e.going = 0; e.cool = Math.max(0, e.cool - dt); if (!e.duel) { e.mesh.visible = seen(e, ld); setShade(e, e.mesh.visible && ld < 7.5); } lay(e, 0); continue; }
+      if (!e.duel) { e.mesh.visible = seen(e, ld); setShade(e, e.mesh.visible && ld < 7.5); }
+      const dv = window.lab?.rides?.driven;
+      if (e.angry > 0 && e.civ && !e.thief && pd < WITNESS.pull && dv && Math.hypot(dv.vx, dv.vz) < 3.2 && Math.random() < dt * 1.2) {
         window.lab.rides.leave();
         hud.flashText('Dragged out');
       }
@@ -833,7 +875,7 @@ export async function createHunt({ scene, shared, man, animator, player, heightA
         else if (e.pool) { const n = nextPavement(e.x, e.z, e.dir, false); e.tx = n.x; e.tz = n.z; }
       }
       if (e.duel) {
-        const ready = roam ? e === closestRival : !enemies.some(b => !b.duel && b.seg === e.seg && !b.dead);
+        const ready = roam ? e === closestRival : (!enemies.some(b => !b.duel && b.seg === e.seg && !b.dead) && (!missions || missions.isSectorDone(e.seg)));
         if (ready && !e.body) addBody(e);
         if (!ready && e.body) { player.world.removeRigidBody(e.body); e.body = e.collider = null; }
         const event = stepDuel(e, dt, { x: px, z: pz, ready, move(dx, dz) {
@@ -845,9 +887,10 @@ export async function createHunt({ scene, shared, man, animator, player, heightA
         if (event === 'intro') {
           // A lesson retries at its entrance, with the resources needed to practise it.
           moveSpawn(e.homeX, e.homeZ + 6); hp = MAX_HP; power = POWER_MAX;
+          missions?.speak?.('duel' + e.seg);
           pulse(e.x, heightAt(e.x, e.z) + 0.05, e.z, 0xa8efdc, true); toast(`${e.name} · ${e.lesson}`);
         }
-        if (event === 'reset') toast('Duel reset. Return to the shrine when you are ready.');
+        if (event === 'reset') toast('Duel reset. Approach the beacon when you are ready.');
         if (event === 'opening') toast('Opening — strike now!');
         if (duelHit(e, px, player.feet.y, pz, heightAt(e.x, e.z)) && !gated(e.z)) {
           if (takeHit(MOVES[e.move].damage, e, e.move === 'slam' ? 8 : 5.5)) e.hitDone = true;
@@ -905,10 +948,12 @@ export async function createHunt({ scene, shared, man, animator, player, heightA
       const near = pd;
       if (e.windup > 0) {
         if (e.shot && e.windup > AIM_LOCK) e.yaw = e.attackYaw = Math.atan2(ax - e.x, az - e.z);
+        if (e.shot && e.windup < AIM_LOCK && !e.lockedPlayed) { e.lockedPlayed = true; audio?.play('lock'); }
         if (e.lunge && e.windup < 0.2) sweep(e, Math.sin(e.attackYaw), Math.cos(e.attackYaw), e.lunge / 0.2 * dt);
         e.windup = Math.max(0, e.windup - dt);
         // Shared strikes and shots are announced; every page tests them against its own wanderer.
         if (e.windup === 0 && e.shot) {
+          e.lockedPlayed = false;
           if (hp > 0 && !gated(e.z)) {
             const vy = fire(e, { x: ax, y: ay, z: az });
             if (net && e.netId != null) net.send({ t: 'ev', k: 'bolt', i: e.netId, yaw: r2(e.attackYaw), vy: r2(vy) });
@@ -919,7 +964,7 @@ export async function createHunt({ scene, shared, man, animator, player, heightA
         }
         if (e.windup === 0 && e.kind === 'brute') { pulse(e.x, heightAt(e.x, e.z) + 0.06, e.z, 0xff9f7a, true); cameraKick = Math.max(cameraKick, 0.06); }
       } else if (e.mode === 'chase' && near < e.reach + 0.25 + (e.lunge ?? 0) && e.cool <= 0 && e.stagger <= 0 && hp > 0 && !gated(e.z)) {
-        e.windup = e.wind;
+        e.windup = e.wind; e.lockedPlayed = false;
         e.attackYaw = Math.atan2(ax - e.x, az - e.z);
         e.yaw = e.attackYaw;
         e.cool = e.windup + 1.0;
@@ -946,13 +991,14 @@ export async function createHunt({ scene, shared, man, animator, player, heightA
       if (!has('spark')) {
         if (segs && !roam && lockToastT <= 0) {
           lockToastT = 4;
-          toast('Clear Level 1 to earn the spark');
+          toast('Clear Sector 1 to earn the spark');
         }
       } else {
         const next = spendPower(power);
         if (next != null) {
           power = next;
           castPose = 1;
+          audio?.play('spark');
           const mesh = put(scene, new THREE.OctahedronGeometry(0.17), spellMat);
           const halo = new THREE.Mesh(new THREE.TorusGeometry(0.25, 0.018, 4, 16), spellMat); halo.rotation.y = Math.PI / 2; mesh.add(halo);
           bolts.push({
@@ -968,6 +1014,8 @@ export async function createHunt({ scene, shared, man, animator, player, heightA
       if (power >= 2) {
         power -= 2;
         flareCool = 20;
+        audio?.play('flare');
+        missions?.hitAt(px, pz, 9, 60, 'flare', null, c);
         for (const e of enemies) {
           if (e.dead) continue;
           const d = Math.hypot(px - e.x, pz - e.z);
@@ -1022,12 +1070,15 @@ export async function createHunt({ scene, shared, man, animator, player, heightA
           // A swing in time sends the shot back the way it came, as his own.
           b.vx *= -1.5; b.vz *= -1.5; b.vy = 0; b.foe = 0; b.life = 1.2; b.mesh.material = spellMat;
           power = Math.min(POWER_MAX, power + 0.25); hitPause = Math.max(hitPause, 0.05);
+          audio?.play('deflect');
           pulse(b.x, b.y, b.z, 0x00f0ff); hud.flashText('Deflected');
         } else if (near < 0.55 && Math.abs(b.y - player.feet.y - 1) < 1.1 && hp > 0) {
           gone = takeHit(b.foe, { x: b.x - b.vx, z: b.z - b.vz }, 3); // a dash goes straight through it
         }
       } else if (!gone) {
-        for (const e of enemies) {
+        if (missions?.hitBolt(b.x, b.y, b.z, 1.2, 75, c)) {
+          gone = true;
+        } else for (const e of enemies) {
           if (e.dead || gated(e.z)) continue;
           if (Math.abs(b.y - heightAt(e.x, e.z) - e.bodyLift) < e.bodyLift + 0.3 && Math.hypot(b.x - e.x, b.z - e.z) < (e.boltR ?? 1.05)) {
             hurt(e, HIT.bolt[e.kind], 'spark');
@@ -1046,6 +1097,7 @@ export async function createHunt({ scene, shared, man, animator, player, heightA
         if (c > g.seg && g.group.parent) {
           scene.remove(g.group);
           player.world.removeCollider(g.collider, true);
+          audio?.play('gateOpen');
         }
       }
       const shut = gates.find((g) => c <= g.seg);
@@ -1055,7 +1107,7 @@ export async function createHunt({ scene, shared, man, animator, player, heightA
         if (gateToastT <= 0) {
           gateToastT = 4;
           const n = enemies.reduce((k, e) => k + (e.seg === c && !e.dead ? 1 : 0), 0);
-          toast(`Clear ${segs[Math.min(c, segs.length - 1)].name} first — ${n} left`);
+          toast(!missions?.isSectorDone(c) ? `Complete ${segs[Math.min(c, segs.length - 1)].name} mission first` : `Clear ${segs[Math.min(c, segs.length - 1)].name} — ${n} left`);
         }
       }
     }
@@ -1066,11 +1118,16 @@ export async function createHunt({ scene, shared, man, animator, player, heightA
         const g = segs[i].grant;
         if (g && !powers[g]) {
           persist(c);
-          toast(`Level ${i + 1} clear — ${POWERS[g].name} earned (${POWERS[g].key})`);
+          missions?.speak?.('clear' + i);
+          toast(`Sector ${i + 1} clear — ${POWERS[g].name} earned (${POWERS[g].key})`);
         }
       }
       powers = powersFor(c);
-      if (c >= segs.length && !runTold) { runTold = true; persist(c); toast('The sanctuary lies ahead — follow the trail'); }
+      if (c >= segs.length && !runTold) {
+        runTold = true; persist(c);
+        missions?.speak?.('clear5');
+        toast('Amber Sanctuary lies ahead — enter the golden terminal');
+      }
     }
 
     if (hp > 0) {
@@ -1082,40 +1139,32 @@ export async function createHunt({ scene, shared, man, animator, player, heightA
           if (m.goal) {
             if (c >= segs.length) {
               m.used = true; moveSpawn(m.x, m.z); hp = MAX_HP; won = true; persist(c);
-              say('end');
-              toast('The clearing is safe — you did it');
+              audio?.play('missionDone');
+              missions?.speak?.('win');
+              toast('Amber Sanctuary stabilized — you did it');
             } else if (gateToastT <= 0) {
               gateToastT = 4;
-              toast(`The clearing is not safe yet — ${remaining()} still out`);
+              toast(`The sanctuary is not safe yet — ${remaining()} still out`);
             }
           } else if (mi <= c) {
-            const held = heldAt(mi);
-            if (held) { if (gateToastT <= 0) { gateToastT = 4; toast(held); } continue; }
-            m.used = true; moveSpawn(m.x, m.z); hp = MAX_HP; invuln = Math.max(invuln, 1.5); persist(c);
-            if (mi === 1) toast(clock <= (STORY.find((s) => s.id === 'late')?.seconds ?? 180) ? 'You made the drop' : 'Late. The ring noticed.');
-            if (mi === 1) {
-              const runner = enemies.find((e) => e.thief && !e.dead && !e.gone);
-              if (runner) {
-                runner.mark = true; runner.pool = false;
-                const spot = nextPavement(px, pz - 28, -1, false);
-                runner.x = runner.homeX = runner.tx = spot.x; runner.z = runner.homeZ = runner.tz = spot.z;
-              }
-            }
-            say(STORY.find((s) => s.at === mi && s.on !== 'clear' && s.on !== 'heat')?.id);
-            toast(`Checkpoint · ${m.name}`);
+            m.used = true; moveSpawn(m.x, m.z); hp = MAX_HP; heat = Math.max(0, heat - 35); invuln = Math.max(invuln, 1.5); persist(c);
+            audio?.play('missionStep');
+            toast(`Mission Relay · ${m.name}`);
           }
         } else if (segs && roam) {
-          // Cairns heal and catch him when he falls, as often as he visits.
+          // Relays heal and catch him when he falls, as often as he visits.
           if ((m.cool ?? 0) > 0) continue;
           m.cool = 10;
-          moveSpawn(m.x, m.z); hp = MAX_HP;
-          toast(m.goal ? m.name : `Checkpoint · ${m.name}`);
+          moveSpawn(m.x, m.z); hp = MAX_HP; heat = Math.max(0, heat - 35);
+          audio?.play('missionStep');
+          toast(m.goal ? m.name : `Mission Relay · ${m.name}`);
         } else {
           m.used = true;
           moveSpawn(m.x, m.z);
           hp = MAX_HP;
-          if (m.goal) won = true;
-          toast(m.goal ? m.name : `Checkpoint · ${m.name}`);
+          if (m.goal) { won = true; audio?.play('missionDone'); }
+          else audio?.play('missionStep');
+          toast(m.goal ? m.name : `Beacon · ${m.name}`);
         }
       }
     }
@@ -1123,13 +1172,9 @@ export async function createHunt({ scene, shared, man, animator, player, heightA
     player.world.propagateModifiedBodyPositionsToColliders();
     // Show save failure after other progress messages, so an unlock cannot overwrite the warning.
     if (saveWarningPending) { toast('Progress is not saving in this browser'); saveWarningPending = false; }
-    if (segs && !roam && !marks[1]?.used) clock += dt;
-    if (segs && !roam && !toldOpen) { toldOpen = true; say('late'); }
-    if (segs && !roam) for (const beat of STORY) if (beat.on === 'clear' && c > beat.at) say(beat.id);
-    if (segs && !roam && !toldHeat && heat >= HEAT.stars[0]) { toldHeat = true; say('seen'); }
-    const nextMark = marks.findIndex((m) => !m.used);
-    const task = net ? net.task(player) : !segs || roam || won ? '' : nextMark === 1 ? `Make the arcade · ${Math.max(0, Math.ceil((STORY.find((s) => s.id === 'late')?.seconds ?? 180) - clock))}s` : nextMark === 2 && enemies.some((e) => e.mark && !e.dead && !e.gone) ? 'Catch the runner' : nextMark === 3 && heat >= HEAT.stars[0] ? 'Lose the heat' : nextMark === 4 ? 'Deliver a car that still runs' : nextMark === 5 ? 'Break the convoy' : nextMark === 6 ? 'Face Ren' : '';
     const boss = enemies.find(e => e.duel && !e.dead && e.ready && e.phase !== 'waiting' && Math.hypot(e.x - player.feet.x, e.z - player.feet.z) < 18);
+    const mission = missions?.update(dt, { seg: c, cleared: c, won, enemies, driven: globalThis.window?.lab?.rides?.driven ?? null, heat, boss }) ?? null;
+    const task = net ? net.task(player) : (mission?.opTitle ?? '');
     const watched = enemies.some(e => e.angry > 0 && !e.dead && !e.gone && sees(e));
     const atCairn = marks?.some(m => Math.hypot(m.x - px, m.z - pz) < 8);
     if (atCairn) heat = Math.max(0, heat - HEAT.safe * dt);
@@ -1154,10 +1199,12 @@ export async function createHunt({ scene, shared, man, animator, player, heightA
     } else if (stars < 3 && block) {
       scene.remove(block.mesh); player.world.removeCollider(block.col, true); block = null;
     }
-    hud.update(dt, { hp, power, cleared: c, won, enemies, player, has, dashCool, flareCool, invuln, boss, heat, cash, stars, task });
+    hud.update(dt, { hp, power, cleared: c, won, enemies, player, has, dashCool, flareCool, invuln, boss, heat, cash, stars, task, mission });
   }
 
   return { update, pose, enemies, hud, ram, get swing() { return swing; },
+    /** Restores health cleanly from side contract completions or relays. */
+    heal(n) { hp = Math.min(MAX_HP, hp + n); },
     /** The room's payment for a finished contract. */
     reward(n, text) { cash += n; hud.flashText(`+${n}`); toast(text); },
     get downed() { return downT > 0; }, get downLeft() { return downT; }, get mech() { return mech; },
@@ -1185,9 +1232,10 @@ export async function createHunt({ scene, shared, man, animator, player, heightA
       } else if (m.k === 'bolt' && e.shot) { e.attackYaw = +m.yaw || 0; fire(e, null, Math.max(-4, Math.min(4, +m.vy || 0))); }
     },
     /** For the vehicles: a jolt through the camera, and a knock he takes from his own crash. */
-    jolt(k) { cameraKick = Math.max(cameraKick, k); }, crash(n) { hp -= n; hurtPose = 1; if (hp <= 0) die(); },
-    carjack() { hp = Math.max(1, hp - GUILT); heat = Math.min(HEAT.max, heat + HEAT.carjack); cameraKick = Math.max(cameraKick, 0.12); hud.flashText('Innocent!'); toast('That driver did not hand you the keys.'); },
+    jolt(k) { cameraKick = Math.max(cameraKick, k); }, crash(n) { hp -= n; hurtPose = 1; audio?.play('playerHurt'); if (hp <= 0) die(); },
+    carjack() { hp = Math.max(1, hp - GUILT); heat = Math.min(HEAT.max, heat + HEAT.carjack); cameraKick = Math.max(cameraKick, 0.12); audio?.play('guilt'); hud.flashText('Innocent!'); toast('That driver did not hand you the keys.'); },
     get hp() { return hp; }, get power() { return power; },
+    get combat() { return enemies.some((e) => !e.dead && !e.gone && (e.duel ? e.ready && e.phase !== 'waiting' : e.mode === 'chase') && Math.hypot(e.x - player.feet.x, e.z - player.feet.z) < 24) ? 1 : 0; },
     get seg() { return segs ? clearedCount() : 0; }, get powers() { return { ...powers }; },
     get roam() { return roam; }, get won() { return won; }, get hitPause() { return hitPause; }, get cameraKick() { return cameraKick; },
     unlocked: (kind) => unlocksFor(roam ? LEVELS.length : clearedCount()).includes(kind),

@@ -20,6 +20,7 @@ import { Input } from '../figure/input.js';
 import { Follow } from '../figure/camera.js';
 import { createHunt } from '../game/hunt.js';
 import { createNet } from '../game/net.js';
+import { getAudio } from '../game/audio.js';
 import { prepareLand, createLand, heightAt, crestX, START, MOON, EXTENT, CABIN } from './land.js';
 import { createSnow } from './snow.js';
 import { createSky } from './sky.js';
@@ -181,6 +182,8 @@ const wind = { x: WIND.x, z: WIND.y };
 let time = 0;
 let hunt = null;
 let net = null;
+const audio = getAudio({ scene: 'aurora', silent: capture });
+let stepDist = 0;
 const online = q.get('mode') === 'online' && !capture;
 function air(x, y, z, out) {
   const along = x * wind.x + z * wind.z, across = -x * wind.z + z * wind.x;
@@ -271,6 +274,13 @@ function tick(dt, draw = true) {
   holdLantern();
   hunt?.update(dt, inp, realDt);
   net?.update(realDt, { player, driving: false });
+  if (player.grounded && player.speed > 1.2) {
+    stepDist += player.speed * dt;
+    if (stepDist >= 2.2) { stepDist = 0; audio.play('step', Math.min(1.4, player.speed / 5)); }
+  } else if (player.grounded) {
+    stepDist = Math.min(stepDist, 1.5);
+  }
+  audio.update(realDt, { combat: hunt?.combat ?? 0, paused: !!window.__paused });
   hunt?.pose();
   man.object.updateMatrixWorld(true);
   figure.updateCloak(dt, air, heightAt);
@@ -324,7 +334,7 @@ function renderScene() {
 }
 
 window.lab = {
-  THREE, player, follow, camera, input, animator, figure, shared, frame, renderer, graphics, timings, counts: { ...snow.counts, ...pines.counts, ...cabin.counts }, cabin, heightAt, crestX, tracks, sky,
+  THREE, player, follow, camera, input, animator, figure, shared, frame, renderer, graphics, timings, counts: { ...snow.counts, ...pines.counts, ...cabin.counts }, cabin, heightAt, crestX, tracks, sky, audio,
   step(dt = 1 / 60, n = 1, draw = true) { for (let i = 0; i < n; i++) tick(dt, draw && i === n - 1); },
   setInput(fn) { input.override = fn; },
   /** Puts him at (x, z) on the ground, facing (fx, fz), with the eye behind him. */
@@ -348,7 +358,7 @@ if (!capture) {
   if (online) net = window.lab.net = createNet({ scene, shared, man, camera, heightAt, pool: 'aurora' });
   hunt = await createHunt({
     net, roam: online, // online the crews come back, as in free roam
-    scene, shared, man, animator, player, heightAt,
+    scene, shared, man, animator, player, heightAt, camera, audio,
     moveSpawn: (x, z) => spawn.set(x, heightAt(x, z), z),
     down: () => place(spawn.x, spawn.z, Math.PI),
     route: Array.from({ length: 99 }, (_, i) => { const z = START.z + 20 - i * 4; return [crestX(z), z]; }),
@@ -406,7 +416,10 @@ function run() {
     if (!window.__paused || online) {
       accumulator += Math.min((now - last) / 1000, 0.1);
       while (accumulator >= 1 / 60) { tick(1 / 60, false); accumulator -= 1 / 60; }
-    } else accumulator = 0;
+    } else {
+      accumulator = 0;
+      audio.update(1 / 60, { paused: true, driving: false });
+    }
     last = now;
     renderScene();
   } : null);

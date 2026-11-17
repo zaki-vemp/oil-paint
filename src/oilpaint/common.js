@@ -6,7 +6,7 @@ import * as THREE from 'three';
 
 export const SUN = new THREE.Vector3(-0.44, 0.5, -0.75).normalize(); // a low autumn sun, ahead and to the left of the way in
 export const WIND = new THREE.Vector2(0.8, 0.6).normalize(); // blows toward the east and a little south
-export const EXTENT = 256; // the land map covers -EXTENT..EXTENT metres both ways
+export const EXTENT = 360; // the land map covers -EXTENT..EXTENT metres both ways
 export const LAND_RES = 1025;
 
 const blank = (r, g, b, a) => {

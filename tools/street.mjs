@@ -10,7 +10,8 @@ guard(chromium);
 const args = process.argv.slice(2);
 const shots = args.includes('--shots') ? args[args.indexOf('--shots') + 1] : null;
 const baseURL = args.find((a) => a.startsWith('http')) ?? 'http://127.0.0.1:5405';
-const browser = await chromium.launch({ executablePath: process.env.CHROME, headless: true });
+const browser = await chromium.launch({ executablePath: process.env.CHROME, headless: true,
+  args: ['--mute-audio', '--ignore-gpu-blocklist', ...(process.platform === 'win32' ? ['--use-angle=d3d11'] : process.platform === 'darwin' ? ['--use-angle=metal'] : []), '--enable-gpu'] });
 const errors = [];
 try {
   const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });

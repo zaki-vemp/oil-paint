@@ -8,7 +8,8 @@ import { chromium } from 'playwright-core';
 import { guard } from './no-pointer-lock.mjs';
 guard(chromium);
 const baseURL = process.argv[2] ?? 'http://127.0.0.1:5405';
-const browser = await chromium.launch({ executablePath: process.env.CHROME, headless: true });
+const browser = await chromium.launch({ executablePath: process.env.CHROME, headless: true,
+  args: ['--mute-audio', '--ignore-gpu-blocklist', ...(process.platform === 'win32' ? ['--use-angle=d3d11'] : process.platform === 'darwin' ? ['--use-angle=metal'] : []), '--enable-gpu'] });
 const errors = [];
 try {
   const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
@@ -33,6 +34,24 @@ try {
     }
     check(L.figure.avatar.bindings.length >= 40, 'anime humanoid bindings');
     check(h.enemies.filter(e => e.duel).length === plan.length, 'one mirror rival per chapter');
+    check(!!L.missions && L.missions.sectorOps.length === plan.length, 'six sector missions created');
+    check(!!L.audio && typeof L.audio.setSettings === 'function', 'audio engine active');
+    L.audio.setSettings({ master: 0.65, music: 0.4, voice: 0.9, sfx: 0.8, muted: false });
+    check(Math.abs(JSON.parse(localStorage.getItem('oilpaint.audio.v1')).master - 0.65) < 0.01, 'audio settings persist');
+    // Verify the starting bike is unlocked and does not eject the rider during sharp turns.
+    const starterBike = L.rides.rides.find(v => v.kind === 'bike' && !v.traffic);
+    check(starterBike && h.unlocked('bike'), 'starter bike unlocked from sector 0');
+    L.teleport(starterBike.x + 1.2, starterBike.z, starterBike.x, starterBike.z);
+    let rodeFrame = 0;
+    L.setInput(() => ({ ...base, ride: rodeFrame++ === 0 }));
+    L.step(1 / 60, 2);
+    check(L.rides.driven === starterBike, 'can board starter bike at sector 0');
+    Object.assign(starterBike, { x: -20, z: 305, y: L.heightAt(-20, 305), yaw: Math.PI / 2, vx: 0, vz: 0, vf: 0 });
+    input({ move: { x: 1, y: 1 } });
+    L.step(1 / 60, 180);
+    check(L.rides.driven === starterBike && Math.abs(starterBike.lean) > 0.3, 'sharp bike cornering leans without kicking rider off');
+    L.rides.leave(true);
+    Object.assign(starterBike, { x: starterBike.home.x, z: starterBike.home.z, y: L.heightAt(starterBike.home.x, starterBike.home.z), yaw: starterBike.home.yaw, vx: 0, vz: 0, vf: 0, tilt: 0, rollRate: 0, tipped: false });
     L.teleport(0, Z0, 0, Z0 - 18); input({ move: { x: 0, y: 1 } }); L.step(1 / 60, 30);
     results.runDistance = Z0 - P.feet.z; check(results.runDistance > 1, 'responsive running');
     input({}); L.step(1 / 60, 20); check(P.speed < 0.05, 'release stops');
@@ -84,6 +103,14 @@ try {
       }
       input({}); L.step(1 / 60, 2);
       check(h.seg === segment, 'creatures alone cannot clear chapter');
+      // Exercise sector 0 destructible target hit detection, then complete field mission to unlock rival.
+      if (segment === 0) {
+        const jammer = L.missions.sectorOps[0].targets[0];
+        L.missions.hitAt(jammer.x, jammer.z, 2, 120, 'sword', null, 0);
+        check(jammer.done, 'sword hit destroys mission jammer');
+      }
+      L.missions.completeSector(segment);
+      L.step(1 / 60, 2);
       const rival = h.enemies.find(e => e.duel && e.seg === segment);
       L.teleport(rival.x, rival.z + 4.5, rival.x, rival.z); L.step(1 / 60, 60, false);
       if (!checkedRetry) { L.respawn(); check(Math.hypot(P.feet.x - rival.homeX, P.feet.z - rival.homeZ - 6) < 0.1, 'nearby duel retry point'); checkedRetry = true; }
@@ -143,6 +170,7 @@ try {
   const warning = await page.evaluate(() => {
     window.__paused = true;
     Storage.prototype.setItem = () => { throw new Error('storage denied'); };
+    window.lab.missions?.completeSector(0);
     for (const e of window.lab.hunt.enemies) if (e.seg === 0) e.dead = 0.001;
     window.lab.step(1 / 60, 2);
     return document.querySelector('.toast').textContent;
