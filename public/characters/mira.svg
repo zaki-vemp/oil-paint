@@ -1,0 +1,126 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 280" role="img" aria-label="Dr. Mira — Archive Ghost">
+  <defs>
+    <linearGradient id="mira-bg" x1="0" y1="0" x2="0.8" y2="1">
+      <stop offset="0%" stop-color="#041916"/>
+      <stop offset="55%" stop-color="#071d21"/>
+      <stop offset="100%" stop-color="#050c12"/>
+    </linearGradient>
+    <radialGradient id="mira-halo" cx="0.5" cy="0.38" r="0.58">
+      <stop offset="0%" stop-color="#19ffc6" stop-opacity="0.36"/>
+      <stop offset="60%" stop-color="#00b89c" stop-opacity="0.12"/>
+      <stop offset="100%" stop-color="#19ffc6" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="mira-skin" x1="0.2" y1="0" x2="0.85" y2="1">
+      <stop offset="0%" stop-color="#effffb"/>
+      <stop offset="60%" stop-color="#d4ede6"/>
+      <stop offset="100%" stop-color="#8bb5ae"/>
+    </linearGradient>
+    <linearGradient id="mira-hair" x1="0" y1="0" x2="0.9" y2="1">
+      <stop offset="0%" stop-color="#174447"/>
+      <stop offset="55%" stop-color="#0c262b"/>
+      <stop offset="100%" stop-color="#061419"/>
+    </linearGradient>
+    <linearGradient id="mira-coat" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#e5f7f3"/>
+      <stop offset="55%" stop-color="#b4d9d1"/>
+      <stop offset="100%" stop-color="#6c9992"/>
+    </linearGradient>
+    <linearGradient id="mira-eye" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#06473b"/>
+      <stop offset="55%" stop-color="#19ffc6"/>
+      <stop offset="100%" stop-color="#b8ffee"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Bioluminescent Archive Backdrop & Neural Ring -->
+  <rect width="240" height="280" fill="url(#mira-bg)"/>
+  <circle cx="120" cy="108" r="122" fill="url(#mira-halo)"/>
+  <circle cx="120" cy="106" r="78" fill="none" stroke="#19ffc6" stroke-opacity="0.28" stroke-width="1.4"/>
+  <circle cx="120" cy="106" r="88" fill="none" stroke="#19ffc6" stroke-opacity="0.18" stroke-dasharray="8 6" stroke-width="1.2"/>
+  <!-- Dissolving hologram memory particles -->
+  <g fill="#19ffc6" fill-opacity="0.65">
+    <rect x="34" y="54" width="4" height="4"/>
+    <rect x="46" y="38" width="3" height="3"/>
+    <rect x="196" y="48" width="5" height="5"/>
+    <rect x="206" y="72" width="3" height="3"/>
+    <rect x="188" y="168" width="4" height="4"/>
+    <rect x="44" y="174" width="4" height="4"/>
+  </g>
+
+  <!-- Flowing Long Archive Hair with Holographic Data-Strands -->
+  <path d="M56 102 C50 60 80 34 120 34 C160 34 190 60 184 102 C192 146 196 196 184 248 L56 248 C44 196 48 146 56 102 Z" fill="url(#mira-hair)"/>
+  <path d="M55 104 C49 148 51 196 59 242 M185 104 C191 148 189 196 181 242" fill="none" stroke="#19ffc6" stroke-width="2.2" stroke-opacity="0.8"/>
+
+  <!-- Neuro-Ethics High-Collar Lab Coat over Dark Synth-Weave -->
+  <path d="M18 280 L34 222 C48 204 74 196 98 192 L142 192 C166 196 192 204 206 222 L222 280 Z" fill="url(#mira-coat)"/>
+  <path d="M84 194 L156 194 L144 280 L96 280 Z" fill="#091a1e"/>
+  <!-- Coat Lapels & Glowing Mint Seams -->
+  <path d="M68 186 L98 228 L94 280 L56 248 Z" fill="#d9f4ee" stroke="#19ffc6" stroke-width="1.6"/>
+  <path d="M172 186 L142 228 L146 280 L184 248 Z" fill="#c4e6df" stroke="#19ffc6" stroke-width="1.6"/>
+  <!-- Komorebi Seed Lotus Emblem at Throat -->
+  <g transform="translate(120, 224)">
+    <path d="M0 -14 C7 -6 7 6 0 14 C-7 6 -7 -6 0 -14 Z" fill="#19ffc6"/>
+    <path d="M-12 -4 C-4 -8 0 0 0 12 C-8 8 -14 2 -12 -4 Z" fill="#19ffc6" fill-opacity="0.6"/>
+    <path d="M12 -4 C4 -8 0 0 0 12 C8 8 14 2 12 -4 Z" fill="#19ffc6" fill-opacity="0.6"/>
+    <circle cx="0" cy="0" r="3" fill="#ffffff"/>
+  </g>
+
+  <!-- Neck -->
+  <path d="M104 162 L136 162 L139 200 L120 212 L101 200 Z" fill="url(#mira-skin)"/>
+  <path d="M104 164 C114 176 126 176 136 164 L137 182 C125 190 115 190 103 182 Z" fill="#6d9c95" fill-opacity="0.5"/>
+
+  <!-- Graceful Serene Anime Face (Holographic Tint) -->
+  <path d="M78 102 C78 72 97 56 120 56 C143 56 162 72 162 102 C162 132 150 155 132 168 C125 173 115 173 108 168 C90 155 78 132 78 102 Z" fill="url(#mira-skin)"/>
+  <path d="M79 106 C80 132 91 153 108 167" fill="none" stroke="#19ffc6" stroke-width="2.4" stroke-opacity="0.9"/>
+
+  <!-- Compassionate Luminous Mint-Emerald Eyes -->
+  <g>
+    <!-- Left Eye -->
+    <path d="M86 112 Q97 104 109 112 Q107 123 97 124 Q88 123 86 112 Z" fill="#ffffff"/>
+    <ellipse cx="97.5" cy="115.5" rx="6.5" ry="7.2" fill="url(#mira-eye)"/>
+    <ellipse cx="97.5" cy="116" rx="2.9" ry="3.4" fill="#04241e"/>
+    <circle cx="95" cy="112.5" r="2.2" fill="#ffffff"/>
+    <circle cx="100.5" cy="118.5" r="1.1" fill="#c8fff0"/>
+    <path d="M84 111 Q97 102 110 112 L108 109 Q97 100 86 108 Z" fill="#082428"/>
+    <path d="M86 99 Q97 95 108 100" fill="none" stroke="#0d3538" stroke-width="2.2" stroke-linecap="round"/>
+
+    <!-- Right Eye -->
+    <path d="M154 112 Q143 104 131 112 Q133 123 143 124 Q152 123 154 112 Z" fill="#ffffff"/>
+    <ellipse cx="142.5" cy="115.5" rx="6.5" ry="7.2" fill="url(#mira-eye)"/>
+    <ellipse cx="142.5" cy="116" rx="2.9" ry="3.4" fill="#04241e"/>
+    <circle cx="140" cy="112.5" r="2.2" fill="#ffffff"/>
+    <circle cx="145.5" cy="118.5" r="1.1" fill="#c8fff0"/>
+    <path d="M156 111 Q143 102 130 112 L132 109 Q143 100 154 108 Z" fill="#082428"/>
+    <path d="M154 99 Q143 95 132 100" fill="none" stroke="#0d3538" stroke-width="2.2" stroke-linecap="round"/>
+  </g>
+
+  <!-- Frameless Smart-Lenses & Neural Crown Interface -->
+  <g fill="none" stroke="#19ffc6">
+    <rect x="82" y="106" width="31" height="19" rx="4" stroke-opacity="0.7" stroke-width="1.3"/>
+    <rect x="127" y="106" width="31" height="19" rx="4" stroke-opacity="0.7" stroke-width="1.3"/>
+    <path d="M113 114 h14" stroke-width="1.4"/>
+    <!-- Forehead Archive Diadem -->
+    <path d="M86 84 L120 92 L154 84" stroke-width="1.6" stroke-opacity="0.85"/>
+    <polygon points="120,85 124,91 120,97 116,91" fill="#19ffc6"/>
+  </g>
+
+  <!-- Delicate Nose & Gentle Wise Smile -->
+  <path d="M120 120 L118 133 L122 135" fill="none" stroke="#7aa8a0" stroke-width="1.6" stroke-linecap="round"/>
+  <path d="M109 148 Q120 154 131 148" fill="none" stroke="#5b8f87" stroke-width="2" stroke-linecap="round"/>
+
+  <!-- Parted Flowing Bangs & Side Tresses -->
+  <path d="M68 100 C70 62 92 42 120 42 C148 42 170 62 172 100 C164 80 148 66 124 64 C132 76 138 88 144 98 C134 86 126 76 120 68 C114 76 106 86 96 98 C102 88 108 76 116 64 C92 66 76 80 68 100 Z" fill="url(#mira-hair)"/>
+  <!-- Shoulder tress swept forward with glowing data lines -->
+  <path d="M64 118 C62 162 68 214 82 256 L96 250 C84 212 79 164 78 126 Z" fill="#0d2a2f" stroke="#19ffc6" stroke-opacity="0.65" stroke-width="1.4"/>
+  <path d="M90 56 Q120 46 150 56" fill="none" stroke="#19ffc6" stroke-opacity="0.55" stroke-width="2.2" stroke-linecap="round"/>
+
+  <!-- Subtle Hologram Scanline Shimmer -->
+  <g stroke="#19ffc6" stroke-opacity="0.14" stroke-width="1">
+    <line x1="48" y1="128" x2="192" y2="128"/>
+    <line x1="40" y1="198" x2="200" y2="198"/>
+    <line x1="30" y1="246" x2="210" y2="246"/>
+  </g>
+
+  <!-- Frame Corner Accent -->
+  <path d="M10 270 L10 252 M10 270 L28 270" fill="none" stroke="#19ffc6" stroke-width="2"/>
+</svg>

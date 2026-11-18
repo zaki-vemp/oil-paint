@@ -7,6 +7,7 @@ export const DEFAULT_AUDIO = Object.freeze({ master: 0.8, music: 0.55, voice: 0.
 
 export const SPEAKERS = {
   sora: { name: 'Sora // Handler', pitch: 1.16, rate: 1.04, f0: 235, color: '#00f0ff', preferFemale: true },
+  mira: { name: 'Dr. Mira // Archive', pitch: 1.08, rate: 0.96, f0: 210, color: '#19ffc6', preferFemale: true },
   ren: { name: 'Ren // Architect', pitch: 0.78, rate: 0.93, f0: 122, color: '#ff2a6d', preferFemale: false },
   kael: { name: 'Kael // Courier 07', pitch: 0.98, rate: 1.02, f0: 155, color: '#fcee0a', preferFemale: false },
   dispatch: { name: 'Grid Dispatch', pitch: 0.88, rate: 1.08, f0: 175, color: '#ffb000', preferFemale: false },
@@ -533,7 +534,7 @@ export function createAudio({ scene = 'autumn', silent = false } = {}) {
       for (const [fi, freq] of s.formants.entries()) {
         const bp = c.createBiquadFilter();
         bp.type = 'bandpass';
-        bp.frequency.setValueAtTime(freq * (profile === SPEAKERS.sora ? 1.1 : 0.96), t);
+        bp.frequency.setValueAtTime(freq * (profile === SPEAKERS.sora ? 1.1 : profile.preferFemale ? 1.05 : 0.96), t);
         bp.Q.value = fi === 0 ? 5.5 : 8;
         const fg = c.createGain();
         fg.gain.value = fi === 0 ? 0.7 : fi === 1 ? 0.5 : 0.25;
@@ -738,6 +739,13 @@ export function createAudio({ scene = 'autumn', silent = false } = {}) {
           playTone({ freq: hz, type: 'triangle', dur: 0.24, gain: 0.18, time: t + i * 0.075 });
         });
         break;
+      case 'echoCollect':
+        [587.33, 880, 1174.66, 1318.51, 1760].forEach((hz, i) => {
+          playTone({ freq: hz, type: 'sine', dur: 0.42 - i * 0.03, gain: 0.16, attack: 0.01, time: t + i * 0.065 });
+          playTone({ freq: hz * 1.5, type: 'triangle', dur: 0.28, gain: 0.055, attack: 0.012, detune: 5, time: t + i * 0.065 + 0.015 });
+        });
+        playNoise({ dur: 0.24, gain: 0.06, filterType: 'highpass', freq: 4800, endFreq: 7600, q: 1.4, time: t + 0.04 });
+        break;
       case 'uiClick':
         playTone({ freq: 880, endFreq: 660, type: 'sine', dur: 0.045, gain: 0.1, time: t });
         break;
@@ -897,10 +905,15 @@ export function demoAudio() {
   if (syl.length < 10 || syl.some((x) => !Number.isFinite(x.dur) || x.formants.length !== 3)) {
     throw new Error('syllablesOf invalid');
   }
+  if (!SPEAKERS.mira || SPEAKERS.mira.color !== '#19ffc6' || !SPEAKERS.mira.preferFemale) {
+    throw new Error('SPEAKERS.mira invalid');
+  }
   const a = createAudio({ scene: 'autumn', silent: true });
   a.setSettings({ master: 0.6, muted: false });
   a.play('slash');
+  a.play('echoCollect');
   a.speak('Testing radio link', 'sora');
+  a.speak('Komorebi archive online', 'mira');
   a.update(1 / 60, { chapter: 2, combat: 1, driving: true, speed: 20 });
   a.updateRide({ driving: true, kind: 'bike', speed: 18, top: 31, throttle: 1 });
   if (a.getSettings().master !== 0.6) throw new Error('settings update failed');

@@ -14,6 +14,14 @@ export const FOES = { punk: ['Street punk', 1], enforcer: ['Corp enforcer', 2], 
 const COOL = { dash: 2.5, flare: 20 }; // seconds, to draw the drain on a slot
 const pad = (n) => String(n).padStart(2, '0');
 const icon = name => `<svg aria-hidden="true" viewBox="0 0 24 24"><use href="#i-${name}"/></svg>`;
+const SPEAKER_META = {
+  sora: { callsign: 'Sora', role: 'Ghost-Line Handler', freq: 'CH-07 // RESISTANCE LINK' },
+  mira: { callsign: 'Dr. Mira', role: 'Archive Imprint', freq: 'SEED // NEURAL ARCHIVE' },
+  ren: { callsign: 'Ren', role: 'Chief Architect', freq: 'SP-01 // SPECTER CHANNEL' },
+  kael: { callsign: 'Kael // 07', role: 'Free Courier', freq: 'SUIT // COLLAR LINK' },
+  dispatch: { callsign: 'Grid Dispatch', role: 'Security Overwatch', freq: 'AE-99 // CIVIC ALERT' },
+  hana: { callsign: 'Hana', role: 'Amber Echo', freq: 'MEM-00 // CONSERVATORY' },
+};
 
 export function createHUD({ levels, roam, marks, route, camera = null, audio = null }) {
   const hud = document.createElement('div');
@@ -28,7 +36,7 @@ export function createHUD({ levels, roam, marks, route, camera = null, audio = n
       <div class="quest-count"><span class="count"></span><span class="distance"></span><span class="cash"></span></div>
       ${levels ? '<div class="journey" aria-label="Chapter progress">' + levels.map((_, i) => `<i data-step="${i}"></i>`).join('') + '</div>' : ''}
     </section>
-    <div class="map-wrap"><canvas class="minimap" width="288" height="288" aria-label="Local trail scan: your position, hostiles and mission targets"></canvas><span class="north">N</span><span class="map-label">${roam ? 'Scan · free roam' : levels ? 'Scan · spirit trail' : 'Scan · snowbound'}</span></div>
+    <div class="map-wrap"><canvas class="minimap" width="288" height="288" aria-label="Local trail scan: your position, hostiles and mission targets"></canvas><span class="north">N</span><span class="map-label">${roam ? 'Scan · free roam' : levels ? 'Scan · spirit trail' : 'Scan · snowbound'}</span><span class="day-clock" aria-label="Day and night cycle">☀ Day · 10:00</span><span class="echo-count" hidden aria-label="Recovered memory echoes">◈ 0/12 Echoes</span></div>
     <section class="vitals" aria-label="Traveler status">
       <div class="portrait" aria-hidden="true"><img src="/characters/portrait.png" alt="" /></div>
       <div class="vitals-data"><div class="player-name">Kael // 07 <span class="hp-number">100 / 100</span></div>
@@ -50,7 +58,17 @@ export function createHUD({ levels, roam, marks, route, camera = null, audio = n
     </nav>
     <div class="waypoint" hidden aria-hidden="true"><span class="wp-arrow">▲</span><span class="wp-diamond">◈</span><strong class="wp-label"></strong><small class="wp-dist"></small></div>
     <div class="toast" role="status" aria-live="polite"></div>
-    <div class="story" hidden role="status"><div class="comms-head"><span class="comms-speaker">Sora // Handler</span><div class="comms-bars" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></div></div><p></p><button type="button">Dismiss [K]</button></div>
+    <div class="story" hidden role="status">
+      <div class="comms-portrait" aria-hidden="true"><img src="/characters/sora.svg" alt="" /></div>
+      <div class="comms-body">
+        <div class="comms-head">
+          <div class="comms-id"><strong class="comms-speaker">Sora</strong><span class="comms-role">Ghost-Line Handler</span></div>
+          <div class="comms-bars" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+        </div>
+        <p></p>
+        <div class="comms-foot"><span class="comms-freq">CH-07 // RESISTANCE LINK</span><button type="button">Dismiss <kbd>K</kbd></button></div>
+      </div>
+    </div>
     <div class="chapter-banner" aria-hidden="true"><span></span><strong></strong><p></p></div>
     <div class="hit-feedback" aria-hidden="true"></div>
     <div class="combo" aria-hidden="true"><b></b><span>hits</span></div>
@@ -67,8 +85,15 @@ export function createHUD({ levels, roam, marks, route, camera = null, audio = n
     steps: [...hud.querySelectorAll('.journey i')], actions: [...hud.querySelectorAll('.actions button')],
     target: get('.target'), targetName: get('.target strong'), targetHp: get('.target span'), targetFill: get('.target-hp i'), tell: get('.target p'),
     wp: get('.waypoint'), wpArrow: get('.wp-arrow'), wpLabel: get('.wp-label'), wpDist: get('.wp-dist'),
-    commsSpeaker: get('.comms-speaker'), commsBars: [...hud.querySelectorAll('.comms-bars i')],
+    dayClock: get('.day-clock'), echoCount: get('.echo-count'),
+    commsImg: get('.comms-portrait img'), commsSpeaker: get('.comms-speaker'), commsRole: get('.comms-role'), commsFreq: get('.comms-freq'),
+    commsBars: [...hud.querySelectorAll('.comms-bars i')],
   };
+  els.commsImg?.addEventListener('error', () => {
+    if (!els.commsImg.src.endsWith('/characters/portrait.png')) {
+      els.commsImg.src = '/characters/portrait.png';
+    }
+  });
   const mobile = matchMedia('(pointer: coarse)').matches;
   const touchControls = document.getElementById('touch-controls');
   const powersButton = document.getElementById('touch-powers');
@@ -100,7 +125,8 @@ export function createHUD({ levels, roam, marks, route, camera = null, audio = n
   const banner = get('.chapter-banner');
   function showChapter(c) {
     chapter = c.index;
-    banner.querySelector('span').textContent = `Sector ${pad(chapter + 1)} // ${c.style === 'field' ? 'Day ops' : 'Night ops'}`;
+    const phase = window.lab?.dayNight?.phase ?? (c.style === 'field' ? 'day' : 'night');
+    banner.querySelector('span').textContent = `Sector ${pad(chapter + 1)} // ${phase === 'night' ? 'Night ops' : 'Day ops'}`;
     banner.querySelector('strong').textContent = c.name;
     banner.querySelector('p').textContent = c.subtitle;
     bannerTime = 4.5;
@@ -198,8 +224,17 @@ export function createHUD({ levels, roam, marks, route, camera = null, audio = n
   const storyEl = get('.story');
   let storyTimer = 0;
   function comms(speakerKey, text) {
-    const sp = SPEAKERS[speakerKey] ?? SPEAKERS.sora;
-    els.commsSpeaker.textContent = sp.name;
+    const portraitKey = typeof speakerKey === 'string' && /^[a-z0-9_-]+$/i.test(speakerKey) ? speakerKey.toLowerCase() : 'sora';
+    const sp = SPEAKERS[portraitKey] ?? SPEAKERS.sora;
+    const parts = sp.name.split(' // ');
+    const meta = SPEAKER_META[portraitKey] ?? { callsign: parts[0], role: parts[1] || 'Ghost-Line', freq: 'CH-07 // GHOST-LINK' };
+    els.commsSpeaker.textContent = meta.callsign;
+    if (els.commsRole) els.commsRole.textContent = meta.role;
+    if (els.commsFreq) els.commsFreq.textContent = meta.freq;
+    if (els.commsImg && els.commsImg.dataset.speaker !== portraitKey) {
+      els.commsImg.dataset.speaker = portraitKey;
+      els.commsImg.src = `/characters/${portraitKey}.svg`;
+    }
     storyEl.style.setProperty('--comms-color', sp.color);
     storyEl.querySelector('p').textContent = text;
     storyEl.hidden = false;
@@ -233,14 +268,39 @@ export function createHUD({ levels, roam, marks, route, camera = null, audio = n
     rideEl.classList.toggle('loose', !!(state.air || state.sliding));
   }
   const wpLocal = new THREE.Vector3(), wpNdc = new THREE.Vector3();
-  let lastStepsKey = '', lastTip = '', lastObj = '', lastWpLabel = '', lastWpDist = '';
-  function update(dt, { hp, power, cleared, won, enemies, player, has, dashCool, flareCool, invuln, boss, heat = 0, cash = 0, stars = 0, task = '', mission = null }) {
+  let lastStepsKey = '', lastTip = '', lastObj = '', lastWpLabel = '', lastWpDist = '', lastClock = '', lastEchoes = '';
+  function update(dt, { hp, power, cleared, won, enemies, player, has, dashCool, flareCool, invuln, boss, heat = 0, cash = 0, stars = 0, task = '', mission = null, dayNight = null }) {
+    const dn = dayNight ?? window.lab?.dayNight;
+    if (dn && els.dayClock) {
+      const label = `${dn.phase === 'night' ? '☾ Night' : '☀ Day'} · ${dn.mmss}`;
+      if (label !== lastClock) {
+        lastClock = label;
+        els.dayClock.textContent = label;
+        els.dayClock.dataset.phase = dn.phase;
+      }
+    }
+    if (els.echoCount) {
+      const ec = mission?.echoes;
+      if (ec && ec.total > 0) {
+        els.echoCount.hidden = false;
+        const echoLabel = `◈ ${ec.collected}/${ec.total}`;
+        if (echoLabel !== lastEchoes) {
+          lastEchoes = echoLabel;
+          els.echoCount.textContent = `${echoLabel} Echoes`;
+          els.echoCount.classList.toggle('complete', ec.collected >= ec.total);
+        }
+      } else {
+        els.echoCount.hidden = true;
+      }
+    }
     if (!storyEl.hidden) {
       storyTimer = Math.max(0, storyTimer - dt);
       const lvl = audio?.voiceLevel ?? 0;
+      const t = performance.now() * 0.015;
       els.commsBars.forEach((b, i) => {
-        const h = 0.25 + (lvl > 0.02 ? lvl : 0.15) * (0.45 + 0.55 * Math.abs(Math.sin(performance.now() * 0.014 + i * 1.4)));
-        b.style.transform = `scaleY(${Math.min(1, h).toFixed(2)})`;
+        const wave = 0.38 + 0.62 * Math.abs(Math.sin(t + i * 1.15) * Math.cos(t * 0.61 - i * 0.65));
+        const amp = lvl > 0.02 ? Math.min(1, 0.28 + lvl * 1.12) : (storyTimer > 0.5 ? 0.56 : 0.22);
+        b.style.transform = `scaleY(${Math.max(0.18, Math.min(1, amp * wave)).toFixed(2)})`;
       });
       if (storyTimer <= 0 && !audio?.voiceActive) storyEl.hidden = true;
     }

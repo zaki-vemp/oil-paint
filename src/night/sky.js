@@ -62,23 +62,37 @@ Hang hang(vec4 aC, float s0) {
   h.len = (k > 0.5 && k < 1.5 ? 2000.0 : 2600.0) * (0.5 + 0.9 * texture(tNoise, vec2(u * 1.1 - uTime * 0.003, 0.77)).a) * (1.0 + 0.45 * h.surge);
   h.s = s0;
   h.P = foot(u, k) + vec3(0.0, s0 * h.len, 0.0);
-  h.edge = smoothstep(1.0, 0.8, abs(u)) * uGlow.x;
+  h.edge = smoothstep(1.0, 0.8, abs(u)) * uGlow.x * smoothstep(0.06, 0.52, uNight);
   return h;
 }
 // The rays are not of a height: here and there one stands far above its neighbours (0..1, squared when used).
 float spire(Hang h, float k) { return texture(tNoise, vec2(h.u * (k > 1.5 ? 83.0 : 37.0) - uTime * 0.02, 0.37 + k * 0.2)).a; }
-// How strongly the curtain burns at height s: most at its foot, dying upward; over its brightest reaches a second,
-// fainter light stands high above, and that one is violet. The light climbs the rays in pulses.
-float burn(Hang h, float s) {
-  float crown = 0.24 * smoothstep(0.4, 0.75, s) * smoothstep(0.4, 0.85, h.I);
-  return h.I * (exp(-s * 2.3) + crown) * (0.8 + 0.3 * sin(s * 7.0 - uTime * 1.7 + h.u * 55.0)) * h.edge;
+// Counter-streaming ripples high in the upper violet corona (0..1).
+float coronaWave(Hang h, float s) {
+  float w1 = sin(s * 10.5 - uTime * 2.35 + h.u * 63.0);
+  float w2 = sin(s * 5.2 + uTime * 1.45 - h.u * 39.0);
+  return 0.5 + 0.32 * w1 + 0.18 * w2;
 }
-// A cold sea green at the foot, teal above that, then a deep violet going to plum: an uneasy light, not a show.
-vec3 curtainColour(float s, float I) {
-  vec3 c = mix(vec3(0.05, 0.66, 0.58), vec3(0.04, 0.38, 0.6), smoothstep(0.18, 0.5, s));
-  c = mix(c, vec3(0.38, 0.16, 0.74), smoothstep(0.45, 0.8, s));
-  c = mix(c, vec3(0.55, 0.14, 0.48), smoothstep(0.8, 1.1, s));
-  return mix(c, vec3(0.34, 0.9, 0.72), (1.0 - smoothstep(0.0, 0.16, s)) * smoothstep(0.3, 0.85, I));
+// How strongly the curtain burns at height s: richest emerald at its foot, then a shimmering violet corona above
+// its brightest reaches. The light climbs the rays in pulses.
+float burn(Hang h, float s) {
+  float shimmer = coronaWave(h, s);
+  float crown = (0.36 + 0.18 * h.surge) * smoothstep(0.36, 0.74, s) * smoothstep(0.32, 0.82, h.I) * (0.72 + 0.56 * shimmer);
+  float pulse = 0.8 + 0.28 * sin(s * 7.0 - uTime * 1.7 + h.u * 55.0);
+  return h.I * (exp(-s * 2.25) * pulse + crown) * h.edge;
+}
+// Deep emerald-jade at the foot, electric cyan-teal through the waist, then royal amethyst-violet and plum-magenta
+// shimmering in the upper corona.
+vec3 curtainColour(float s, float I, float shimmer) {
+  vec3 emerald = vec3(0.03, 0.74, 0.52);
+  vec3 teal = vec3(0.03, 0.44, 0.66);
+  vec3 violet = mix(vec3(0.38, 0.14, 0.82), vec3(0.54, 0.22, 0.94), shimmer);
+  vec3 corona = mix(vec3(0.60, 0.13, 0.56), vec3(0.76, 0.20, 0.68), shimmer);
+  vec3 c = mix(emerald, teal, smoothstep(0.15, 0.46, s));
+  c = mix(c, violet, smoothstep(0.40, 0.76, s));
+  c = mix(c, corona, smoothstep(0.76, 1.12, s));
+  c = mix(c, vec3(0.32, 0.95, 0.72), (1.0 - smoothstep(0.0, 0.17, s)) * smoothstep(0.28, 0.84, I));
+  return mix(c, c * vec3(1.08, 0.9, 1.18), 0.35 * uTwilight);
 }
 // Pins a stroke of the curtain to the sky by its foot: its place, the way it runs on the canvas (with the
 // leaning-together that distance gives things overhead) and its size as seen from here.
@@ -140,8 +154,9 @@ export function createSky(shared) {
           d.dir = normalize(level + vec3(0.0, (r.x - 0.5) * 0.7, 0.0));
           d.size = vec2(46.0 + 40.0 * r.y, 150.0 + 130.0 * r.z);
           vec3 c = nightSky(v);
+          c += vec3(0.009, 0.003, 0.022) * smoothstep(0.38, 0.88, v.y) * r.x * uGlow.x * uNight;
           d.c1 = jitter(c, r.yzw, 0.13);
-          d.c2 = jitter(c * 1.06 + vec3(0.0, 0.004, 0.005), r.wxy, 0.18);
+          d.c2 = jitter(c * 1.06 + vec3(0.0, 0.004, 0.006), r.wxy, 0.18);
           d.seed = aDir.w;
           d.lift = 0.0;
         }`,
@@ -164,60 +179,93 @@ export function createSky(shared) {
         void makeDab(inout Dab d) {
           vec4 r = hash4(aDir.w);
           bool moon = gl_InstanceID == 0;
-          vec3 v = moon ? uSunDir : normalize(aDir.xyz);
           float big = r.x * r.x * r.x;
+          float beacon = smoothstep(0.9, 0.995, r.x);
+          float emerge = mix(0.44, 0.18, beacon);
+          if (!moon && uNight < emerge) { d.alive = 0.0; return; }
+          vec3 v = moon ? uSunDir : normalize(aDir.xyz);
           d.pos = cameraPosition + v * 800.0;
           d.dir = vec3(0.0, 1.0, 0.0);
           d.spin = r.z * TAU;
-          d.size = moon ? vec2(30.0) : vec2(800.0 * (0.0016 + 0.0042 * big));
-          // a star wavers; the low ones are drowned in the glow
-          float waver = 0.8 + 0.2 * sin(uTime * (1.5 + 4.0 * r.y) + r.w * 60.0);
-          vec3 c = mix(vec3(0.7, 0.84, 1.0), vec3(1.0, 0.9, 0.72), step(0.8, r.w)) * (0.4 + 0.75 * big) * waver * smoothstep(0.03, 0.2, v.y);
-          d.c1 = moon ? vec3(0.9, 0.93, 0.86) : max(c, nightSky(v));
+          d.size = moon ? vec2(30.0) : vec2(800.0 * (0.0013 + 0.0038 * big + 0.0018 * beacon));
+          // Crisp scintillation: livelier low down, steadier on bright beacons, hushed inside the moon's glare.
+          float waver = 0.8 + 0.2 * sin(uTime * (1.6 + 4.4 * r.y) + r.w * 60.0) * (1.0 - 0.35 * beacon);
+          float moonGlare = 1.0 - 0.6 * pow(max(dot(v, uSunDir), 0.0), 28.0);
+          vec3 tint = mix(vec3(0.76, 0.88, 1.0), vec3(0.98, 0.99, 1.0), smoothstep(0.35, 0.85, r.x));
+          tint = mix(tint, vec3(1.0, 0.87, 0.66), step(0.82, r.w));
+          tint = mix(tint, vec3(0.68, 0.98, 0.92), step(r.w, 0.1));
+          float lum = (0.46 + 0.82 * big + 0.42 * beacon) * waver * moonGlare * smoothstep(0.02, 0.22, v.y) * smoothstep(emerge, min(0.92, emerge + 0.44), uNight);
+          vec3 c = tint * lum;
+          d.c1 = moon ? mix(vec3(1.0, 0.97, 0.86), vec3(0.93, 0.96, 0.90), uNight) : max(c, nightSky(v));
           d.c2 = d.c1;
           d.seed = aDir.w;
           d.lift = 0.0;
         }`,
       uniforms: { uImpasto: { value: 0.2 } },
-      minPx: [2.2, 2.2], maxPx: [60, 60], cells: [4, 2], depthTest: false, depthWrite: false,
+      minPx: [1.7, 1.7], maxPx: [60, 60], cells: [4, 2], depthTest: false, depthWrite: false,
     }), -8));
   }
 
   // --- the aurora ---
   // Strokes are scattered over three curtains: [how many on each]. Each has a place along its curtain, a height
-  // on it (more of them low, where it burns), a number of its own, and its curtain.
-  const scatter = (counts) => {
+  // on it (more of them low, where it burns), a number of its own, and its curtain. Additive glow strokes are
+  // proportionally interleaved across curtains so ?quality=low can trim instanceCount while keeping all three whole.
+  const scatter = (counts, interleave = false) => {
+    const groups = counts.map((n, k) => {
+      const list = [];
+      for (let i = 0; i < n; i++) { const s = rand(); list.push([rand(), s * s, rand() * 1000, k]); }
+      return list;
+    });
     const data = [];
-    counts.forEach((n, k) => { for (let i = 0; i < n; i++) { const s = rand(); data.push(rand(), s * s, rand() * 1000, k); } });
+    if (!interleave) {
+      for (const list of groups) for (const item of list) data.push(...item);
+    } else {
+      const total = groups.reduce((acc, g) => acc + g.length, 0);
+      const idx = groups.map(() => 0);
+      for (let step = 0; step < total; step++) {
+        let best = -1, bestBehind = -1;
+        for (let k = 0; k < groups.length; k++) {
+          if (idx[k] >= groups[k].length) continue;
+          const behind = (step + 1) * (groups[k].length / total) - idx[k];
+          if (behind > bestBehind) { bestBehind = behind; best = k; }
+        }
+        data.push(...groups[best][idx[best]++]);
+      }
+    }
     return new Float32Array(data);
   };
-  // First the paint: thick strokes in the curtain's deep colours, each a ray standing on the lower edge, growing
-  // as the light reaches it and sinking back as it leaves. Where the light is weak they are the sky's own colour.
+  // First the paint: thick strokes in the curtain's deep colours, from the emerald foot up into the violet corona,
+  // growing as the light reaches them and sinking back into the night wash when dawn comes.
   const paintData = scatter([5200, 0, 4200]); // the far curtain is light alone
   group.add(dabMesh(dabGeometry(paintData.length / 4, { aC: [paintData, 4] }), dabMaterial(shared, {
     head: NIGHT + CURTAIN + /* glsl */ `in vec4 aC;`,
     body: /* glsl */ `
       void makeDab(inout Dab d) {
+        if (uNight < 0.06 || uGlow.x < 0.03) { d.alive = 0.0; return; }
         vec4 r = hash4(aC.z + 7.7);
-        Hang h = hang(aC, r.x < 0.6 ? (r.w - 0.35) * 0.05 : aC.y * 0.45);
-        float tall = 0.16 + 0.2 * r.z, mid = h.s + tall * 0.5;
-        float tone = clamp(burn(h, mid) * 2.0, 0.0, 1.0);
-        d.alive = smoothstep(0.2, 0.55, tone + (r.y - 0.5) * 0.2);
+        bool high = r.x > 0.8;
+        float s0 = r.x < 0.52 ? (r.w - 0.35) * 0.05 : high ? 0.38 + aC.y * 0.5 : aC.y * 0.44;
+        Hang h = hang(aC, s0);
+        float tall = (high ? 0.22 + 0.26 * r.z : 0.16 + 0.2 * r.z), mid = h.s + tall * 0.5;
+        float shimmer = coronaWave(h, mid);
+        float tone = clamp(burn(h, mid) * (high ? 2.5 : 2.0), 0.0, 1.0);
+        d.alive = smoothstep(0.18, 0.54, tone + (r.y - 0.5) * 0.2);
         if (d.alive <= 0.0) return;
-        vec3 c = curtainColour(mid, h.I);
-        pin(d, h, normalize(vec3((r.w - 0.5) * 0.16, 1.0, 0.0)), vec2(150.0 + 130.0 * r.y, h.len * tall));
+        vec3 c = curtainColour(mid, h.I, shimmer);
+        pin(d, h, normalize(vec3((r.w - 0.5) * 0.16, 1.0, 0.0)), vec2((150.0 + 130.0 * r.y) * (high ? 1.15 : 1.0), h.len * tall));
         vec3 sky = nightSky(normalize(h.P));
-        float body = smoothstep(0.15, 0.75, tone);
-        d.c1 = mix(sky, jitter(c, r.yzx, 0.35) * (0.12 + 0.32 * tone), body);
-        d.c2 = mix(sky, mix(c, vec3(0.6, 1.0, 0.8), 0.3) * (0.16 + 0.4 * tone), body);
+        float body = smoothstep(0.14, 0.74, tone);
+        d.c1 = mix(sky, jitter(c, r.yzx, 0.32) * (0.14 + 0.36 * tone), body);
+        d.c2 = mix(sky, mix(c, vec3(0.58, 1.0, 0.82), 0.28 * (1.0 - smoothstep(0.35, 0.75, mid))) * (0.18 + 0.42 * tone), body);
         d.seed = aC.z;
       }`,
     uniforms: { uImpasto: { value: 0.9 } },
     minPx: [4, 10], maxPx: [500, 1600], cells: [0, 3], depthTest: false, depthWrite: false,
   }), -7.9));
 
-  // Behind the curtains, the veil: great dim patches of it lying level in the sky, that come and go slowly and
-  // beat as they do.
+  // Behind the curtains, the veil: great dim patches lying level in the sky, emerald low down and amethyst-violet
+  // overhead, pulsing slowly (skipped on ?quality=low).
+  let veilMesh = null;
   {
     const count = 420, dirs = new Float32Array(count * 4);
     for (let i = 0; i < count; i++) {
@@ -228,18 +276,22 @@ export function createSky(shared) {
       head: NIGHT + /* glsl */ `in vec4 aDir;`,
       body: /* glsl */ `
         void makeDab(inout Dab d) {
+          if (uNight < 0.08 || uGlow.x < 0.03) { d.alive = 0.0; return; }
           vec4 r = hash4(aDir.w);
           vec3 v = normalize(aDir.xyz);
           float az = atan(v.x, -v.z);
           float patch_ = texture(tNoise, vec2(az * 0.3 + uTime * 0.004, v.y * 0.8 - uTime * 0.003)).r;
-          float beat = 0.7 + 0.3 * sin(uTime * (0.7 + 0.6 * r.x) + r.y * TAU);
-          float power = smoothstep(0.42, 0.75, patch_) * beat * uGlow.x;
-          d.alive = smoothstep(0.0, 0.3, power);
+          float beat = 0.68 + 0.32 * sin(uTime * (0.7 + 0.65 * r.x) + r.y * TAU);
+          float power = smoothstep(0.4, 0.75, patch_) * beat * uGlow.x * smoothstep(0.08, 0.55, uNight);
+          d.alive = smoothstep(0.0, 0.28, power);
           if (d.alive <= 0.0) return;
           d.pos = cameraPosition + v * 800.0;
           d.dir = normalize(cross(vec3(0.0, 1.0, 0.0), v) + vec3(0.0, (r.z - 0.5) * 0.5, 0.0));
           d.size = vec2(110.0 + 90.0 * r.y, 300.0 + 240.0 * r.w);
-          d.c1 = jitter(mix(vec3(0.05, 0.5, 0.3), vec3(0.04, 0.36, 0.42), r.z), r.yzx, 0.3) * power * 0.085;
+          vec3 lowCol = mix(vec3(0.03, 0.54, 0.34), vec3(0.04, 0.4, 0.52), r.z);
+          vec3 highCorona = mix(vec3(0.34, 0.13, 0.72), vec3(0.52, 0.16, 0.64), r.x);
+          vec3 col = mix(lowCol, highCorona, smoothstep(0.42, 0.86, v.y));
+          d.c1 = jitter(col, r.yzx, 0.28) * power * 0.09;
           d.c2 = d.c1 * 1.3;
           d.seed = aDir.w;
           d.lift = 0.0;
@@ -250,63 +302,94 @@ export function createSky(shared) {
     veil.material.blending = THREE.AdditiveBlending;
     veil.material.alphaToCoverage = false;
     veil.name = 'veil';
+    veilMesh = veil;
     group.add(veil);
   }
 
-  // Then the light, in strokes that add up. Four kinds of stroke make it:
-  //   rays       planted on the lower edge or a little above it, running up
+  // Then the light, in strokes that add up. Five kinds of stroke make it:
+  //   rays       planted on the lower edge or a little above it, running up into violet spires
   //   glow       broad and dim, what the rays stand in
-  //   the edge   short, wide, pale touches side by side along the foot of the brightest reaches
+  //   the edge   short, wide, emerald-mint touches side by side along the foot of the brightest reaches
   //   the fringe short rose touches hanging below that edge, where it burns hardest
-  const glowData = scatter([14000, 4000, 11000]);
-  const glow = dabMesh(dabGeometry(glowData.length / 4, { aC: [glowData, 4] }), dabMaterial(shared, {
+  //   corona     shimmering royal-violet and orchid filaments dancing in the upper crown
+  const glowData = scatter([14000, 4000, 11000], true);
+  const totalGlow = glowData.length / 4;
+  const glow = dabMesh(dabGeometry(totalGlow, { aC: [glowData, 4] }), dabMaterial(shared, {
     head: NIGHT + CURTAIN + /* glsl */ `in vec4 aC; uniform float uGain;`,
     body: /* glsl */ `
       void makeDab(inout Dab d) {
+        if (uNight < 0.06 || uGlow.x < 0.03) { d.alive = 0.0; return; }
         vec4 r = hash4(aC.z);
-        float kind = r.w < 0.52 ? 0.0 : r.w < 0.78 ? 1.0 : r.w < 0.93 ? 2.0 : 3.0;
+        float kind = r.w < 0.46 ? 0.0 : r.w < 0.69 ? 1.0 : r.w < 0.83 ? 2.0 : r.w < 0.90 ? 3.0 : 4.0;
         vec4 q = hash4(aC.z * 1.7 + 3.0);
         // (the feet of the rays are not all on one line: the edge is ragged, as a brush leaves it)
-        Hang h = hang(aC, kind < 0.5 ? (r.x < 0.5 ? (q.y - 0.35) * 0.05 : aC.y * 0.8) : kind < 1.5 ? aC.y * 0.6 : (q.y - 0.5) * 0.03);
+        float s0 = kind < 0.5 ? (r.x < 0.5 ? (q.y - 0.35) * 0.05 : aC.y * 0.78)
+          : kind < 1.5 ? aC.y * 0.62
+          : kind < 3.5 ? (q.y - 0.5) * 0.03
+          : 0.52 + 0.42 * q.y;
+        Hang h = hang(aC, s0);
         vec3 run = vec3(0.0, 1.0, 0.0), c;
         vec2 size;
         float power;
         if (kind < 0.5) {
           float sp = spire(h, aC.w);
-          float tall = (0.2 + 0.3 * r.z) * (0.65 + 1.7 * sp * sp), mid = h.s + (0.2 + 0.3 * r.z) * 0.4;
+          float tall = (0.2 + 0.3 * r.z) * (0.65 + 1.75 * sp * sp), mid = h.s + tall * 0.46;
           // no two rays are loaded alike, and one in eight is a broad bold one: they are what reads as brushwork
           bool bold = q.x > 0.875;
+          float shimmer = coronaWave(h, mid);
           power = burn(h, mid) * (0.5 + 1.0 * q.z * q.z) * (bold ? 1.25 : 1.0);
-          c = curtainColour(mid, h.I);
+          c = curtainColour(mid, h.I, shimmer);
           size = vec2((95.0 + 110.0 * r.y) * (bold ? 2.3 : 1.0), h.len * tall);
         } else if (kind < 1.5) {
-          float tall = 0.22 + 0.22 * r.z, mid = h.s + tall * 0.5;
-          power = burn(h, mid) * 0.42;
-          c = curtainColour(mid, h.I);
+          float tall = 0.22 + 0.24 * r.z, mid = h.s + tall * 0.5;
+          float shimmer = coronaWave(h, mid);
+          power = burn(h, mid) * 0.44;
+          c = curtainColour(mid, h.I, shimmer);
           size = vec2(520.0 + 160.0 * r.y, h.len * tall);
         } else if (kind < 2.5) {
-          power = smoothstep(0.28, 0.8, h.I) * 0.85 * h.edge;
-          c = mix(vec3(0.34, 0.9, 0.72), vec3(0.7, 0.95, 0.9), 0.35 + 0.4 * r.x);
+          power = smoothstep(0.26, 0.78, h.I) * 0.88 * h.edge;
+          c = mix(vec3(0.24, 0.92, 0.68), vec3(0.68, 0.97, 0.88), 0.32 + 0.42 * r.x);
           size = vec2(130.0 + 130.0 * r.y, h.len * (0.05 + 0.07 * r.z));
-        } else {
-          power = smoothstep(0.45, 0.9, h.I) * (0.45 + 0.5 * h.surge) * h.edge;
-          c = mix(vec3(1.0, 0.25, 0.5), vec3(0.85, 0.2, 0.75), r.x);
+        } else if (kind < 3.5) {
+          power = smoothstep(0.44, 0.9, h.I) * (0.45 + 0.52 * h.surge) * h.edge;
+          c = mix(vec3(1.0, 0.24, 0.52), vec3(0.84, 0.18, 0.78), r.x);
           run = vec3(0.0, -1.0, 0.0);
           size = vec2(80.0 + 80.0 * r.y, h.len * (0.07 + 0.09 * r.z));
+        } else {
+          float tall = 0.18 + 0.26 * r.z, mid = h.s + tall * 0.5;
+          float shimmer = coronaWave(h, mid);
+          float flicker = 0.58 + 0.42 * sin(uTime * (2.1 + 1.5 * q.x) + h.u * 59.0 + q.w * TAU);
+          power = smoothstep(0.3, 0.82, h.I) * (0.34 + 0.32 * shimmer + 0.28 * h.surge) * flicker * h.edge;
+          c = mix(vec3(0.42, 0.15, 0.88), vec3(0.72, 0.18, 0.74), 0.5 * q.z + 0.5 * shimmer);
+          size = vec2(140.0 + 150.0 * r.y, h.len * tall);
         }
-        power = min(power, 0.75); // where strokes stand behind each other it adds up by itself
+        power = min(power, 0.78); // where strokes stand behind each other it adds up by itself
         d.alive = smoothstep(0.03, 0.14, power);
         if (d.alive <= 0.0) return;
         pin(d, h, run, size);
-        d.c1 = jitter(c, r.yzx, 0.3) * power * uGain;
+        d.c1 = jitter(c, r.yzx, 0.28) * power * uGain;
         d.c2 = d.c1 * 1.4;
         d.seed = aC.z;
       }`,
-    uniforms: { uGain: { value: 0.05 }, uImpasto: { value: 0.3 } },
+    uniforms: { uGain: { value: 0.052 }, uImpasto: { value: 0.3 } },
     minPx: [3, 8], maxPx: [500, 1600], cells: [0, 3], depthTest: false, depthWrite: false,
   }), -7.8);
   glow.material.blending = THREE.AdditiveBlending; // drawn in its turn with the sky, not sorted with glass
   glow.material.alphaToCoverage = false;
   group.add(glow);
-  return { group };
+
+  function setQuality(level) {
+    if (veilMesh) veilMesh.visible = level !== 'low';
+    if (level === 'low') {
+      glow.geometry.instanceCount = Math.round(totalGlow * 0.45);
+      glow.material.uniforms.uGain.value = 0.052 * (totalGlow / glow.geometry.instanceCount) * 0.94;
+    } else if (level === 'medium') {
+      glow.geometry.instanceCount = Math.round(totalGlow * 0.75);
+      glow.material.uniforms.uGain.value = 0.052 * (totalGlow / glow.geometry.instanceCount) * 0.97;
+    } else {
+      glow.geometry.instanceCount = totalGlow;
+      glow.material.uniforms.uGain.value = 0.052;
+    }
+  }
+  return { group, setQuality };
 }

@@ -1,0 +1,88 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 280" role="img" aria-label="Grid Dispatch — Aethelgard Security Overwatch">
+  <defs>
+    <linearGradient id="disp-bg" x1="0" y1="0" x2="0.85" y2="1">
+      <stop offset="0%" stop-color="#1c1103"/>
+      <stop offset="55%" stop-color="#120e0b"/>
+      <stop offset="100%" stop-color="#070709"/>
+    </linearGradient>
+    <radialGradient id="disp-halo" cx="0.5" cy="0.4" r="0.56">
+      <stop offset="0%" stop-color="#ffb000" stop-opacity="0.36"/>
+      <stop offset="62%" stop-color="#ff5a00" stop-opacity="0.12"/>
+      <stop offset="100%" stop-color="#ffb000" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="disp-armor" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#2e313a"/>
+      <stop offset="52%" stop-color="#181b22"/>
+      <stop offset="100%" stop-color="#090b0f"/>
+    </linearGradient>
+    <linearGradient id="disp-visor" x1="0" y1="0" x2="1" y2="0.2">
+      <stop offset="0%" stop-color="#ff7b00"/>
+      <stop offset="50%" stop-color="#ffb000"/>
+      <stop offset="80%" stop-color="#ffe47a"/>
+      <stop offset="100%" stop-color="#ff9900"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Tactical Overwatch Radar Backdrop -->
+  <rect width="240" height="280" fill="url(#disp-bg)"/>
+  <circle cx="120" cy="112" r="120" fill="url(#disp-halo)"/>
+  <g fill="none" stroke="#ffb000" stroke-opacity="0.15" stroke-width="1.2">
+    <circle cx="120" cy="112" r="68"/>
+    <circle cx="120" cy="112" r="96" stroke-dasharray="10 6"/>
+    <path d="M120 8v264M12 112h216"/>
+  </g>
+  <!-- Telemetry corner brackets -->
+  <path d="M18 22h24M18 22v24M222 22h-24M222 22v24" fill="none" stroke="#ffb000" stroke-opacity="0.65" stroke-width="1.8"/>
+
+  <!-- Twin Swept Comms Antennae / Sensor Ears -->
+  <polygon points="56,96 38,34 50,32 72,88" fill="#1d2028" stroke="#ffb000" stroke-width="1.6"/>
+  <polygon points="184,96 202,34 190,32 168,88" fill="#171920" stroke="#ffb000" stroke-width="1.6"/>
+  <circle cx="44" cy="33" r="3" fill="#ffb000"/>
+  <circle cx="196" cy="33" r="3" fill="#ffb000"/>
+
+  <!-- Heavy Directorate Command Gorget & Armored Shoulders -->
+  <path d="M10 280 L24 216 C40 198 70 188 96 184 L144 184 C170 188 200 198 216 216 L230 280 Z" fill="url(#disp-armor)" stroke="#ffb000" stroke-opacity="0.55" stroke-width="1.5"/>
+  <!-- Shoulder Armor Plates with Caution Chevrons -->
+  <polygon points="16,240 58,200 84,214 34,268" fill="#23262f" stroke="#ffb000" stroke-width="1.6"/>
+  <polygon points="224,240 182,200 156,214 206,268" fill="#1c1f27" stroke="#ffb000" stroke-width="1.6"/>
+  <path d="M36 238 L50 224 L56 230 L42 244 Z M48 248 L62 234 L68 240 L54 254 Z" fill="#ffb000"/>
+  <!-- Chest Core & Conduit Collar -->
+  <polygon points="84,186 156,186 146,280 94,280" fill="#0d0f14" stroke="#ffb000" stroke-opacity="0.5" stroke-width="1.4"/>
+  <path d="M98 168 L142 168 L148 202 L120 216 L92 202 Z" fill="#161922" stroke="#ffb000" stroke-width="1.6"/>
+  <path d="M106 180 h28 M106 188 h28 M106 196 h28" stroke="#ffb000" stroke-opacity="0.55" stroke-width="2"/>
+  <polygon points="120,226 134,242 120,258 106,242" fill="#ffb000" fill-opacity="0.24" stroke="#ffb000" stroke-width="2"/>
+  <circle cx="120" cy="242" r="5" fill="#ffe47a"/>
+
+  <!-- Angular Synth-Enforcement Helmet Shell -->
+  <path d="M66 96 L82 54 L120 44 L158 54 L174 96 L170 144 L144 176 L96 176 L70 144 Z" fill="url(#disp-armor)" stroke="#ffb000" stroke-width="2"/>
+  <!-- Helmet Crown Ridge & Amber Rim Light -->
+  <polygon points="108,44 132,44 126,88 114,88" fill="#232733" stroke="#ffb000" stroke-width="1.5"/>
+  <path d="M68 97 L83 56 L118 46" fill="none" stroke="#ffe07d" stroke-width="2.6" stroke-opacity="0.9"/>
+
+  <!-- Full-Width Glowing Amber Tactical Cyber-Visor -->
+  <g>
+    <polygon points="70,98 120,106 170,98 164,126 120,134 76,126" fill="url(#disp-visor)" stroke="#fff3b0" stroke-width="1.8"/>
+    <!-- Internal optic scanlines & central AI eye -->
+    <path d="M78 108 L162 108 M80 116 L160 116 M84 124 L156 124" stroke="#592e00" stroke-opacity="0.38" stroke-width="1.2"/>
+    <polygon points="120,108 130,117 120,126 110,117" fill="#ffffff"/>
+    <circle cx="120" cy="117" r="3.4" fill="#ff2a6d"/>
+    <!-- Specular glare slash -->
+    <polygon points="84,101 98,103 90,126 78,123" fill="#ffffff" fill-opacity="0.45"/>
+  </g>
+
+  <!-- Segmented Faceplate & Vocalizer Grille -->
+  <polygon points="84,134 120,142 156,134 142,172 98,172" fill="#13161e" stroke="#ffb000" stroke-opacity="0.7" stroke-width="1.4"/>
+  <g stroke="#ffb000" stroke-width="2.2" stroke-linecap="square">
+    <line x1="106" y1="148" x2="106" y2="162"/>
+    <line x1="113" y1="146" x2="113" y2="164"/>
+    <line x1="120" y1="145" x2="120" y2="165"/>
+    <line x1="127" y1="146" x2="127" y2="164"/>
+    <line x1="134" y1="148" x2="134" y2="162"/>
+  </g>
+  <!-- Cheek Ear Pods -->
+  <rect x="60" y="106" width="10" height="26" fill="#1d212b" stroke="#ffb000" stroke-width="1.5"/>
+  <rect x="170" y="106" width="10" height="26" fill="#1d212b" stroke="#ffb000" stroke-width="1.5"/>
+
+  <!-- Frame Corner Accent -->
+  <path d="M10 270 L10 252 M10 270 L28 270" fill="none" stroke="#ffb000" stroke-width="2"/>
+</svg>

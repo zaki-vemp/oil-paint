@@ -101,14 +101,21 @@ export function createFrame(renderer, shared, { samples = 4 } = {}) {
           float dx = weave(px + vec2(1.0, 0.0)) - w, dy = weave(px + vec2(0.0, 1.0)) - w;
           col *= 1.0 + (0.6 * dx - 0.8 * dy) * 0.022 * uCanvas + w * 0.006 * uCanvas;
         }
-        if (uInk > 0.0) {
-          // a step in distance between neighbours, relative to how far it is: silhouettes, not slopes
-          vec2 px = 1.25 / uSize;
-          float c0 = depth >= 1.0 ? 1e5 : far;
+        if (uInk > 0.0 && depth < 1.0 && far < uInkFar) {
+          // Near silhouettes get crisp manga sumi-ink; mid-ground skylines shift toward dark indigo and district haze
+          vec2 px = mix(1.32, 0.95, clamp(far / 42.0, 0.0, 1.0)) / uSize;
           float n = max(max(distAt(vUv + vec2(px.x, 0.0)), distAt(vUv - vec2(px.x, 0.0))), max(distAt(vUv + vec2(0.0, px.y)), distAt(vUv - vec2(0.0, px.y))));
-          float edge = smoothstep(0.05, 0.14, (n - c0) / max(c0, 0.5));
-          edge *= 1.0 - smoothstep(uInkFar * 0.4, uInkFar, c0);
-          col = mix(col, uInkColor, edge * uInk);
+          float relJump = (n - far) / max(far, 0.5);
+          float edge = smoothstep(0.045, 0.135, relJump);
+          float fade = 1.0 - smoothstep(uInkFar * 0.42, uInkFar, far);
+          float distMix = smoothstep(7.0, uInkFar * 0.72, far);
+          vec3 air = airColour(ray);
+          vec3 deepIndigo = mix(vec3(0.08, 0.10, 0.22), vec3(0.04, 0.06, 0.15), uNight);
+          vec3 distInk = mix(deepIndigo, air * mix(0.48, 0.72, uNight) + uFoliage * (0.06 * uNight * uAnime), 0.64);
+          vec3 inkCol = mix(uInkColor, distInk, distMix);
+          float rimBand = smoothstep(0.02, 0.055, relJump) * (1.0 - edge) * smoothstep(10.0, 34.0, far) * step(35.0, n - far);
+          col += (air * 0.12 + uFoliage * (0.06 * uNight * uAnime)) * rimBand * fade * uInk;
+          col = mix(col, inkCol, edge * fade * uInk);
         }
         if (uVignette > 0.0) {
           vec2 v = (vUv - 0.5) * vec2(uSize.x / uSize.y, 1.0);

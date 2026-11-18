@@ -1,0 +1,117 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 280" role="img" aria-label="Kael — Courier Zero-Seven">
+  <defs>
+    <linearGradient id="kael-bg" x1="0" y1="0" x2="0.9" y2="1">
+      <stop offset="0%" stop-color="#191605"/>
+      <stop offset="55%" stop-color="#0d141c"/>
+      <stop offset="100%" stop-color="#06090f"/>
+    </linearGradient>
+    <radialGradient id="kael-halo" cx="0.48" cy="0.38" r="0.56">
+      <stop offset="0%" stop-color="#fcee0a" stop-opacity="0.32"/>
+      <stop offset="62%" stop-color="#00f0ff" stop-opacity="0.1"/>
+      <stop offset="100%" stop-color="#fcee0a" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="kael-skin" x1="0.15" y1="0" x2="0.85" y2="1">
+      <stop offset="0%" stop-color="#ffe4d4"/>
+      <stop offset="60%" stop-color="#eab8a3"/>
+      <stop offset="100%" stop-color="#ad786c"/>
+    </linearGradient>
+    <linearGradient id="kael-hair" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#2b2638"/>
+      <stop offset="55%" stop-color="#161420"/>
+      <stop offset="100%" stop-color="#09080e"/>
+    </linearGradient>
+    <linearGradient id="kael-cloak" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#1e242f"/>
+      <stop offset="58%" stop-color="#10151d"/>
+      <stop offset="100%" stop-color="#070a0f"/>
+    </linearGradient>
+    <linearGradient id="kael-eye" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#5c3d00"/>
+      <stop offset="55%" stop-color="#fcee0a"/>
+      <stop offset="100%" stop-color="#fff9a6"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Courier 07 diagonal speedlines & grid backdrop -->
+  <rect width="240" height="280" fill="url(#kael-bg)"/>
+  <circle cx="118" cy="108" r="120" fill="url(#kael-halo)"/>
+  <g stroke="#fcee0a" stroke-opacity="0.12" stroke-width="1.2">
+    <path d="M-20 70 L90 -20 M-20 130 L150 -20 M90 290 L260 140 M140 290 L260 190"/>
+    <path d="M24 24 h34 M24 24 v22"/>
+  </g>
+
+  <!-- Cyber-Katana Hilt behind left shoulder -->
+  <g transform="translate(56, 62) rotate(-25)">
+    <rect x="-5" y="0" width="10" height="86" fill="#121820" stroke="#fcee0a" stroke-width="1.6"/>
+    <path d="M-5 12 L5 20 M-5 28 L5 36 M-5 44 L5 52 M-5 60 L5 68" stroke="#00f0ff" stroke-width="1.6"/>
+    <rect x="-15" y="78" width="30" height="5.5" fill="#1f2833" stroke="#fcee0a" stroke-width="1.5"/>
+    <rect x="-5.5" y="-6" width="11" height="7" fill="#fcee0a"/>
+  </g>
+
+  <!-- Spiky wind-swept hair back layer -->
+  <path d="M50 86 L38 68 L62 66 L54 44 L84 50 L98 28 L122 44 L148 26 L156 48 L184 42 L172 68 L196 76 L178 98 L186 122 L170 136 L168 184 L72 184 L66 136 L48 118 L60 98 Z" fill="url(#kael-hair)"/>
+  <path d="M40 69 L61 66 M55 45 L82 50 M98 29 L118 42" fill="none" stroke="#fcee0a" stroke-width="2.2" stroke-opacity="0.88"/>
+  <path d="M183 43 L172 67 M195 77 L179 97" fill="none" stroke="#00f0ff" stroke-width="1.8" stroke-opacity="0.65"/>
+
+  <!-- Courier Tech-Cloak & Hazard-Trimmed Jacket -->
+  <path d="M16 280 L32 222 C46 204 72 194 98 190 L142 190 C168 194 194 204 208 222 L224 280 Z" fill="url(#kael-cloak)"/>
+  <!-- Asymmetric Courier Cloak Scarf / Cowl -->
+  <path d="M52 182 C78 202 116 208 184 186 L196 232 C142 250 86 246 42 226 Z" fill="#17202b" stroke="#fcee0a" stroke-width="1.8"/>
+  <!-- "07" Hazard Stripes on Left Lapel -->
+  <path d="M52 228 L72 234 L66 250 L46 244 Z" fill="#fcee0a"/>
+  <path d="M57 229 L52 246 M65 232 L60 248" stroke="#090c10" stroke-width="2.5"/>
+  <!-- Glowing Komorebi Seed Collar Implant at Throat Base -->
+  <polygon points="120,194 133,207 120,220 107,207" fill="#081820" stroke="#00f0ff" stroke-width="1.8"/>
+  <circle cx="120" cy="207" r="5" fill="#19ffc6"/>
+  <circle cx="120" cy="207" r="2.3" fill="#fcee0a"/>
+  <path d="M96 207 h11 M133 207 h11" stroke="#00f0ff" stroke-width="1.6"/>
+
+  <!-- Neck & athletic shadow -->
+  <path d="M102 160 L138 160 L141 196 L120 206 L99 196 Z" fill="url(#kael-skin)"/>
+  <path d="M102 162 C113 176 127 176 138 162 L139 182 C126 190 114 190 101 182 Z" fill="#8c5b53" fill-opacity="0.55"/>
+
+  <!-- Determined Protagonist Face -->
+  <path d="M76 100 C76 70 96 54 120 54 C144 54 164 70 164 100 C164 130 151 154 132 168 C125 174 115 174 108 168 C89 154 76 130 76 100 Z" fill="url(#kael-skin)"/>
+  <!-- Golden Rim Light -->
+  <path d="M77 104 C78 131 90 153 108 167" fill="none" stroke="#fcee0a" stroke-width="2.5" stroke-opacity="0.92"/>
+  <!-- Courier Tech Strip on Right Cheek -->
+  <rect x="138" y="129" width="16" height="5.5" rx="1.2" transform="rotate(-10 138 129)" fill="#fcee0a" fill-opacity="0.88"/>
+  <line x1="141" y1="131.5" x2="151" y2="129.8" stroke="#0b0f14" stroke-width="1.2"/>
+
+  <!-- Fierce Amber-Gold Anime Eyes -->
+  <g>
+    <!-- Left Eye -->
+    <path d="M85 111 Q97 104 109 112 Q107 122 97 123 Q87 122 85 111 Z" fill="#fffdf5"/>
+    <ellipse cx="98" cy="115" rx="6.4" ry="6.9" fill="url(#kael-eye)"/>
+    <ellipse cx="98" cy="115" rx="2.9" ry="3.4" fill="#171104"/>
+    <circle cx="95.6" cy="112.2" r="2.1" fill="#ffffff"/>
+    <circle cx="100.8" cy="117.8" r="1" fill="#fff799"/>
+    <path d="M83 110 Q97 102 110 112 L108 109 Q97 100 85 107 Z" fill="#12101a"/>
+    <path d="M82 98 L111 104" fill="none" stroke="#181522" stroke-width="3.2" stroke-linecap="round"/>
+
+    <!-- Right Eye -->
+    <path d="M155 111 Q143 104 131 112 Q133 122 143 123 Q153 122 155 111 Z" fill="#fffdf5"/>
+    <ellipse cx="142" cy="115" rx="6.4" ry="6.9" fill="url(#kael-eye)"/>
+    <ellipse cx="142" cy="115" rx="2.9" ry="3.4" fill="#171104"/>
+    <circle cx="139.6" cy="112.2" r="2.1" fill="#ffffff"/>
+    <circle cx="144.8" cy="117.8" r="1" fill="#fff799"/>
+    <path d="M157 110 Q143 102 130 112 L132 109 Q143 100 155 107 Z" fill="#12101a"/>
+    <path d="M158 98 L129 104" fill="none" stroke="#181522" stroke-width="3.2" stroke-linecap="round"/>
+  </g>
+
+  <!-- Nose & Resolved Expression -->
+  <path d="M120 118 L117.5 133 L122.5 135" fill="none" stroke="#a67063" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M108 149 Q120 146 133 148" fill="none" stroke="#875049" stroke-width="2.2" stroke-linecap="round"/>
+  <path d="M128 148 L134 145" fill="none" stroke="#875049" stroke-width="1.8" stroke-linecap="round"/>
+
+  <!-- Temple Ghost-Link Earpiece -->
+  <polygon points="163,106 174,102 172,124 162,120" fill="#141c26" stroke="#00f0ff" stroke-width="1.5"/>
+  <circle cx="168" cy="113" r="2.8" fill="#fcee0a"/>
+
+  <!-- Dynamic Tousled Forehead Spikes -->
+  <path d="M66 98 C70 64 94 46 122 46 C150 46 170 64 174 96 C164 82 154 74 145 72 L149 98 L135 80 L124 108 L116 78 L100 106 L96 78 L78 106 L76 84 Z" fill="url(#kael-hair)"/>
+  <path d="M88 64 L106 56 L112 70 M126 56 L146 62" fill="none" stroke="#fcee0a" stroke-opacity="0.52" stroke-width="2.1" stroke-linecap="round"/>
+
+  <!-- Frame Corner Accent -->
+  <path d="M10 270 L10 252 M10 270 L28 270" fill="none" stroke="#fcee0a" stroke-width="2"/>
+</svg>

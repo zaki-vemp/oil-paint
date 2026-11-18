@@ -103,16 +103,16 @@ export const GOAL = at({ x: 11, z: -96, name: 'Amber Sanctuary' });
 // time: reach the next stile before the clock. chase: a marked runner. heat: no star on you.
 // deliver: a car still above 60% hull. convoy and boss are the crew and the last duel, already required.
 export const STORY = [
-  { id: 'late', at: 0, mission: 'time', seconds: 180, line: 'Courier Zero-Seven, live link online. Ren locked the sector gates behind our neural tags.' },
-  { id: 'waiting', at: 0, on: 'clear', line: 'They were not waiting for you. They were waiting for the parcel.' },
-  { id: 'runner', at: 1, mission: 'chase', line: 'A Syndicate runner lifted your cipher key. Intercept them and sync the Arcade Terminal.' },
-  { id: 'heights', at: 2, mission: 'chase', line: 'Jade Heights is flooding the grid. Shatter all three Corp Beacons.' },
-  { id: 'seen', at: 2, on: 'heat', line: 'Someone talked. Citizens spotted you—break sight or hit a Mission Relay.' },
-  { id: 'tail', at: 3, mission: 'heat', line: 'Lose every witness. Moonveil Stacks will not open with heat on your tail.' },
-  { id: 'whole', at: 4, mission: 'deliver', line: 'Smash the Syndicate Supply Caches in Ashen Hollow before Ren triggers the purge.' },
-  { id: 'convoy', at: 3, on: 'clear', mission: 'convoy', line: 'Carve through the Stacks Relay Rings and break the perimeter crew.' },
-  { id: 'name', at: 5, mission: 'boss', line: 'Every manifest points back to Ren. Overload the Shield Pylons and end his loop.' },
-  { id: 'end', at: 6, mission: 'boss', line: 'Sanctuary core stabilized. The city grid is yours to roam, Kael.' },
+  { id: 'late', at: 0, mission: 'time', seconds: 180, line: 'Courier Zero-Seven, ghost-link online. Aethelgard sealed the six gates under the Eternity Grid.' },
+  { id: 'waiting', at: 0, on: 'clear', line: 'They were not waiting for your blade, Kael. They were waiting for Dr. Mira’s Komorebi Seed.' },
+  { id: 'runner', at: 1, mission: 'chase', line: 'An Aethelgard Syndicate courier lifted your transit cipher. Intercept them and sync the Arcade Uplink.' },
+  { id: 'heights', at: 2, mission: 'chase', line: 'Jade Heights is drowning our link in cortical white noise. Shatter all three Aethelgard Beacons.' },
+  { id: 'seen', at: 2, on: 'heat', line: 'Sleepwalking citizens spotted the strike—break line of sight or step into a Mission Relay.' },
+  { id: 'tail', at: 3, mission: 'heat', line: 'Scrub your trace first. Moonveil Stacks will not open while Aethelgard patrols lock your tag.' },
+  { id: 'whole', at: 4, mission: 'deliver', line: 'Smash the memory-purge caches in Ashen Hollow before Ren erases Ward Four a second time.' },
+  { id: 'convoy', at: 3, on: 'clear', mission: 'convoy', line: 'Thread the Moonveil Relay Rings at full throttle and break the Stacks siege garrison.' },
+  { id: 'name', at: 5, mission: 'boss', line: 'Protocol Zero-Seven leads straight to Ren. Overload the Shield Pylons and face his true Mirror.' },
+  { id: 'end', at: 6, mission: 'boss', line: 'The Komorebi Seed has bloomed across Neo-Kyoto. Every district is awake and yours to roam, Kael.' },
 ];
 
 const GARAGE = ['car', 'bicycle', 'bike', 'sports', 'pickup'];

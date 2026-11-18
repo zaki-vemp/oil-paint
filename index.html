@@ -61,7 +61,7 @@
     </defs></svg>
     <main id="view" aria-label="Komorebi game world"></main>
     <div id="loading"><div class="loading-mark"><svg viewBox="0 0 24 24"><use href="#i-leaf"/></svg></div><h1>Komorebi</h1><p>Syncing trail data</p><span class="loading-track"><i></i></span></div>
-    <header id="game-header"><div class="wordmark"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-leaf"/></svg><div>Komorebi<small>// spirit trail</small></div></div><div class="header-actions"><button id="mute-button" type="button" aria-label="Toggle sound" aria-pressed="false"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-sound"/></svg><span>Audio</span></button><button id="pause-button" aria-label="Pause and open game menu"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-menu"/></svg><span>Menu</span><kbd>Esc</kbd></button></div><output id="net-pill" hidden></output></header>
+    <header id="game-header"><div class="wordmark"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-leaf"/></svg><div>Komorebi<small>// spirit trail</small></div></div><div class="header-actions"><button id="tour-button" type="button" aria-label="Toggle cinematic showcase tour" aria-pressed="false"><b class="tour-gem" aria-hidden="true">◈</b><span>Tour</span></button><button id="mute-button" type="button" aria-label="Toggle sound" aria-pressed="false"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-sound"/></svg><span>Audio</span></button><button id="pause-button" aria-label="Pause and open game menu"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-menu"/></svg><span>Menu</span><kbd>Esc</kbd></button></div><output id="net-pill" hidden></output></header>
     <div id="hint"><span><kbd>W A S D</kbd> Move</span><span><kbd>Space</kbd> Jump / Brake</span><span><kbd>Shift</kbd> Sprint</span><span><kbd>G</kbd> Drive</span><span>Click / <kbd>J</kbd> Fight</span></div>
     <div id="touch-controls">
       <div id="stick" role="application" aria-label="Drag to move. Push to the edge to sprint"><i></i></div>
@@ -73,6 +73,27 @@
       </div>
     </div>
     <div id="turn" role="status">Turn your phone sideways</div>
+    <section id="showcase-overlay" hidden aria-label="Cinematic showcase tour">
+      <div class="showcase-bar top">
+        <div class="showcase-brand">
+          <span class="showcase-badge">◈ Investor Showcase</span>
+          <span class="showcase-counter">01 / 06</span>
+          <span class="showcase-phase">☾ Neon Night</span>
+        </div>
+        <div class="showcase-dots" role="tablist" aria-label="Showcase camera shots"></div>
+      </div>
+      <div class="showcase-bar bottom">
+        <div class="showcase-copy">
+          <span class="showcase-kicker"></span>
+          <h2 class="showcase-title"></h2>
+          <p class="showcase-sub"></p>
+        </div>
+        <div class="showcase-controls">
+          <button type="button" class="showcase-next">Next Shot <kbd>Space</kbd></button>
+          <button type="button" class="showcase-exit">Exit Tour &amp; Play <kbd>Esc / Click</kbd></button>
+        </div>
+      </div>
+    </section>
     <dialog id="screen-choice" aria-labelledby="screen-title" aria-describedby="screen-description">
       <span class="screen-kicker">Komorebi // mobile</span>
       <h2 id="screen-title">Choose your view</h2>
@@ -88,11 +109,28 @@
       <button id="resume" class="primary">Resume run <span>→</span></button>
       <button id="fill" type="button" class="secondary">Full screen</button>
       <p id="fill-status" class="screen-status" role="status" hidden></p>
-      <div class="menu-options"><section><h3>Mode</h3><div id="mode"><button data-mode="level">Story sectors</button><button data-mode="roam">Free roam</button><button data-mode="online">Online city</button></div></section>
+      <div class="menu-options"><section id="showcase-panel"><h3>Showcase &amp; Atmosphere</h3><div class="showcase-quick"><button id="menu-tour-button" type="button">◈ Launch Investor Tour</button><button id="daynight-toggle" type="button">☀ / ☾ Shift Day / Night</button></div></section>
+      <section><h3>Mode</h3><div id="mode"><button data-mode="level">Story sectors</button><button data-mode="roam">Free roam</button><button data-mode="online">Online city</button></div></section>
       <section id="online-panel" hidden><h3>Online city</h3><label class="net-name" for="net-name">Your name</label><input id="net-name" maxlength="16" autocomplete="nickname" spellcheck="false" /><div class="net-dress"><label>Title <select id="net-title"></select></label><label>Colour <select id="net-color"></select></label></div><output id="net-status" aria-live="polite">Connecting…</output><div><button id="net-match" type="button">Quick match</button><button id="net-invite" type="button">Copy invite link</button><button id="net-private" type="button">New private room</button></div></section>
       <section><h3>Travel to</h3><div id="scenes"><button data-scene="autumn">The spirit trail</button><button data-scene="aurora">Snowbound</button></div></section>
       <section class="audio-panel"><h3>Audio</h3><div class="audio-head"><button id="audio-mute" type="button">Sound on</button></div><div class="vol-grid"><label for="vol-master">Master <output id="out-master">80%</output></label><input id="vol-master" type="range" min="0" max="100" value="80" /><label for="vol-music">Music <output id="out-music">55%</output></label><input id="vol-music" type="range" min="0" max="100" value="55" /><label for="vol-voice">Voice <output id="out-voice">85%</output></label><input id="vol-voice" type="range" min="0" max="100" value="85" /><label for="vol-sfx">Effects <output id="out-sfx">75%</output></label><input id="vol-sfx" type="range" min="0" max="100" value="75" /></div></section>
       <section class="quality-row"><label for="quality">Graphics</label><select id="quality" aria-describedby="quality-status"><option value="auto">Auto (recommended)</option><option value="high">High</option><option value="medium">Balanced</option><option value="low">Low</option></select><output id="quality-status" class="quality-status" aria-live="polite">Auto · Adjusting detail</output><p class="quality-note">Auto adjusts detail to keep play smooth.</p></section></div>
+      <section id="codex-panel" class="codex-panel" aria-labelledby="codex-toggle">
+        <button type="button" id="codex-toggle" class="codex-toggle" aria-expanded="false" aria-controls="codex-body">
+          <span class="codex-heading">Story &amp; Memory Codex (Komorebi Protocol)</span>
+          <em id="codex-echo-badge">◈ 0 / 12</em>
+        </button>
+        <div id="codex-body" class="codex-body" hidden>
+          <div class="codex-tabs" role="tablist" aria-label="Codex archives">
+            <button type="button" role="tab" data-codex-tab="acts" aria-selected="true" class="on">6-Act Story</button>
+            <button type="button" role="tab" data-codex-tab="cast" aria-selected="false">Cast Dossiers</button>
+            <button type="button" role="tab" data-codex-tab="echoes" aria-selected="false" id="codex-tab-echoes">Echoes (0/12)</button>
+          </div>
+          <div id="codex-acts" class="codex-pane" role="tabpanel"></div>
+          <div id="codex-cast" class="codex-pane" role="tabpanel" hidden></div>
+          <div id="codex-echoes" class="codex-pane" role="tabpanel" hidden></div>
+        </div>
+      </section>
       <details><summary>Controls & mission guide</summary>
         <p class="touch-help">Use the left stick to move; push to its edge to sprint. Drag the world to look. Tap Attack to strike and hold Jump for a higher leap. Follow the ◈ diamond waypoint to complete each sector's field mission, clear hostiles and face Ren. Green diamonds mark repeatable street contracts.</p>
         <div class="controls-grid"><span>Move / sprint</span><b>WASD / Shift</b><span>Jump / short hop</span><b>Hold / tap Space</b><span>Strike / heavy strike</span><b>J or click / F</b><span>Spark / dash / flare / whirl</span><b>Q / E / R / C</b><span>Plunge</span><b>Strike in the air</b><span>Vehicle in / out · handbrake</span><b>G · Space · G beside a wreck to right it</b><span>Look / zoom</span><b>Mouse / wheel</b><span>Controller</span><b>Sticks · A jump · X strike</b></div><p>Follow the on-screen ◈ Waypoint and top-left Mission Checklist in each sector: overload jammers, intercept couriers, smash beacons or drive through cyan Relay Rings, clear the street crew, then defeat Ren's Specter to open the next sector gate. Green diamonds on side avenues offer repeatable $150 street contracts. Red rings warn of an incoming blow: evade, dash just before impact for a perfect dodge, or strike to parry. A car and a bike wait past every Mission Relay.</p></details>

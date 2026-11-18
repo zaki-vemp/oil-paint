@@ -31,7 +31,8 @@ const toward = (v, by) => Math.sign(v) * Math.max(0, Math.abs(v) - by);
 
 /** A sideways impulse rocks the suspension; enough energy crosses its balance point and rolls the chassis. */
 export function rock(v, dt, stabilized = false) {
-  v.rollRate = ((v.rollRate ?? 0) - 18 * Math.sin(v.tilt) * Math.cos(v.tilt) * dt) * Math.exp(-2.3 * dt);
+  const drag = Math.cos(v.tilt) < 0 ? -10.5 : -2.3;
+  v.rollRate = ((v.rollRate ?? 0) - 18 * Math.sin(v.tilt) * Math.cos(v.tilt) * dt) * Math.exp(drag * dt);
   if (stabilized && !v.tipped && Math.abs(v.rollRate) < 5) {
     v.tilt *= Math.exp(-5 * dt);
     v.rollRate *= Math.exp(-3 * dt);
@@ -108,7 +109,7 @@ export function drive(v, s, { throttle = 0, steer = 0, hand = false } = {}, dt, 
 // Existing vehicle keys keep their handling and story unlocks; the reviewed art supplies their bodies.
 const ART = {
   car: { file: 'coupe', axle: 2.56, radius: 0.39, track: 0.87 },
-  sports: { file: 'coupe', axle: 2.56, radius: 0.39, track: 0.87 },
+  sports: { file: 'sports', axle: 2.56, radius: 0.39, track: 0.87 },
   pickup: { file: 'van', axle: 2.07, radius: 0.32, track: 0.76 },
   bike: { file: 'motorbike', axle: 1.79, radius: 0.36 },
   bicycle: { file: 'scooter', axle: 1.55, radius: 0.285 },
@@ -568,6 +569,12 @@ export function demoRide() {
   if (!(collide(car, bike) > 20 && bike.vx > car.vx && Math.abs(bike.rollRate) > 7)) throw new Error('a heavy broadside tips a bike');
   for (let i = 0; i < 600; i++) rock(bike, 1 / 120);
   if (!bike.tipped || Math.cos(bike.tilt) > -0.9) throw new Error('a hard impact settles upside down');
+  const flatBroadside = { tilt: 0, rollRate: -19.1, tipped: false };
+  for (let i = 0; i < 360; i++) {
+    if (i === 13) flatBroadside.rollRate -= 2.5;
+    rock(flatBroadside, 1 / 60);
+  }
+  if (!flatBroadside.tipped || Math.cos(flatBroadside.tilt) > -0.9) throw new Error('a flat-road broadside stays upside down');
   const gentle = { tilt: 0, rollRate: 1 };
   for (let i = 0; i < 600; i++) rock(gentle, 1 / 120);
   if (gentle.tipped || Math.abs(gentle.tilt) > 0.01) throw new Error('the suspension settles after a small bump');

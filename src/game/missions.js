@@ -1,12 +1,14 @@
-// Interactive mission system for the night city: replaces passive checkpoints with six story-driven
-// sector field operations (using the Blender street models) and eight repeatable street contract
-// kiosks across the expanded 720m city grid. Outputs live checklist steps, contextual control tips,
-// a 3D waypoint target and minimap markers every frame.
+// Interactive mission and memory-echo system for Neo-Kyoto ("Komorebi: Protocol Zero-Seven"):
+// drives six story sector field operations, twelve collectible Memory Echo Shrines persisted in
+// localStorage['oilpaint.lore.v1'], sequenced multi-character radio banter (COMMS_CHAINS), and
+// eight repeatable street contract kiosks across the 720m city grid.
 import * as THREE from 'three';
 import { loadStreetAsset, streetClone } from '../street-assets.js';
-import { SECTOR_MISSIONS, KIOSK_SPOTS, COMMS } from './story.js';
+import { SECTOR_MISSIONS, KIOSK_SPOTS, COMMS, COMMS_CHAINS, ECHO_SHARDS } from './story.js';
 import { GOAL, loadProgress } from './levels.js';
 import { AVENUES, STREETS, GRID_MIN, GRID_MAX } from '../world/grid.js';
+
+export const LORE_KEY = 'oilpaint.lore.v1';
 
 const COLOR = {
   mission: 0xff2a6d,
@@ -15,12 +17,34 @@ const COLOR = {
   kiosk: 0x42f59b,
   rival: 0xff5a4d,
   goal: 0xffb000,
+  echoCyan: 0x19ffc6,
+  echoGold: 0xffb000,
 };
+
+function loadCollectedEchoes() {
+  try {
+    if (new URLSearchParams(globalThis.location?.search ?? '').has('fresh')) return [];
+    const raw = globalThis.localStorage?.getItem(LORE_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    const ids = Array.isArray(parsed) ? parsed : Array.isArray(parsed?.unlockedIds) ? parsed.unlockedIds : [];
+    const valid = new Set(ECHO_SHARDS.map((s) => s.id));
+    return ids.filter((id) => typeof id === 'string' && valid.has(id));
+  } catch {
+    return [];
+  }
+}
+
+function saveCollectedEchoes(idSet) {
+  try {
+    globalThis.localStorage?.setItem(LORE_KEY, JSON.stringify([...idSet]));
+  } catch { /* ignore private-browsing or quota storage errors */ }
+}
 
 function makeBeam(height, color, radius = 0.22) {
   const m = new THREE.Mesh(
     new THREE.CylinderGeometry(radius * 0.65, radius, height, 8, 1, true),
-    new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.22, side: THREE.DoubleSide, depthWrite: false }),
+    new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.22, side: THREE.DoubleSide, depthWrite: false, toneMapped: false }),
   );
   m.position.y = height * 0.5;
   return m;
@@ -29,7 +53,7 @@ function makeBeam(height, color, radius = 0.22) {
 function makeGroundRing(r, color) {
   const m = new THREE.Mesh(
     new THREE.RingGeometry(r - 0.28, r, 40),
-    new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.65, side: THREE.DoubleSide, depthWrite: false }),
+    new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.65, side: THREE.DoubleSide, depthWrite: false, toneMapped: false }),
   );
   m.rotation.x = -Math.PI / 2;
   return m;
@@ -41,8 +65,9 @@ export async function createMissions({ scene, shared, player, heightAt, levels =
   const clearedSaved = progress?.cleared ?? 0;
   const doneSectors = new Set(progress?.missions ?? []);
   for (let i = 0; i < clearedSaved; i++) doneSectors.add(i);
+  const collectedEchoes = new Set(activeMode ? loadCollectedEchoes() : []);
 
-  const assetNames = ['terminal', 'beacon', 'power-core', 'supply-crate', 'barricade'];
+  const assetNames = ['terminal', 'beacon', 'power-core', 'supply-crate', 'barricade', 'echo-shrine'];
   const assets = activeMode
     ? Object.fromEntries(await Promise.all(assetNames.map(async (n) => [n, await loadStreetAsset(n)])))
     : {};
@@ -54,11 +79,19 @@ export async function createMissions({ scene, shared, player, heightAt, levels =
 
   const particles = [];
   const pGeo = new THREE.BoxGeometry(0.18, 0.18, 0.18);
-  const pMat = new THREE.MeshBasicMaterial({ color: 0xfcee0a });
+  const pMats = new Map();
+  function particleMat(colorHex) {
+    let mat = pMats.get(colorHex);
+    if (!mat) {
+      mat = new THREE.MeshBasicMaterial({ color: colorHex, toneMapped: false });
+      pMats.set(colorHex, mat);
+    }
+    return mat;
+  }
   function burst(x, y, z, colorHex = 0xfcee0a, count = 10) {
-    for (let i = 0; i < count && particles.length < 48; i++) {
-      const m = new THREE.Mesh(pGeo, pMat);
-      if (colorHex !== 0xfcee0a) m.material = new THREE.MeshBasicMaterial({ color: colorHex });
+    const mat = particleMat(colorHex);
+    for (let i = 0; i < count && particles.length < 64; i++) {
+      const m = new THREE.Mesh(pGeo, mat);
       m.position.set(x, y + 0.8, z);
       group.add(m);
       particles.push({
@@ -67,7 +100,7 @@ export async function createMissions({ scene, shared, player, heightAt, levels =
         vx: (Math.random() - 0.5) * 11,
         vy: 3 + Math.random() * 5,
         vz: (Math.random() - 0.5) * 11,
-        life: 0.45,
+        life: 0.48,
       });
     }
   }
@@ -102,6 +135,28 @@ export async function createMissions({ scene, shared, player, heightAt, levels =
     return { root, model, ring, beam, x, y, z, ...phys };
   }
 
+  function buildEchoShrine(x, z, visible) {
+    const y = heightAt(x, z);
+    const root = new THREE.Group();
+    root.position.set(x, y, z);
+    const model = streetClone(assets['echo-shrine'], shared);
+    model.traverse((o) => { if (o.isMesh) o.layers.disable(1); });
+    root.add(model);
+    const ring = makeGroundRing(2.5, COLOR.echoCyan);
+    ring.position.y = 0.05;
+    root.add(ring);
+    const goldRing = makeGroundRing(1.5, COLOR.echoGold);
+    goldRing.position.y = 0.065;
+    root.add(goldRing);
+    const beam = makeBeam(13, COLOR.echoCyan, 0.20);
+    root.add(beam);
+    const coreBeam = makeBeam(9.5, COLOR.echoGold, 0.085);
+    root.add(coreBeam);
+    root.visible = visible;
+    group.add(root);
+    return { root, model, ring, goldRing, beam, coreBeam, x, y, z };
+  }
+
   function buildRingGate(x, z, yaw, color) {
     const y = heightAt(x, z);
     const root = new THREE.Group();
@@ -109,7 +164,7 @@ export async function createMissions({ scene, shared, player, heightAt, levels =
     root.rotation.y = yaw;
     const torus = new THREE.Mesh(
       new THREE.TorusGeometry(3.4, 0.22, 8, 32),
-      new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.9, depthWrite: false }),
+      new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.9, depthWrite: false, toneMapped: false }),
     );
     torus.position.y = 2.6;
     root.add(torus);
@@ -156,11 +211,13 @@ export async function createMissions({ scene, shared, player, heightAt, levels =
           const vis = buildProp(asset, pt.x, pt.z, COLOR.mission, 2.2, 16, true);
           if (spec.type === 'cache') {
             const bar = streetClone(assets.barricade, shared);
+            bar.traverse((o) => { if (o.isMesh) o.layers.disable(1); });
             bar.position.set(1.2, 0, 0.8);
             bar.rotation.y = 0.5;
             vis.root.add(bar);
           } else if (spec.type === 'shield') {
             const top = streetClone(assets.beacon, shared);
+            top.traverse((o) => { if (o.isMesh) o.layers.disable(1); });
             top.position.set(0, 1.35, 0);
             top.scale.setScalar(0.65);
             vis.root.add(top);
@@ -175,6 +232,17 @@ export async function createMissions({ scene, shared, player, heightAt, levels =
     }
   }
 
+  // --- Build 12 Collectible Memory Echo Shrines --------------------------------------------------
+  const echoShrines = [];
+  if (activeMode) {
+    for (let i = 0; i < ECHO_SHARDS.length; i++) {
+      const shard = ECHO_SHARDS[i];
+      const collected = collectedEchoes.has(shard.id);
+      const vis = buildEchoShrine(shard.x, shard.z, !collected);
+      echoShrines.push({ ...shard, ...vis, collected, phaseOffset: i * 0.85 });
+    }
+  }
+
   // --- Build 8 Repeatable Street Contract Kiosks ------------------------------------------------
   const kiosks = [];
   if (activeMode) {
@@ -184,19 +252,45 @@ export async function createMissions({ scene, shared, player, heightAt, levels =
     }
   }
 
-  // Active side-contract state (one repeatable contract at a time)
+  // Active side-contract state and non-blocking multi-line radio comms queue
   let contract = null;
   let hunt = null;
-  let lastTip = '';
-  let lastOp = '';
   let syncSoundT = 0;
-  let toldFirstField = new Set();
+  const toldFirstField = new Set();
+  const commQueue = [];
+
+  function echoesSnapshot() {
+    const unlockedIds = ECHO_SHARDS.filter((s) => collectedEchoes.has(s.id)).map((s) => s.id);
+    return {
+      collected: unlockedIds.length,
+      total: ECHO_SHARDS.length,
+      unlockedIds,
+    };
+  }
+
+  function emitLine(speaker, line) {
+    if (!line) return;
+    audio?.speak(line, speaker);
+    hunt?.hud?.comms?.(speaker, line);
+  }
 
   function speak(commKey) {
     const entry = COMMS[commKey];
     if (!entry) return;
-    audio?.speak(entry.line, entry.speaker);
-    hunt?.hud?.comms?.(entry.speaker, entry.line);
+    commQueue.length = 0;
+    emitLine(entry.speaker, entry.line);
+    const chain = COMMS_CHAINS[commKey];
+    if (Array.isArray(chain)) {
+      for (const step of chain) {
+        if (step?.line) {
+          commQueue.push({
+            speaker: step.speaker,
+            line: step.line,
+            timer: Number.isFinite(step.delay) && step.delay > 0 ? step.delay : 4.8,
+          });
+        }
+      }
+    }
   }
 
   function bind(h) {
@@ -394,6 +488,15 @@ export async function createMissions({ scene, shared, player, heightAt, levels =
     const pz = player.feet.z;
     const timeNow = performance.now() * 0.001;
 
+    // Sequenced multi-character radio banter queue (COMMS_CHAINS)
+    if (commQueue.length > 0) {
+      commQueue[0].timer -= dt;
+      if (commQueue[0].timer <= 0) {
+        const nextLine = commQueue.shift();
+        emitLine(nextLine.speaker, nextLine.line);
+      }
+    }
+
     // Particle debris updates
     for (let i = particles.length - 1; i >= 0; i--) {
       const p = particles[i];
@@ -407,6 +510,38 @@ export async function createMissions({ scene, shared, player, heightAt, levels =
       if (p.life <= 0) {
         group.remove(p.m);
         particles.splice(i, 1);
+      }
+    }
+
+    // Collectible Memory Echo Shrines (12 across the 6 sectors)
+    for (const s of echoShrines) {
+      if (s.collected) {
+        s.root.visible = false;
+        continue;
+      }
+      const dist = Math.hypot(px - s.x, pz - s.z);
+      s.root.visible = dist < 115;
+      if (s.root.visible) {
+        s.model.visible = dist < 75;
+        const pulse = Math.sin(timeNow * 3.8 + s.phaseOffset);
+        s.ring.visible = dist < 90;
+        s.goldRing.visible = dist < 90;
+        s.ring.scale.setScalar(1 + pulse * 0.07);
+        s.goldRing.scale.setScalar(1 - pulse * 0.06);
+        s.beam.material.opacity = 0.17 + 0.06 * pulse;
+      }
+      if (dist < 3.2) {
+        s.collected = true;
+        s.root.visible = false;
+        collectedEchoes.add(s.id);
+        saveCollectedEchoes(collectedEchoes);
+        burst(s.x, s.y + 0.35, s.z, COLOR.echoCyan, 10);
+        burst(s.x, s.y + 0.65, s.z, COLOR.echoGold, 8);
+        audio?.play('echoCollect');
+        hunt?.reward?.(75, 'Memory Echo recovered · ' + s.title);
+        hunt?.heal?.(20);
+        commQueue.length = 0;
+        emitLine(s.speaker, s.quote);
       }
     }
 
@@ -560,14 +695,20 @@ export async function createMissions({ scene, shared, player, heightAt, levels =
       }
     }
 
-    // Build live guidance state for HUD (checklist, contextual tip, 3D waypoint, minimap markers)
+    // Build live guidance state for HUD (checklist, contextual tip, 3D waypoint, minimap markers, echoes)
     return buildState({ seg: currentSeg, cleared, won, enemies, driven, heat, boss, px, pz });
   }
 
   function buildState({ seg, cleared, won, enemies, driven, heat, boss, px, pz }) {
+    const echoes = echoesSnapshot();
     const markers = [];
     for (const k of kiosks) {
       if (k.cool <= 0 && !contract) markers.push({ x: k.x, z: k.z, kind: 'kiosk', color: '#42f59b' });
+    }
+    for (const s of echoShrines) {
+      if (!s.collected && Math.hypot(s.x - px, s.z - pz) < 70) {
+        markers.push({ x: s.x, z: s.z, kind: 'echo', color: '#19ffc6' });
+      }
     }
 
     if (contract) {
@@ -584,6 +725,7 @@ export async function createMissions({ scene, shared, player, heightAt, levels =
         tip: 'Follow the green diamond · Complete before timer expires for +$150',
         waypoint: next ? { x: next.x, y: next.y ?? heightAt(next.x, next.z), z: next.z, label: next.label + syncPct, color: '#42f59b' } : null,
         markers,
+        echoes,
       };
     }
 
@@ -592,27 +734,33 @@ export async function createMissions({ scene, shared, player, heightAt, levels =
         .filter((k) => k.cool <= 0)
         .sort((a, b) => Math.hypot(a.x - px, a.z - pz) - Math.hypot(b.x - px, b.z - pz))[0];
       return {
-        opTitle: won ? 'City Grid Unlocked' : 'Free Roam // All Systems',
+        opTitle: won ? 'Protocol Zero-Seven // Complete' : 'Free Roam // All Systems',
         steps: [
-          { text: 'Explore 196 blocks & ride any vehicle (G)', done: true, active: false },
-          { text: nearKiosk ? `Visit ${nearKiosk.name} for +$150` : 'Kiosks recharging...', done: false, active: true },
+          {
+            text: activeMode ? `Memory Echoes (${echoes.collected}/${echoes.total}) · Explore 196 blocks` : 'Explore & ride any vehicle (G)',
+            done: !activeMode || echoes.collected >= echoes.total,
+            active: activeMode && echoes.collected < echoes.total,
+          },
+          { text: nearKiosk ? `Visit ${nearKiosk.name} for +$150` : 'Kiosks recharging...', done: false, active: !activeMode || echoes.collected >= echoes.total },
         ],
-        tip: driven ? 'W/S drive · A/D steer · Space drift · G step out' : 'Press G near any bike or car · Green diamonds mark $150 contracts',
+        tip: driven ? 'W/S drive · A/D steer · Space drift · G step out' : 'Press G near any bike or car · Cyan/gold shrines hold Memory Echoes',
         waypoint: nearKiosk ? { x: nearKiosk.x, y: nearKiosk.y, z: nearKiosk.z, label: 'Contract Kiosk', color: '#42f59b' } : null,
         markers,
+        echoes,
       };
     }
 
     if (cleared >= sectorOps.length) {
       return {
-        opTitle: 'Final Protocol // Sanctuary',
+        opTitle: 'Final Protocol // Amber Sanctuary',
         steps: [
-          { text: 'All 6 sectors cleared', done: true, active: false },
-          { text: 'Enter Amber Sanctuary Terminal', done: false, active: true },
+          { text: 'All 6 sectors liberated', done: true, active: false },
+          { text: 'Deploy Seed at Amber Sanctuary Terminal', done: false, active: true },
         ],
-        tip: 'Step into the golden Amber Sanctuary ring ahead to finish the story',
+        tip: 'Step into the golden Amber Sanctuary ring ahead to bloom the Komorebi Seed',
         waypoint: { x: GOAL.x, y: heightAt(GOAL.x, GOAL.z), z: GOAL.z, label: 'Amber Sanctuary', color: '#ffb000' },
         markers: [...markers, { x: GOAL.x, z: GOAL.z, kind: 'goal', color: '#ffb000' }],
+        echoes,
       };
     }
 
@@ -668,7 +816,7 @@ export async function createMissions({ scene, shared, player, heightAt, levels =
       { text: rival ? `Defeat ${rival.name.split(',')[0]}` : 'Specter defeated', done: !rival, active: fieldDone && crewDone && !!rival },
     ];
 
-    return { opTitle: op.opTitle, steps, tip, waypoint, markers };
+    return { opTitle: op.opTitle, steps, tip, waypoint, markers, echoes };
   }
 
   return {
@@ -683,5 +831,7 @@ export async function createMissions({ scene, shared, player, heightAt, levels =
     get activeContract() { return contract; },
     get kiosks() { return kiosks; },
     get sectorOps() { return sectorOps; },
+    get echoes() { return echoesSnapshot(); },
+    get echoShrines() { return echoShrines; },
   };
 }

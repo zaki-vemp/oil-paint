@@ -2,8 +2,12 @@
 // traveling or changing game modes reloads the world so its saves and mechanics stay consistent.
 import { SCENE, showScene } from './scenes.js';
 import { qualityMode } from './quality.js';
-import { getAudio } from './game/audio.js';
+import { getAudio, SPEAKERS } from './game/audio.js';
+import { STORY_ACTS, CHARACTER_DOSSIERS, ECHO_SHARDS } from './game/story.js';
+import { CHAPTERS } from './game/chapters.js';
+import { loadProgress } from './game/levels.js';
 
+const LORE_KEY = 'oilpaint.lore.v1';
 const q = new URLSearchParams(location.search);
 const root = document.documentElement;
 root.dataset.scene = SCENE;
@@ -13,12 +17,14 @@ if (clean) root.dataset.clean = '';
 const audio = getAudio({ scene: SCENE, silent: q.has('capture') });
 const menu = document.getElementById('menu');
 const screenChoice = document.getElementById('screen-choice');
+let refreshMenuEnhancements = () => {};
 function pause(on) {
   if (screenChoice.open) return;
   window.__paused = on;
   window.lab?.input.reset();
   if (on) {
     document.exitPointerLock?.();
+    refreshMenuEnhancements();
     if (!menu.open) menu.showModal();
   } else if (menu.open) menu.close();
 }
@@ -143,6 +149,11 @@ if (coarse && !clean) {
 menu.addEventListener('cancel', e => { e.preventDefault(); pause(false); });
 addEventListener('keydown', e => {
   if (clean || !window.lab?.ready || e.repeat) return;
+  if (e.code === 'Escape' && window.lab?.showcase?.active && !menu.open) {
+    e.preventDefault();
+    window.lab.showcase.stop();
+    return;
+  }
   if (e.code === 'Escape' || ['KeyP', 'KeyH'].includes(e.code) && document.activeElement?.tagName !== 'INPUT') {
     e.preventDefault();
     pause(!window.__paused);
@@ -151,7 +162,7 @@ addEventListener('keydown', e => {
 let locked = false;
 document.addEventListener('pointerlockchange', () => {
   const now = !!document.pointerLockElement;
-  if (locked && !now && !clean) pause(true);
+  if (locked && !now && !clean && !window.lab?.showcase?.active) pause(true);
   locked = now;
 });
 document.addEventListener('visibilitychange', () => { if (document.hidden && window.lab?.ready && !clean) pause(true); });
@@ -176,6 +187,216 @@ if (SCENE !== 'autumn') {
   document.querySelector('#mode [data-mode="roam"]').hidden = true;
   document.querySelector('#mode [data-mode="level"]').textContent = 'Solo';
   document.querySelector('#mode [data-mode="online"]').textContent = 'Online';
+  const dnBtn = document.getElementById('daynight-toggle');
+  if (dnBtn) dnBtn.hidden = true;
+}
+
+// --- Investor Showcase Trigger, Day/Night Shift & Interactive Lore Codex ---
+{
+  const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  const pad2 = (n) => String(n).padStart(2, '0');
+  const tourBtn = document.getElementById('tour-button');
+  const menuTourBtn = document.getElementById('menu-tour-button');
+  const dayNightBtn = document.getElementById('daynight-toggle');
+  const codexToggle = document.getElementById('codex-toggle');
+  const codexBody = document.getElementById('codex-body');
+  const codexBadge = document.getElementById('codex-echo-badge');
+  const codexTabEchoes = document.getElementById('codex-tab-echoes');
+  const actsPane = document.getElementById('codex-acts');
+  const castPane = document.getElementById('codex-cast');
+  const echoesPane = document.getElementById('codex-echoes');
+
+  function handleTourClick(e) {
+    e?.stopPropagation?.();
+    audio.unlock();
+    audio.play('uiClick');
+    if (SCENE !== 'autumn') {
+      const next = new URLSearchParams(location.search);
+      next.set('scene', 'autumn');
+      next.set('tour', '1');
+      location.search = next.toString();
+      return;
+    }
+    if (window.lab?.showcase) {
+      if (menu.open) pause(false);
+      window.lab.showcase.toggle();
+    }
+    e?.currentTarget?.blur?.();
+  }
+  tourBtn?.addEventListener('click', handleTourClick);
+  menuTourBtn?.addEventListener('click', handleTourClick);
+
+  function syncDayNightBtn() {
+    if (!dayNightBtn || dayNightBtn.hidden) return;
+    const phase = window.lab?.dayNight?.phase ?? (q.get('phase') === 'night' ? 'night' : 'day');
+    dayNightBtn.textContent = phase === 'night' ? '☀ Shift to Daylight (Night)' : '☾ Shift to Midnight (Day)';
+    dayNightBtn.setAttribute('aria-label', 'Shift day and night cycle');
+  }
+  dayNightBtn?.addEventListener('click', () => {
+    audio.unlock();
+    audio.play('uiClick');
+    const dn = window.lab?.dayNight;
+    if (!dn) return;
+    const nextPhase = dn.phase === 'night' ? 'day' : 'night';
+    dn.setPhase(nextPhase, window.lab?.shared?.uTime?.value ?? 0);
+    window.lab?.syncDayNight?.(10);
+    syncDayNightBtn();
+  });
+
+  function readUnlockedEchoIds() {
+    if (window.lab?.missions?.echoes?.unlockedIds) {
+      return new Set(window.lab.missions.echoes.unlockedIds);
+    }
+    try {
+      if (q.has('fresh')) return new Set();
+      const raw = localStorage.getItem(LORE_KEY);
+      if (!raw) return new Set();
+      const parsed = JSON.parse(raw);
+      const list = Array.isArray(parsed) ? parsed : Array.isArray(parsed?.unlockedIds) ? parsed.unlockedIds : [];
+      const valid = new Set(ECHO_SHARDS.map((s) => s.id));
+      return new Set(list.filter((id) => typeof id === 'string' && valid.has(id)));
+    } catch {
+      return new Set();
+    }
+  }
+
+  if (castPane) {
+    castPane.innerHTML = CHARACTER_DOSSIERS.map((c) => `
+      <article class="codex-card dossier-card" style="--card-accent:${esc(c.color)}">
+        <div class="dossier-portrait"><img src="/characters/${esc(c.id)}.svg" alt="${esc(c.name)}" loading="lazy" /></div>
+        <div>
+          <div class="codex-card-head">
+            <span class="codex-kicker">${esc(c.affiliation)}</span>
+          </div>
+          <h4>${esc(c.name)}</h4>
+          <p class="dossier-role">${esc(c.role)}</p>
+          <p class="codex-quote">${esc(c.quote)}</p>
+          <p class="codex-copy">${esc(c.bio)}</p>
+        </div>
+      </article>`).join('');
+    castPane.querySelectorAll('.dossier-portrait img').forEach((img) => {
+      img.addEventListener('error', () => {
+        if (!img.src.endsWith('/characters/portrait.png')) img.src = '/characters/portrait.png';
+      });
+    });
+  }
+
+  function renderCodexDynamic() {
+    const unlocked = readUnlockedEchoIds();
+    const total = ECHO_SHARDS.length;
+    if (codexBadge) codexBadge.textContent = `◈ ${unlocked.size} / ${total}`;
+    if (codexTabEchoes) codexTabEchoes.textContent = `Echoes (${unlocked.size}/${total})`;
+
+    if (actsPane) {
+      const roamMode = Boolean(window.lab?.hunt?.roam) || ['roam', 'online'].includes(q.get('mode'));
+      const cleared = window.lab?.hunt?.seg ?? loadProgress()?.cleared ?? 0;
+      actsPane.innerHTML = STORY_ACTS.map((act) => {
+        const accent = CHAPTERS[act.seg]?.color ?? '#00f0ff';
+        const state = roamMode ? 'done' : act.seg < cleared ? 'done' : act.seg === cleared ? 'active' : '';
+        const stateLabel = roamMode ? 'Open District' : act.seg < cleared ? 'Liberated' : act.seg === cleared ? 'Active Op' : 'Quarantined';
+        return `
+          <article class="codex-card" style="--card-accent:${esc(accent)}">
+            <div class="codex-card-head">
+              <span class="codex-kicker">Sector ${pad2(act.act)} // ${esc(act.district)}</span>
+              <span class="codex-status ${state}">${stateLabel}</span>
+            </div>
+            <h4>${esc(act.title)}</h4>
+            <p class="codex-quote">${esc(act.epigraph)}</p>
+            <p class="codex-copy">${esc(act.synopsis)}</p>
+            <p class="codex-theme">◈ ${esc(act.memoryTheme)}</p>
+          </article>`;
+      }).join('');
+    }
+
+    if (echoesPane) {
+      const pips = ECHO_SHARDS.map((s) => `<i class="${unlocked.has(s.id) ? 'on' : ''}"></i>`).join('');
+      const cards = ECHO_SHARDS.map((s, idx) => {
+        const district = CHAPTERS[s.seg]?.name ?? `Sector ${s.seg + 1}`;
+        const sp = SPEAKERS[s.speaker] ?? SPEAKERS.sora;
+        const open = unlocked.has(s.id);
+        if (!open) {
+          return `
+            <article class="codex-card locked">
+              <div class="codex-card-head">
+                <span class="codex-kicker">Echo ${pad2(idx + 1)} // ${esc(district)}</span>
+                <span class="codex-status">Encrypted</span>
+              </div>
+              <h4>Unrecovered Memory Shard</h4>
+              <p class="codex-copy">Approach the cyan-and-gold Echo Shrine in ${esc(district)} to decrypt this Komorebi archive fragment.</p>
+            </article>`;
+        }
+        return `
+          <article class="codex-card" style="--card-accent:${esc(sp.color)}">
+            <div class="codex-card-head">
+              <span class="codex-kicker">Echo ${pad2(idx + 1)} // ${esc(district)}</span>
+              <span class="codex-status done">Recovered</span>
+            </div>
+            <h4>${esc(s.title)}</h4>
+            <p class="codex-quote">“${esc(s.quote)}”</p>
+            <p class="codex-copy">${esc(s.lore)}</p>
+            <div class="echo-speaker-row">
+              <span class="echo-speaker-chip"><img src="/characters/${esc(s.speaker)}.svg" alt="" />${esc(sp.name)}</span>
+              <button type="button" class="echo-voice-btn" data-echo-id="${esc(s.id)}">▶ Play Voice</button>
+            </div>
+          </article>`;
+      }).join('');
+      echoesPane.innerHTML = `
+        <div class="echo-summary">
+          <div class="echo-summary-row"><span>Recovered Memory Echoes</span><strong>${unlocked.size} / ${total}</strong></div>
+          <div class="echo-meter" aria-hidden="true">${pips}</div>
+        </div>
+        ${cards}`;
+      echoesPane.querySelectorAll('.echo-speaker-chip img').forEach((img) => {
+        img.addEventListener('error', () => {
+          if (!img.src.endsWith('/characters/portrait.png')) img.src = '/characters/portrait.png';
+        });
+      });
+    }
+  }
+
+  echoesPane?.addEventListener('click', (e) => {
+    const btn = e.target.closest('.echo-voice-btn');
+    if (!btn) return;
+    const shard = ECHO_SHARDS.find((s) => s.id === btn.dataset.echoId);
+    if (!shard) return;
+    audio.unlock();
+    audio.speak(shard.quote, shard.speaker);
+  });
+
+  codexToggle?.addEventListener('click', () => {
+    if (!codexBody) return;
+    audio.play('uiClick');
+    const nextOpen = codexBody.hidden;
+    codexBody.hidden = !nextOpen;
+    codexToggle.setAttribute('aria-expanded', String(nextOpen));
+    if (nextOpen) renderCodexDynamic();
+  });
+
+  const tabBtns = [...document.querySelectorAll('[data-codex-tab]')];
+  const panes = { acts: actsPane, cast: castPane, echoes: echoesPane };
+  for (const btn of tabBtns) {
+    btn.addEventListener('click', () => {
+      audio.play('uiClick');
+      const target = btn.dataset.codexTab;
+      for (const b of tabBtns) {
+        const on = b === btn;
+        b.classList.toggle('on', on);
+        b.setAttribute('aria-selected', String(on));
+      }
+      for (const [key, pane] of Object.entries(panes)) {
+        if (pane) pane.hidden = key !== target;
+      }
+    });
+  }
+
+  refreshMenuEnhancements = () => {
+    syncDayNightBtn();
+    if (menuTourBtn && window.lab?.showcase) {
+      menuTourBtn.textContent = window.lab.showcase.active ? '◈ Stop Investor Tour' : '◈ Launch Investor Tour';
+    }
+    renderCodexDynamic();
+  };
+  refreshMenuEnhancements();
 }
 // Online: no room in the address is a quick match with strangers; an invite is the page's link with its room named,
 // and a private room is a fresh random name only a link reaches.

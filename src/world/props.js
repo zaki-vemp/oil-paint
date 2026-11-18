@@ -1,5 +1,5 @@
-// The reviewed terminals, supplies, cores, beacons and barriers make small service areas beside
-// the shrines. Each area batches identical models and keeps its colliders off roads and fights.
+// The reviewed terminals, supplies, cores, beacons, barriers and night-market ramen stalls make small
+// service plazas beside the shrines. Each area batches identical models and keeps its colliders off roads and fights.
 // Distant areas are hidden as a whole; their geometry and the world-pinned paint never change.
 import * as THREE from 'three';
 import { loadStreetAsset, streetMaterials } from '../street-assets.js';
@@ -10,6 +10,7 @@ import { ROAD, wayDist } from './land.js';
 const SHAPES = {
   terminal: [0.66, 1.17, 0.53], 'supply-crate': [0.85, 0.57, 0.55],
   'power-core': [0.51, 0.92, 0.50], beacon: [0.75, 1.5, 0.7], barricade: [1.22, 0.68, 0.44],
+  'noodle-stall': [1.4, 1.35, 0.95],
 };
 export async function createStreetProps({ shared, heightAt, solids }) {
   const names = Object.keys(SHAPES);
@@ -29,7 +30,7 @@ export async function createStreetProps({ shared, heightAt, solids }) {
   for (const [index, level] of LEVELS.entries()) {
     const cp = level.checkpoint, area = new THREE.Group(), bins = Object.fromEntries(names.map(n => [n, []]));
     const entries = [['terminal', 8.5, -3], ['beacon', -8.5, -3], ['power-core', -8.5, 0],
-      ['supply-crate', 9, 1], ['supply-crate', 11, 1], ['barricade', -10, 3]];
+      ['supply-crate', 9, 1], ['supply-crate', 11, 1], ['barricade', -10, 3], ['noodle-stall', 11.5, -5.5]];
     for (const [name, dx, dz] of entries) {
       const shape = SHAPES[name], radius = Math.max(shape[0], shape[2]);
       let point;

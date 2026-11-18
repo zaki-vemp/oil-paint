@@ -93,6 +93,8 @@ export function createShared() {
     uZonePath: { value: [0, 1, 2, 3].map(() => new THREE.Vector3(0.2, 0.22, 0.26)) },
     uSkyHigh: { value: new THREE.Color(0.31, 0.67, 0.82) },
     uFocus: { value: new THREE.Vector3() }, // where the wanderer stands
+    uNight: { value: 0 }, // 0 full day .. 1 full night
+    uTwilight: { value: 0 }, // 0..1 peak at dawn/dusk
   };
 }
 
@@ -138,13 +140,18 @@ uniform vec3 uZoneLeaf[4];
 uniform vec3 uZonePath[4];
 uniform vec3 uSkyHigh;
 uniform vec3 uFocus;
+uniform float uNight;
+uniform float uTwilight;
 
 vec3 zonePick(vec2 xz, vec3 a, vec3 b, vec3 c, vec3 d) {
-  if (xz.y > uZoneSplit.x) return a;
-  if (xz.y > uZoneSplit.y) return b;
-  if (xz.x > uZoneSplit.z) return c;
-  return d;
+  vec3 south = mix(d, c, smoothstep(-6.0, 6.0, xz.x - uZoneSplit.z));
+  vec3 mid = mix(south, b, smoothstep(-6.0, 6.0, xz.y - uZoneSplit.y));
+  return mix(mid, a, smoothstep(-6.0, 6.0, xz.y - uZoneSplit.x));
 }
+vec3 zoneGrassAt(vec2 xz) { return zonePick(xz, uZoneGrass[0], uZoneGrass[1], uZoneGrass[2], uZoneGrass[3]); }
+vec3 zoneFoliageAt(vec2 xz) { return zonePick(xz, uZoneFoliage[0], uZoneFoliage[1], uZoneFoliage[2], uZoneFoliage[3]); }
+vec3 zoneLeafAt(vec2 xz) { return zonePick(xz, uZoneLeaf[0], uZoneLeaf[1], uZoneLeaf[2], uZoneLeaf[3]); }
+vec3 zonePathAt(vec2 xz) { return zonePick(xz, uZonePath[0], uZonePath[1], uZonePath[2], uZonePath[3]); }
 float gridAxis(float p) {
   return abs(mod(p - uGrid.x + uGrid.y * 0.5, uGrid.y) - uGrid.y * 0.5);
 }
@@ -229,6 +236,7 @@ vec3 jitter(vec3 c, vec3 r, float amount) {
 vec3 airColour(vec3 v) {
   float sunward = max(dot(v, uSunDir), 0.0);
   vec3 air = mix(uHaze, uHazeSun, sunward * sunward);
+  air += vec3(0.28, 0.12, 0.05) * (uTwilight * uAnime * pow(sunward, 3.0));
   return air + uHazeGlow * pow(sunward, 12.0);
 }
 

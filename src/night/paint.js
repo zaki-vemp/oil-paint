@@ -39,7 +39,11 @@ vec3 snowPaint(float x, float r, float a, float kind) {
   float crust = smoothstep(0.52, 0.66, kind), ice = smoothstep(0.8, 0.9, kind);
   L = mix(L, L * vec3(0.84, 0.9, 0.9), crust); M = mix(M, M * vec3(0.9, 0.96, 0.92), crust);
   L = mix(L, vec3(0.18, 0.4, 0.55), ice); M = mix(M, vec3(0.04, 0.17, 0.3), ice);
-  return paint3(L, M, S, x, r);
+  vec3 nightCol = paint3(L, M, S, x, r);
+  vec3 dayL = mix(vec3(0.92, 0.95, 0.98), vec3(0.76, 0.88, 0.96), ice);
+  vec3 dayM = mix(vec3(0.68, 0.77, 0.89), vec3(0.54, 0.71, 0.88), ice);
+  vec3 dayS = vec3(0.42, 0.54, 0.74);
+  return mix(paint3(dayL, dayM, dayS, x, r), nightCol, uNight);
 }
 // Rock: nearly black, blue in the shade, a grey green where the moon finds it; kind moves it between a cold
 // slate and a warmer, browner stone.
@@ -47,7 +51,9 @@ vec3 rockPaint(float x, float r, float kind) {
   vec3 L = mix(vec3(0.12, 0.2, 0.28), vec3(0.16, 0.17, 0.27), smoothstep(0.45, 0.7, kind));
   vec3 M = mix(vec3(0.04, 0.07, 0.12), vec3(0.06, 0.06, 0.115), smoothstep(0.45, 0.7, kind));
   vec3 S = vec3(0.012, 0.024, 0.055);
-  return paint3(L, M, S, x, r);
+  vec3 nightCol = paint3(L, M, S, x, r);
+  vec3 dayCol = paint3(vec3(0.46, 0.49, 0.55), vec3(0.28, 0.32, 0.39), vec3(0.15, 0.19, 0.27), x, r);
+  return mix(dayCol, nightCol, uNight);
 }
 
 // Paint in the lantern's light is a warm colour of its own, not the night's colour with orange added (that only
@@ -73,7 +79,12 @@ vec3 nightSky(vec3 v) {
   c += vec3(0.015, 0.11, 0.08) * north * north * exp(-pow((v.y - 0.24) / 0.3, 2.0)) * uGlow.x;
   float moon = max(dot(v, uSunDir), 0.0);
   c += vec3(0.1, 0.14, 0.18) * pow(moon, 30.0) + vec3(0.25, 0.3, 0.32) * pow(moon, 600.0);
-  return mix(airColour(v), c, smoothstep(0.0, 0.06, v.y));
+  vec3 nightCol = mix(airColour(v), c, smoothstep(0.0, 0.06, v.y));
+  vec3 dayCol = mix(vec3(0.74, 0.86, 0.96), vec3(0.26, 0.56, 0.86), up);
+  dayCol += vec3(1.0, 0.94, 0.76) * pow(moon, 18.0) * 0.25 + vec3(1.0, 0.98, 0.9) * smoothstep(0.9975, 0.999, moon);
+  dayCol += vec3(1.0, 0.52, 0.26) * uTwilight * pow(moon, 3.0) * (1.0 - smoothstep(0.0, 0.45, v.y)) * 0.5;
+  dayCol = mix(airColour(v), dayCol, smoothstep(0.0, 0.06, v.y));
+  return mix(dayCol, nightCol, uNight);
 }
 // Where the aurora is, roughly, for things that only catch its glow (water).
 vec3 auroraSoft(vec3 v) {

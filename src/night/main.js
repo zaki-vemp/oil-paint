@@ -1,5 +1,5 @@
-// The same wanderer on a ridge of snow at night, under the aurora, with a lantern. Painted with the same painter
-// as the wood (src/oilpaint), using flat cel marks. It is the optional Snowbound side story (src/scenes.js).
+// Memory 00 // Ridge Above Old Kyoto: Kael on the snowy mountain ridge and training cabin where he and Ren grew up
+// before the Silent Autumn, painted with the same painter as the city (src/oilpaint) under the aurora (src/scenes.js).
 //   ?capture       no clock: window.lab.step(dt, n) advances it (for stills and films)
 //   ?quality=low   for slower machines: fewer pixels, no veil behind the aurora, less snow in the air
 //   ?canvas=0 ?impasto=0..2 ?ink=0..1    parts of the finish, for comparing
@@ -21,6 +21,7 @@ import { Follow } from '../figure/camera.js';
 import { createHunt } from '../game/hunt.js';
 import { createNet } from '../game/net.js';
 import { getAudio } from '../game/audio.js';
+import { createDayNight } from '../game/daynight.js';
 import { prepareLand, createLand, heightAt, crestX, START, MOON, EXTENT, CABIN } from './land.js';
 import { createSnow } from './snow.js';
 import { createSky } from './sky.js';
@@ -143,7 +144,11 @@ lap('physics');
 const figure = await figureComing;
 const { man } = figure;
 // the drawn traveler's day colours dimmed and cooled for the night, so the aurora rim is what picks him out
-for (const m of figure.avatar?.materials.values() ?? []) m.uniforms.uTint.value.multiply(new THREE.Color(0.6, 0.66, 0.84));
+const avatarTints = [];
+for (const m of figure.avatar?.materials.values() ?? []) {
+  avatarTints.push({ mat: m, base: m.uniforms.uTint.value.clone(), night: m.uniforms.uTint.value.clone().multiply(new THREE.Color(0.6, 0.66, 0.84)) });
+  m.uniforms.uTint.value.copy(avatarTints[avatarTints.length - 1].night);
+}
 scene.add(man.object, figure.cloakMesh, figure.dabs);
 const animator = new Animator(man);
 const spawn = new THREE.Vector3(START.x, heightAt(START.x, START.z), START.z);
@@ -161,6 +166,11 @@ tracks.lay(crestX, START.z + 16, START.z + 0.4);
 lap('figure');
 
 const frame = createFrame(renderer, shared);
+addEventListener('pagehide', () => {
+  renderer.setAnimationLoop(null);
+  frame.target.dispose();
+  renderer.dispose();
+});
 fitFrame = () => frame.resize();
 frame.uniforms.uCanvas.value = 0;
 frame.uniforms.uShafts.value = 0; // no sun stands in this air
@@ -173,8 +183,7 @@ if (q.has('ink')) frame.uniforms.uInk.value = +q.get('ink'); // ?ink=0 to compar
 graphics = createGraphics({ renderer, capture, apply(profile) {
   frame.setSamples(profile.samples);
   frame.resize();
-  const veil = sky.group.getObjectByName('veil');
-  if (veil) veil.visible = profile.level !== 'low';
+  sky.setQuality(profile.level);
   drift.geometry.instanceCount = profile.drift;
 } });
 
@@ -182,9 +191,50 @@ const wind = { x: WIND.x, z: WIND.y };
 let time = 0;
 let hunt = null;
 let net = null;
+let hudChapter = null, hudTitle = null, hudObjective = null;
+const memoryQueue = [];
 const audio = getAudio({ scene: 'aurora', silent: capture });
+function emitMemory(speaker, line) {
+  if (!hunt || !line) return;
+  audio.speak(line, speaker);
+  hunt.hud?.comms?.(speaker, line);
+}
+const ridgeMarks = [
+  {
+    x: crestX(212), z: 212, name: 'First Pine Cairn',
+    speaker: 'ren',
+    line: 'Father stacked these first stones at the timberline so we could find home in any whiteout. Keep your lantern steady, Kael.',
+  },
+  {
+    x: crestX(150), z: 150, name: 'Hana’s Overlook',
+    speaker: 'mira',
+    line: 'Hana’s Overlook... Look north under the corona—one warm window at the foot of the horn, where her cello waited for you both.',
+  },
+  {
+    x: crestX(22), z: 22, name: 'Old Training Ridge',
+    speaker: 'ren',
+    line: 'Two steps in the drift, one clean parry on the ice. Every trial my Specters set in Neo-Kyoto began on this ridge, little brother.',
+  },
+  {
+    x: CABIN.x, z: CABIN.z + 7, name: 'The Brothers’ Cabin', goal: true,
+    speaker: 'kael',
+    line: 'The fire is still burning inside... Before the Silent Autumn, we were whole here. Rest easy, Ren—I’m carrying this warmth back to Kyoto.',
+  },
+];
 let stepDist = 0;
 const online = q.get('mode') === 'online' && !capture;
+const dayNight = createDayNight({
+  startPhase: 'night',
+  online,
+  q,
+  onShift(phase) {
+    hunt?.hud?.toast(phase === 'day' ? 'Arctic dawn breaks over Old Kyoto Ridge — 10 min until night' : 'Polar night falls — the corona awakens');
+    hunt?.hud?.flashText(phase === 'day' ? 'Arctic Dawn' : 'Polar Night');
+  },
+});
+const dn0 = dayNight.update(0);
+shared.uNight.value = dn0.night;
+shared.uTwilight.value = dn0.twilight;
 function air(x, y, z, out) {
   const along = x * wind.x + z * wind.z, across = -x * wind.z + z * wind.x;
   const gust = THREE.MathUtils.clamp(0.5 + 0.8 * noise((along - time * 4) / 40, across / 90) + 0.3 * noise((along - time * 6.5) / 11, across / 17), 0, 1);
@@ -272,7 +322,32 @@ function tick(dt, draw = true) {
   animator.placeFeet(dt, (x, z, from) => player.ground(x, z, from, 1.4), root.y, onGround ? 1 : 0);
   man.object.updateMatrixWorld(true);
   holdLantern();
+  dayNight.update(time);
   hunt?.update(dt, inp, realDt);
+  if (hunt) {
+    if (hudChapter) hudChapter.textContent = hunt.won ? 'Memory 00 // Complete' : 'Memory 00 // Prologue';
+    if (hudTitle) hudTitle.textContent = 'Ridge Above Old Kyoto';
+    if (hudObjective && !online) {
+      const nextMark = ridgeMarks.find((m) => !m.used);
+      hudObjective.textContent = hunt.won
+        ? 'Step inside the Brothers’ Cabin and rest by the hearth.'
+        : nextMark ? `Reach ${nextMark.name}.` : 'Follow the ridge cairns north.';
+    }
+    for (const m of ridgeMarks) {
+      if (m.used && !m.spoken) {
+        m.spoken = true;
+        memoryQueue.length = 0;
+        emitMemory(m.speaker, m.line);
+      }
+    }
+    if (memoryQueue.length > 0 && !window.__paused) {
+      memoryQueue[0].timer -= realDt;
+      if (memoryQueue[0].timer <= 0) {
+        const next = memoryQueue.shift();
+        emitMemory(next.speaker, next.line);
+      }
+    }
+  }
   net?.update(realDt, { player, driving: false });
   if (player.grounded && player.speed > 1.2) {
     stepDist += player.speed * dt;
@@ -320,21 +395,41 @@ function tick(dt, draw = true) {
   if (draw) renderScene();
 }
 
+const DAY_HAZE = new THREE.Color(0.62, 0.78, 0.90), NIGHT_HAZE = new THREE.Color(0.018, 0.04, 0.07);
+const DAY_HAZE_SUN = new THREE.Color(0.95, 0.92, 0.82), NIGHT_HAZE_SUN = new THREE.Color(0.04, 0.08, 0.12);
+const DAY_HAZE_GLOW = new THREE.Color(0.12, 0.10, 0.04), NIGHT_HAZE_GLOW = new THREE.Color(0.03, 0.045, 0.06);
+const DAY_RIM = new THREE.Color(0.28, 0.34, 0.38), NIGHT_RIM = new THREE.Color(0.22, 0.55, 0.62);
+const DAY_BOUNCE = new THREE.Color(0.10, 0.14, 0.18), NIGHT_BOUNCE = new THREE.Color(0.015, 0.06, 0.07);
+const DAY_GLAZE = new THREE.Color(0.55, 0.62, 0.78), NIGHT_GLAZE = new THREE.Color(0.3, 0.38, 0.62);
 function renderScene() {
   camera.updateMatrixWorld(true);
   renderer.getDrawingBufferSize(size);
+  const dn = dayNight.update(time);
+  const n = dn.night;
+  shared.uNight.value = n;
+  shared.uTwilight.value = dn.twilight;
   shared.uTime.value = time;
   shared.uPixel.value = (2 * Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2)) / size.y;
   shared.uFocus.value.copy(player.feet);
+  // Interpolate between Polar Night (n = 1) and crisp Arctic Day (n = 0).
+  shared.uHaze.value.copy(DAY_HAZE).lerp(NIGHT_HAZE, n);
+  shared.uHazeSun.value.copy(DAY_HAZE_SUN).lerp(NIGHT_HAZE_SUN, n);
+  shared.uHazeGlow.value.copy(DAY_HAZE_GLOW).lerp(NIGHT_HAZE_GLOW, n);
+  shared.uRim.value.copy(DAY_RIM).lerp(NIGHT_RIM, n);
+  shared.uBounce.value.copy(DAY_BOUNCE).lerp(NIGHT_BOUNCE, n);
+  shared.uGlazeMul.value.copy(DAY_GLAZE).lerp(NIGHT_GLAZE, n);
+  shared.uLamp.value.w *= 0.15 + 0.85 * n;
+  frame.uniforms.uVignette.value = 0.15 + 0.47 * n;
+  for (const t of avatarTints) t.mat.uniforms.uTint.value.copy(t.base).lerp(t.night, n);
   // the aurora breathes: brighter and dimmer over a minute or so, and the snow under it with it
-  shared.uGlow.value.x = 0.58 + 0.16 * Math.sin(time * 0.11) + 0.08 * Math.sin(time * 0.37 + 1.0) + 0.05 * Math.sin(time * 1.1 + 2.0);
+  shared.uGlow.value.x = (0.62 + 0.17 * Math.sin(time * 0.11) + 0.09 * Math.sin(time * 0.37 + 1.0) + 0.05 * Math.sin(time * 1.1 + 2.0)) * n;
   snow.follow(camera.position.x, camera.position.z);
   shade.update(scene, player.feet);
   frame.render(scene, camera);
 }
 
 window.lab = {
-  THREE, player, follow, camera, input, animator, figure, shared, frame, renderer, graphics, timings, counts: { ...snow.counts, ...pines.counts, ...cabin.counts }, cabin, heightAt, crestX, tracks, sky, audio,
+  THREE, player, follow, camera, input, animator, figure, shared, frame, renderer, graphics, timings, counts: { ...snow.counts, ...pines.counts, ...cabin.counts }, cabin, heightAt, crestX, tracks, sky, audio, dayNight,
   step(dt = 1 / 60, n = 1, draw = true) { for (let i = 0; i < n; i++) tick(dt, draw && i === n - 1); },
   setInput(fn) { input.override = fn; },
   /** Puts him at (x, z) on the ground, facing (fx, fz), with the eye behind him. */
@@ -362,16 +457,19 @@ if (!capture) {
     moveSpawn: (x, z) => spawn.set(x, heightAt(x, z), z),
     down: () => place(spawn.x, spawn.z, Math.PI),
     route: Array.from({ length: 99 }, (_, i) => { const z = START.z + 20 - i * 4; return [crestX(z), z]; }),
-    marks: [
-      { x: crestX(150), z: 150, name: 'The knoll' },
-      { x: CABIN.x, z: CABIN.z + 7, name: 'The cabin', goal: true },
-    ],
+    marks: ridgeMarks,
     spots: [275, 230, 190, 100, 45, 0, -28].map((z, i) => ({
       kind: kinds[i], x: crestX(z) + (i % 2 ? 2 : -2), z,
     })),
   });
   window.lab.hunt = hunt;
   net?.attach(hunt);
+  const hudRoot = hunt.hud?.element;
+  hudChapter = hudRoot?.querySelector('.chapter-label') ?? null;
+  hudTitle = hudRoot?.querySelector('.quest h2') ?? null;
+  hudObjective = hudRoot?.querySelector('.objective') ?? null;
+  const hudMapLabel = hudRoot?.querySelector('.map-label');
+  if (hudMapLabel) hudMapLabel.textContent = 'Scan · Old Kyoto Ridge';
 }
 
 say(0.68, 'Mixing paint');
@@ -428,6 +526,22 @@ if (!capture) {
   const hint = document.getElementById('hint');
   hint.textContent = 'WASD move · Space jump · J/F strike · Q spark · V first person · Esc menu';
   setTimeout(() => hint.classList.add('faded'), 9000);
+  const banner = hunt?.hud?.element?.querySelector('.chapter-banner');
+  if (banner) {
+    banner.querySelector('span').textContent = 'Memory 00 // Ridge Above Old Kyoto';
+    banner.querySelector('strong').textContent = 'Snowbound';
+    banner.querySelector('p').textContent = 'Where Kael and Ren grew up before the Silent Autumn';
+    banner.hidden = false;
+    banner.classList.add('visible');
+  }
+  if (!q.has('clean')) {
+    emitMemory('mira', 'Memory Zero-Zero — the ridge above Old Kyoto. Before the Silent Autumn, you and Ren learned every cut in this snow while Hana held the lantern.');
+    memoryQueue.push({
+      speaker: 'ren',
+      line: 'Follow our father’s cairns north to the cabin, Kael. Show me your blade still remembers the winter wind.',
+      timer: 8.2,
+    });
+  }
 }
 fitView();
 loaded = true;

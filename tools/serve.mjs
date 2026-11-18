@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 const here = resolve(fileURLToPath(import.meta.url), '..', '..');
 const root = resolve(here, process.argv[2] ?? 'dist');
 const port = Number(process.argv[3] ?? 5405);
-const types = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.mjs': 'text/javascript', '.css': 'text/css', '.json': 'application/json', '.jpg': 'image/jpeg', '.png': 'image/png', '.ogg': 'audio/ogg', '.m4a': 'audio/mp4', '.wasm': 'application/wasm', '.glb': 'model/gltf-binary', '.mp4': 'video/mp4' };
+const types = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.mjs': 'text/javascript', '.css': 'text/css', '.json': 'application/json', '.svg': 'image/svg+xml', '.jpg': 'image/jpeg', '.png': 'image/png', '.ogg': 'audio/ogg', '.m4a': 'audio/mp4', '.wasm': 'application/wasm', '.glb': 'model/gltf-binary', '.mp4': 'video/mp4' };
 
 createServer((req, res) => {
   const path = decodeURIComponent(new URL(req.url, 'http://x').pathname);

@@ -10,7 +10,7 @@ import recipe from '../recipe.json';
 import RAPIER from './figure/rapier/rapier.mjs';
 import { createShared, WIND, EXTENT } from './oilpaint/common.js';
 import { createBrushSheet } from './oilpaint/brush.js';
-import { prepareLand, createLand, heightAt, wayDist, noise, way, START } from './world/land.js';
+import { prepareLand, createLand, heightAt, wayDist, forestAt, mountainHeight, noise, way, START } from './world/land.js';
 import { createAnimeWorld } from './world/anime.js';
 import { createStreetProps } from './world/props.js';
 import { createGraphics } from './quality.js';
@@ -28,11 +28,23 @@ import { createNet } from './game/net.js';
 import { getAudio } from './game/audio.js';
 import { chapterAt } from './game/chapters.js';
 import { LEVELS, loadProgress } from './game/levels.js';
+import { createDayNight } from './game/daynight.js';
+import { createShowcase } from './game/showcase.js';
 
 const q = new URLSearchParams(location.search);
 const capture = q.has('capture');
 window.__mode = ['roam', 'online'].includes(q.get('mode')) ? q.get('mode') : 'level';
 const online = window.__mode === 'online' && !capture;
+let hunt = null;
+const dayNight = createDayNight({
+  startPhase: 'day',
+  online,
+  q,
+  onShift(phase) {
+    hunt?.hud?.toast(phase === 'night' ? 'Night falls — 10 min until dawn' : 'Dawn breaks — 10 min until nightfall');
+    hunt?.hud?.flashText(phase === 'night' ? 'Nightfall' : 'Daybreak');
+  },
+});
 
 // Patch's page talks to the demo through this. There are no controls yet; it carries loading, ready and hiding.
 let shown = true;
@@ -91,6 +103,11 @@ lap('land');
 say(0.1, 'Raising the city');
 await turn();
 const forest = createAnimeWorld(shared);
+const dn0 = dayNight.update(0);
+shared.uNight.value = dn0.night;
+shared.uTwilight.value = dn0.twilight;
+forest.update(10, START.z, 0, true);
+let lastNight = dn0.night;
 const street = await createStreetProps({ shared, heightAt, solids: forest.colliders });
 forest.group.add(street.group);
 forest.shade.add(street.shade);
@@ -131,6 +148,11 @@ physics.step();
 lap('figure');
 
 const frame = createFrame(renderer, shared);
+addEventListener('pagehide', () => {
+  renderer.setAnimationLoop(null);
+  frame.target.dispose();
+  renderer.dispose();
+});
 fitFrame = () => frame.resize();
 frame.uniforms.uCanvas.value = 0;
 // light ink round near silhouettes (figures, crews, towers); the haze takes it beyond ~90 m
@@ -149,7 +171,6 @@ graphics = createGraphics({ renderer, capture, apply(profile) {
 // the wind as the cloak feels it: the same bands the leaves move in
 const wind = { x: WIND.x, z: WIND.y };
 let time = 0;
-let hunt = null;
 function air(x, y, z, out) {
   const along = x * wind.x + z * wind.z, across = -x * wind.z + z * wind.x;
   const gust = THREE.MathUtils.clamp(0.5 + 0.8 * noise((along - time * 4) / 40, across / 90) + 0.3 * noise((along - time * 6.5) / 11, across / 17), 0, 1);
@@ -160,6 +181,7 @@ function air(x, y, z, out) {
 let rides = null;
 let net = null;
 let missions = null;
+let showcase = null;
 const audio = getAudio({ scene: 'autumn', silent: capture });
 let stepDist = 0;
 /** After he has been put somewhere by hand: the animation starts from standing, not from where it was. */
@@ -172,6 +194,16 @@ function respawn() {
   player.teleport(spawn.x, spawn.y, spawn.z);
   settle();
 }
+function syncDayNight(dt = 0) {
+  const dn = dayNight.update(time);
+  shared.uNight.value = dn.night;
+  shared.uTwilight.value = dn.twilight;
+  frame.uniforms.uVignette.value = 0.08 + 0.22 * dn.night;
+  const blendDt = Math.abs(dn.night - lastNight) > 0.25 ? 10 : dt;
+  lastNight = dn.night;
+  const focusZ = showcase?.active && follow.free ? follow.free.target.z : player.feet.z;
+  forest.update(blendDt, focusZ, hunt?.seg, Boolean(hunt?.roam || showcase?.active));
+}
 
 const size = new THREE.Vector2();
 const LIMIT = EXTENT - 16;
@@ -182,7 +214,13 @@ function tick(dt, draw = true) {
   time += dt;
   // Online the street goes on under the menu (the host runs it for everyone): he just stands still.
   if (window.__paused || hunt?.downed) input.reset(); // down online, he waits for a hand
-  const inp = input.read(realDt);
+  const rawInp = input.read(realDt);
+  if (showcase?.active && Math.hypot(rawInp.move.x, rawInp.move.y) > 0.15) {
+    showcase.stop();
+  }
+  const inp = showcase?.active
+    ? { ...rawInp, move: { x: 0, y: 0 }, look: { x: 0, y: 0 }, zoom: 0, jump: false, jumpHeld: false, sprint: false, attack: false, heavy: false, power: false, dash: false, flare: false, whirl: false, ride: false }
+    : rawInp;
   // At the wheel his legs are left alone: the vehicle carries him and his hands are busy.
   const driving = rides?.update(dt, inp, follow) ?? false;
   if (!driving) player.update(dt, inp, follow.yaw);
@@ -204,17 +242,19 @@ function tick(dt, draw = true) {
   }
   hunt?.update(dt, driving ? { ...inp, attack: false, heavy: false, power: false, dash: false, flare: false, whirl: false } : inp, realDt);
   net?.update(realDt, { player, driving });
-  const activeBoss = hunt?.enemies?.some((e) => e.duel && !e.dead && e.ready && e.phase !== 'waiting' && Math.hypot(e.x - player.feet.x, e.z - player.feet.z) < 22);
+  showcase?.update(realDt);
+  const focusZ = showcase?.active && follow.free ? follow.free.target.z : player.feet.z;
+  const activeBoss = !showcase?.active && hunt?.enemies?.some((e) => e.duel && !e.dead && e.ready && e.phase !== 'waiting' && Math.hypot(e.x - player.feet.x, e.z - player.feet.z) < 22);
   audio.update(realDt, {
-    chapter: chapterAt(player.feet.z, hunt?.seg, hunt?.roam),
-    combat: hunt?.combat ?? 0,
+    chapter: chapterAt(focusZ, hunt?.seg, Boolean(hunt?.roam || showcase?.active)),
+    combat: showcase?.active ? 0 : (hunt?.combat ?? 0),
     boss: !!activeBoss,
-    driving,
-    speed: rides?.driven ? Math.hypot(rides.driven.vx, rides.driven.vz) : 0,
+    driving: !showcase?.active && driving,
+    speed: !showcase?.active && rides?.driven ? Math.hypot(rides.driven.vx, rides.driven.vz) : 0,
     paused: !!window.__paused,
   });
   man.object.visible = !driving;
-  forest.update(dt, player.feet.z, hunt?.seg, hunt?.roam);
+  syncDayNight(dt);
   const root = player.visualRoot(dt);
   man.object.position.copy(root);
   man.object.rotation.set(0, player.yaw, 0);
@@ -235,25 +275,27 @@ function tick(dt, draw = true) {
   man.object.updateMatrixWorld(true);
   figure.updateCloak(dt, air, heightAt);
 
-  follow.shake = hunt?.cameraKick ?? 0;
+  follow.shake = showcase?.active ? 0 : (hunt?.cameraKick ?? 0);
   // at the wheel the eye must not be pushed in by the very car it follows
   follow.update(realDt, root, inp.look, inp.zoom, (o, d, max) => player.castRay(o, d, max, undefined, driving), heightAt);
   if (draw) renderScene();
 }
 
 function renderScene() {
+  const focus = showcase?.active && follow.free ? follow.free.target : player.feet;
   camera.updateMatrixWorld(true);
-  street.update(player.feet);
+  street.update(focus);
+  showcase?.revealWorld();
   renderer.getDrawingBufferSize(size);
   shared.uTime.value = time;
   shared.uPixel.value = (2 * Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2)) / size.y;
-  shared.uFocus.value.copy(player.feet);
-  shade.update(scene, player.feet);
+  shared.uFocus.value.copy(focus);
+  shade.update(scene, focus);
   frame.render(scene, camera);
 }
 
 window.lab = {
-  THREE, player, follow, camera, input, animator, figure, shared, frame, renderer, graphics, street, timings, counts: forest.counts, heightAt, respawn, way, scene, audio,
+  THREE, player, follow, camera, input, animator, figure, shared, frame, renderer, graphics, street, timings, counts: forest.counts, heightAt, forestAt, mountainHeight, dayNight, syncDayNight, respawn, way, scene, audio,
   step(dt = 1 / 60, n = 1, draw = true) { for (let i = 0; i < n; i++) tick(dt, draw && i === n - 1); },
   setInput(fn) { input.override = fn; },
   /** Puts him at (x, z) on the ground, facing (fx, fz), with the eye behind him. */
@@ -294,6 +336,8 @@ if (!capture) {
   window.lab.rides = rides;
   net?.attach(hunt, rides);
 }
+showcase = createShowcase({ follow, player, heightAt, dayNight, hud: hunt?.hud });
+window.lab.showcase = showcase;
 
 // --- warming up: every shader is built and drawn once, and the GPU has caught up, before anyone is let in ---
 say(0.68, 'Waking the forest');
@@ -362,6 +406,10 @@ if (!capture) {
   setTimeout(() => hint?.classList.add('faded'), 18000);
 }
 fitView();
+if (!capture && q.has('tour') && q.get('tour') !== '0' && q.get('tour') !== 'false') {
+  showcase.start(0);
+  tick(1 / 60);
+}
 loaded = true;
 run();
 document.getElementById('loading')?.remove();

@@ -1,8 +1,8 @@
 // Street crews on the path, a sword in the left hand (the right keeps the lantern at night),
 // and a spark you can throw three times. Empty, it fills again in POWER_FILL seconds.
-// The crews are Quaternius' rigged people and machines (public/enemies): punks, enforcers, gunners,
-// razor blades and a siege mech. Each keeps its own material colours, repainted through the shared
-// cel shader (a white map and a tint, so a hit can flash one body).
+// The crews and street folk are authored Blender rigs (public/street): punks, enforcers, gunners,
+// razor blades, a siege mech, and four citizen archetypes plus hooded couriers, painted through the
+// shared cel shader (with glowing Signal accents and per-body uTint so a hit flashes one body).
 // With `levels` (src/game/levels.js) the way becomes six gated levels: clearing a level's
 // crew opens its gate and grants one power (spark, dash, heavy swing, lantern flare, whirl), and
 // each level's cairn is the checkpoint you return to. With `roam` every gate stands open,
@@ -22,7 +22,7 @@ import * as SkeletonUtils from 'three/addons/utils/SkeletonUtils.js';
 import { paint } from '../figure/figure.js';
 import { createHUD } from './hud.js';
 import { ATTACKS, createCombatPose, demoCombat } from './combat.js';
-import { DUELS, MOVES, createDuel, stepDuel, duelHit, damageRival, demoDuels } from './duel.js';
+import { DUELS, MOVES, ARENA_RADIUS, createDuel, stepDuel, duelHit, damageRival, duelVisual, demoDuels } from './duel.js';
 import { createRivalAppearance } from '../figure/avatar.js';
 import { LEVELS, GOAL, KINDS, POWERS, POWER_ORDER, STORY, powersFor, unlocksFor, loadProgress, saveProgress, demoLevels } from './levels.js';
 import { loadStreetAsset, streetClone } from '../street-assets.js';
@@ -65,18 +65,16 @@ export function ramBand(force) {
 }
 // Who plays each kind: the file, the one prop kept in hand, and the clip that is its attack.
 const CAST = {
-  punk: { file: 'punk.gltf', keep: 'Knife_1', attack: 'Punch' },
-  enforcer: { file: 'enforcer.gltf', keep: 'Knife_2', attack: 'Punch' },
-  gunner: { file: 'gunner.gltf', keep: 'SMG', attack: 'Idle_Shoot' },
-  blade: { file: 'blade.glb', attack: 'Sword_Slash' },
-  brute: { file: 'mech.glb', attack: 'Attack' },
-  // paint: colours by material name, one picked per body so a crowd is not one person many times
-  civ: { file: '../street/resident.glb', alternate: '../street/mechanic.glb', attack: 'Punch', paint: {
-    Shirt: [[0.92, 0.9, 0.84], [0.3, 0.62, 0.9], [0.95, 0.72, 0.2], [0.55, 0.85, 0.6], [0.85, 0.45, 0.7]],
-    Pants: [[0.2, 0.24, 0.36], [0.32, 0.3, 0.3], [0.16, 0.2, 0.2]], Hair: [[0.16, 0.1, 0.08], [0.55, 0.36, 0.16], [0.75, 0.2, 0.5]],
-    Skin: [[0.93, 0.72, 0.56], [0.72, 0.5, 0.36], [0.5, 0.34, 0.25]], Face: [[0.1, 0.08, 0.08]], Belt: [[0.12, 0.1, 0.1]] } },
+  punk: { file: '../street/foe-punk.glb', attack: 'Punch' },
+  enforcer: { file: '../street/foe-enforcer.glb', attack: 'Punch' },
+  gunner: { file: '../street/foe-gunner.glb', attack: 'Idle_Shoot' },
+  blade: { file: '../street/foe-blade.glb', attack: 'Sword_Slash' },
+  brute: { file: '../street/foe-mech.glb', attack: 'Attack' },
+  civ: { file: '../street/resident.glb', alternates: ['../street/mechanic.glb', '../street/executive.glb', '../street/vendor.glb'], attack: 'Punch' },
   thief: { file: '../street/courier.glb', attack: 'Punch' },
 };
+const SIGNAL_PAL = [[1.15, 1.15, 1.15], [1.0, 1.0, 1.0], [0.85, 0.85, 0.85]];
+const CIV_TINTS = [[1, 1, 1], [0.92, 0.98, 1.08], [1.06, 0.95, 0.90], [0.94, 1.05, 0.96], [1.04, 0.94, 1.06]];
 const PROPS = /^(AK|GrenadeLauncher|Knife_\d|Pistol|Revolver(_Small)?|RocketLauncher|ShortCannon|Shotgun|Shovel|SMG|Sniper(_2)?)$/;
 // Neon repaints by source material name; every other material keeps its own colour.
 const NEON = { Enemy_Red: [1, 0.16, 0.5], Red: [1, 0.16, 0.5], Character_Main: [0.13, 0.32, 0.4], Pants: [0.16, 0.18, 0.26], Hazmat_Main: [0.96, 0.9, 0.12],
@@ -135,7 +133,7 @@ export async function createHunt({ scene, shared, man, animator, player, heightA
   const kinds = [...new Set([...spots.map((p) => p.kind), ...(segs && route ? ['civ', 'thief'] : []), ...(events ? ['brute'] : [])])];
   const [sourcesList, relayAsset] = await Promise.all([
     Promise.all(kinds.map(async (k) => [k, await Promise.all(
-      [CAST[k].file, CAST[k].alternate].filter(Boolean).map(file => loader.loadAsync('./enemies/' + file)))])),
+      [CAST[k].file, CAST[k].alternate, ...(CAST[k].alternates ?? [])].filter(Boolean).map(file => loader.loadAsync('./enemies/' + file)))])),
     segs ? loadStreetAsset('terminal') : Promise.resolve(null),
   ]);
   const sources = Object.fromEntries(sourcesList);
@@ -171,12 +169,16 @@ export async function createHunt({ scene, shared, man, animator, player, heightA
     const shadeMeshes = [];
     model.traverse((o) => {
       if (!o.isMesh) return;
+      const signal = o.material.name === 'Signal';
       const key = o.material.name + (o.isSkinnedMesh ? '' : '|rigid');
       if (!own.has(key)) {
         const picks = cast.paint?.[o.material.name.split('.')[0]];
         const vertexColors = !!o.geometry.getAttribute('color');
-        const tint = vertexColors ? [1, 1, 1] : o.material.map ? [1.2, 1.2, 1.2] : picks?.[variant % picks.length] ?? NEON[o.material.name] ?? o.material.color.toArray().map((v) => v ** (1 / 2.2));
-        const m = paint(shared, PAL.steel, { grain: 2.6, skinned: true, vertexColors, map: vertexColors ? null : o.material.map ?? white, tint });
+        const tint = signal ? [1.6, 1.6, 1.6]
+          : vertexColors ? (kind === 'civ' ? CIV_TINTS[variant % CIV_TINTS.length] : [1, 1, 1])
+          : o.material.map ? [1.2, 1.2, 1.2]
+          : picks?.[variant % picks.length] ?? NEON[o.material.name] ?? o.material.color.toArray().map((v) => v ** (1 / 2.2));
+        const m = paint(shared, signal ? SIGNAL_PAL : PAL.steel, { grain: 2.6, skinned: o.isSkinnedMesh, vertexColors, map: vertexColors ? null : o.material.map ?? white, tint });
         if (vertexColors) m.side = THREE.FrontSide;
         own.set(key, { m, tint: m.uniforms.uTint.value.clone() });
       }
@@ -207,7 +209,7 @@ export async function createHunt({ scene, shared, man, animator, player, heightA
       aim = new THREE.Mesh(aimGeo, new THREE.MeshBasicMaterial({ color: 0xff2a6d, transparent: true, opacity: 0.6, depthWrite: false }));
       aim.visible = false; scene.add(aim);
     }
-    return { ...s, ...KIND[s.kind], mesh, tell, aim, air: 0, vy: 0, hp: HIT.hp[s.kind], maxHp: HIT.hp[s.kind], homeX: s.x, homeZ: s.z, tx: s.x, tz: s.z, yaw: Math.random() * 6.28, wait: Math.random() * 1.5, mode: 'roam', cool: 0, windup: 0, stagger: 0, phase: Math.random() * 6, flash: 0, dead: 0, gone: false, going: 0, seg: s.seg ?? -1, respawnT: 0, kx: 0, kz: 0 };
+    return { fleeT: 0, chatT: 0, chatCool: 0, chatYaw: 0, ...s, ...KIND[s.kind], mesh, tell, aim, air: 0, vy: 0, hp: HIT.hp[s.kind], maxHp: HIT.hp[s.kind], homeX: s.x, homeZ: s.z, tx: s.x, tz: s.z, yaw: Math.random() * 6.28, wait: Math.random() * 1.5, mode: 'roam', cool: 0, windup: 0, stagger: 0, phase: Math.random() * 6, flash: 0, dead: 0, gone: false, going: 0, seg: s.seg ?? -1, respawnT: 0, kx: 0, kz: 0 };
   };
   const enemies = spots.map((p) => make(p));
   // Online events: one siege mech waits off stage until the host's page calls it into a district (summon()).
@@ -227,10 +229,11 @@ export async function createHunt({ scene, shared, man, animator, player, heightA
     // means something parked them on purpose (the headless checks do), and they stay there.
     const loot = new THREE.MeshBasicMaterial({ color: 0xff2a6d });
     const CROWD = 40;
+    let civVariant = 0;
     for (let i = 0; i < CROWD; i++) {
       const runner = i % 5 === 0, thief = runner && i % 10 !== 0;
       const spot = nextPavement(player.feet.x + ((i % 8) - 3.5) * 8, player.feet.z - 6 - Math.floor(i / 8) * 8, i % 2 ? 1 : -1, false);
-      const e = make({ kind: runner ? 'thief' : 'civ', x: spot.x, z: spot.z, leg: 0, angry: 0, thief, pool: true, dir: i % 2 ? 1 : -1, seed: i, snatch: 0 }, i);
+      const e = make({ kind: runner ? 'thief' : 'civ', x: spot.x, z: spot.z, leg: 0, angry: 0, thief, pool: true, dir: i % 2 ? 1 : -1, seed: i, snatch: 0, chatCool: (i % 7) * 1.5 }, runner ? i : civVariant++);
       e.homeX = spot.x; e.homeZ = spot.z;
       const nxt = nextPavement(spot.x, spot.z, e.dir, false);
       e.tx = nxt.x; e.tz = nxt.z; e.wait = Math.random() * 2;
@@ -239,16 +242,88 @@ export async function createHunt({ scene, shared, man, animator, player, heightA
     }
   }
   if (segs) {
+    const RING_VERT = /* glsl */ `
+      out vec2 vLocal;
+      void main() { vLocal = position.xz; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }
+    `;
+    const ARENA_IN = ARENA_RADIUS - 0.54;
+    const ARENA_FRAG = /* glsl */ `
+      uniform vec3 uColor; uniform vec3 uAccent; uniform float uSpin; uniform float uAlpha;
+      in vec2 vLocal; layout(location = 0) out vec4 outC;
+      void main() {
+        float rNorm = clamp((length(vLocal) - ${ARENA_IN.toFixed(2)}) / 0.54, 0.0, 1.0);
+        float ang = atan(vLocal.x, vLocal.y);
+        float outerRim = smoothstep(0.68, 0.90, rNorm) * smoothstep(1.0, 0.93, rNorm);
+        float orbitArc = smoothstep(-0.14, 0.22, sin(ang * 8.0 + uSpin)) * smoothstep(0.22, 0.40, rNorm) * smoothstep(0.72, 0.54, rNorm);
+        float innerTicks = smoothstep(0.38, 0.68, sin(ang * 24.0 - uSpin * 1.6)) * smoothstep(0.02, 0.14, rNorm) * smoothstep(0.28, 0.15, rNorm);
+        float wash = smoothstep(0.0, 0.5, rNorm) * smoothstep(1.0, 0.65, rNorm) * 0.22;
+        float mask = clamp(outerRim + orbitArc * 0.92 + innerTicks * 0.72 + wash, 0.0, 1.0);
+        vec3 col = mix(uColor, uAccent, clamp(outerRim * 0.68 + orbitArc * 0.38, 0.0, 1.0));
+        outC = vec4(col, mask * uAlpha);
+      }
+    `;
+    const TELL_FRAG = /* glsl */ `
+      uniform vec3 uColor; uniform vec3 uAccent; uniform float uArc; uniform float uSpin; uniform float uAlpha; uniform float uOpening;
+      in vec2 vLocal; layout(location = 0) out vec4 outC;
+      void main() {
+        float rNorm = clamp((length(vLocal) - 0.72) / 0.28, 0.0, 1.0);
+        float ang = atan(vLocal.x, vLocal.y);
+        float sector = uOpening > 0.5 ? 1.0 : (1.0 - smoothstep(uArc - 0.08, uArc + 0.06, abs(ang)));
+        float rim = smoothstep(0.66, 0.92, rNorm) * smoothstep(1.0, 0.94, rNorm);
+        float band = smoothstep(0.0, 0.28, rNorm) * (0.45 + 0.55 * rNorm);
+        float chev = uOpening > 0.5 ? (0.68 + 0.32 * sin(ang * 12.0 - uSpin * 2.2)) : 1.0;
+        float baseRing = rim * 0.34;
+        float threat = (band * 0.72 + rim * 0.95) * sector * chev;
+        vec3 col = mix(uColor, uAccent, clamp(rim * (0.35 + 0.55 * sector), 0.0, 1.0));
+        outC = vec4(col, clamp(max(baseRing, threat), 0.0, 1.0) * uAlpha);
+      }
+    `;
+    const AURA_FRAG = /* glsl */ `
+      uniform vec3 uColor; uniform vec3 uAccent; uniform float uSpin; uniform float uAlpha;
+      in vec2 vLocal; layout(location = 0) out vec4 outC;
+      void main() {
+        float rNorm = clamp((length(vLocal) - 0.78) / 0.22, 0.0, 1.0);
+        float ang = atan(vLocal.x, vLocal.y);
+        float arc = 0.45 + 0.55 * smoothstep(-0.22, 0.28, sin(ang * 6.0 - uSpin * 2.4));
+        float crest = sin(rNorm * 3.14159);
+        vec3 col = mix(uColor, uAccent, smoothstep(0.45, 0.95, crest));
+        outC = vec4(col, crest * arc * uAlpha);
+      }
+    `;
+    const duelTellGeo = new THREE.RingGeometry(0.72, 1, 64).rotateX(-Math.PI / 2);
+    const duelAuraGeo = new THREE.RingGeometry(0.78, 1, 48).rotateX(-Math.PI / 2);
     const actors = await Promise.all(segs.map(() => createRivalAppearance(man, shared)));
     actors.forEach((actor, index) => {
-      const e = { ...createDuel(index), mesh: actor.man.object, actor, scale: 1, flash: 0, stagger: 0, dead: 0, gone: false, respawnT: 0, boltR: 0.65, kx: 0, kz: 0 };
+      const e = { ...createDuel(index), mesh: actor.man.object, actor, scale: 1, flash: 0, stagger: 0, dead: 0, gone: false, respawnT: 0, boltR: 0.65, kx: 0, kz: 0, duelSpin: index * 1.1 };
       e.mesh.visible = false;
       e.combat = createCombatPose(actor.man, shared, scene, { rival: true });
-      e.tell = new THREE.Mesh(new THREE.RingGeometry(0.94, 1, 48), new THREE.MeshBasicMaterial({ color: 0xef9c77, transparent: true, opacity: 0.8, side: THREE.DoubleSide, depthWrite: false }));
-      e.tell.rotation.x = -Math.PI / 2; e.tell.visible = false;
-      e.beacon = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.28, 22, 8, 1, true), new THREE.MeshBasicMaterial({ color: 0xff2a6d, transparent: true, opacity: 0.28, side: THREE.DoubleSide, depthWrite: false }));
+      e.tell = new THREE.Mesh(duelTellGeo, new THREE.ShaderMaterial({
+        glslVersion: THREE.GLSL3, vertexShader: RING_VERT, fragmentShader: TELL_FRAG,
+        uniforms: { uColor: { value: new THREE.Color(1, 0.165, 0.427) }, uAccent: { value: new THREE.Color(1, 0.76, 0.84) }, uArc: { value: 1.5 }, uSpin: { value: 0 }, uAlpha: { value: 0 }, uOpening: { value: 0 } },
+        transparent: true, side: THREE.DoubleSide, depthWrite: false, toneMapped: false,
+      }));
+      e.tell.visible = false;
+      e.aura = new THREE.Mesh(duelAuraGeo, new THREE.ShaderMaterial({
+        glslVersion: THREE.GLSL3, vertexShader: RING_VERT, fragmentShader: AURA_FRAG,
+        uniforms: { uColor: { value: new THREE.Color(1, 0.165, 0.427) }, uAccent: { value: new THREE.Color(1, 0.76, 0.84) }, uSpin: { value: 0 }, uAlpha: { value: 0 } },
+        transparent: true, side: THREE.DoubleSide, depthWrite: false, blending: THREE.AdditiveBlending, toneMapped: false,
+      }));
+      e.aura.visible = false;
+      const arenaGeo = new THREE.RingGeometry(ARENA_IN, ARENA_RADIUS, 72).rotateX(-Math.PI / 2);
+      const ap = arenaGeo.attributes.position;
+      for (let i = 0; i < ap.count; i++) {
+        const lx = ap.getX(i), lz = ap.getZ(i);
+        ap.setY(i, heightAt(e.homeX + lx, e.homeZ + lz) + 0.05);
+      }
+      e.arena = new THREE.Mesh(arenaGeo, new THREE.ShaderMaterial({
+        glslVersion: THREE.GLSL3, vertexShader: RING_VERT, fragmentShader: ARENA_FRAG,
+        uniforms: { uColor: { value: new THREE.Color(1, 0.165, 0.427) }, uAccent: { value: new THREE.Color(1, 0.76, 0.84) }, uSpin: { value: 0 }, uAlpha: { value: 0 } },
+        transparent: true, side: THREE.DoubleSide, depthWrite: false, toneMapped: false,
+      }));
+      e.arena.position.set(e.homeX, 0, e.homeZ); e.arena.visible = false;
+      e.beacon = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.28, 22, 8, 1, true), new THREE.MeshBasicMaterial({ color: 0xff2a6d, transparent: true, opacity: 0.28, side: THREE.DoubleSide, depthWrite: false, toneMapped: false }));
       e.beacon.visible = false;
-      scene.add(e.mesh, e.tell, e.beacon); enemies.push(e);
+      scene.add(e.mesh, e.tell, e.aura, e.arena, e.beacon); enemies.push(e);
     });
   }
   function addBody(e) {
@@ -298,7 +373,7 @@ export async function createHunt({ scene, shared, man, animator, player, heightA
       wall.computeBoundingSphere(); stripe.computeBoundingSphere();
       g.add(wall, stripe);
       g.traverse((o) => { if (o.isMesh) o.layers.disable(1); });
-      const collider = player.world.createCollider(player.R.ColliderDesc.cuboid(320, 4, 0.4).setTranslation(s.gate.x, g.position.y + 3, s.gate.z));
+      const collider = player.world.createCollider(player.R.ColliderDesc.cuboid(360, 70, 0.4).setTranslation(s.gate.x, g.position.y + 66, s.gate.z));
       gates.push({ group: g, seg: i, collider });
     }
   }
@@ -437,7 +512,7 @@ export async function createHunt({ scene, shared, man, animator, player, heightA
     let n = 0;
     for (const o of enemies) {
       if (!o.civ || o.thief || o.dead || o.gone || o === e || !sees(o)) continue;
-      o.angry = WITNESS.time; o.aggro = 18; o.mode = 'chase'; o.wait = 0; n++;
+      o.angry = WITNESS.time; o.aggro = 18; o.mode = 'chase'; o.wait = 0; o.fleeT = 0; o.chatT = 0; n++;
     }
     toast(n ? `The street saw that — ${n} coming for you` : 'A citizen is dead. That one is on you.');
   }
@@ -455,7 +530,7 @@ export async function createHunt({ scene, shared, man, animator, player, heightA
     } else {
       // A nudge bruises and annoys. A harder one throws them and stops one short of killing.
       hurt(e, band === 'stumble' ? 6 : Math.min(18, Math.max(0, e.hp - 1)), 'ram');
-      if (e.hp > 0) { e.angry = Math.max(e.angry ?? 0, 10); e.aggro = 14; e.mode = 'chase'; e.wait = 0; }
+      if (e.hp > 0) { e.angry = Math.max(e.angry ?? 0, 10); e.aggro = 14; e.mode = 'chase'; e.wait = 0; e.fleeT = 0; e.chatT = 0; }
       e.stagger = Math.max(e.stagger, band === 'knock' ? 1.15 : 0.4);
     }
     if (!e.duel) {
@@ -509,6 +584,8 @@ export async function createHunt({ scene, shared, man, animator, player, heightA
   // Online, everyone who struck a body in its last seconds is paid for it: an assist is a kill.
   function fall(e) {
     e.dead = 0.001; e.tell.visible = false;
+    if (e.aura) e.aura.visible = false;
+    if (e.arena) e.arena.visible = false;
     if (!e.civ && !e.duel && performance.now() - (e.mineT ?? -1e9) < 4000) { cash += CASH.enemy; power = Math.min(POWER_MAX, power + 0.35); hud.flashText(`+${CASH.enemy}`); }
     if (e.body) player.world.removeRigidBody(e.body);
     e.body = e.collider = null;
@@ -564,7 +641,7 @@ export async function createHunt({ scene, shared, man, animator, player, heightA
     for (const e of enemies) {
       if (e.dead) continue;
       if (e.duel) { Object.assign(e, createDuel(e.seg)); continue; }
-      if (e.civ) { e.angry = 0; e.aggro = 0; e.mode = 'roam'; } // his fall settles the street's score
+      if (e.civ) { e.angry = 0; e.aggro = 0; e.mode = 'roam'; e.fleeT = 0; e.chatT = 0; } // his fall settles the street's score
       if (Math.hypot(e.x - player.feet.x, e.z - player.feet.z) < 5) {
         e.x = e.homeX; e.z = e.homeZ; e.mode = 'roam'; e.tx = e.homeX; e.tz = e.homeZ;
         e.windup = e.stagger = e.cool = e.air = e.vy = e.kx = e.kz = 0;
@@ -597,27 +674,72 @@ export async function createHunt({ scene, shared, man, animator, player, heightA
 
   function lay(e, dt) {
     if (e.duel) {
+      const vis = duelVisual(e);
+      e.duelSpin = (e.duelSpin ?? 0) + (dt > 0 ? dt * vis.spin : 0);
+      const spin = e.duelSpin + (e.phase === 'waiting' ? shared.uTime.value * 0.7 : 0);
+      const pd = Math.hypot(e.x - player.feet.x, e.z - player.feet.z);
       if (e.beacon) {
         e.beacon.visible = !e.dead && !e.gone && e.ready;
         if (e.beacon.visible) {
           e.beacon.position.set(e.x, heightAt(e.x, e.z) + 11, e.z);
-          e.beacon.material.color.setHex(e.phase === 'recovery' ? 0x00f0ff : 0xff2a6d);
+          e.beacon.material.color.setRGB(...vis.color);
+          e.beacon.material.opacity = vis.engaged ? 0.16 + 0.08 * Math.sin(spin * 2) : 0.3;
         }
       }
-      e.mesh.visible = !e.gone && (e.ready || !!e.dead) && Math.hypot(e.x - player.feet.x, e.z - player.feet.z) < SEEN;
+      e.mesh.visible = !e.gone && (e.ready || !!e.dead) && pd < SEEN;
       e.combat.trail.visible = e.mesh.visible;
-      if (!e.mesh.visible) { e.tell.visible = false; return; }
+      if (!e.mesh.visible) {
+        e.tell.visible = false;
+        if (e.aura) e.aura.visible = false;
+        if (e.arena) e.arena.visible = false;
+        return;
+      }
       e.mesh.position.set(e.x, heightAt(e.x, e.z), e.z); e.mesh.rotation.set(0, e.yaw, 0);
       if (e.body) e.body.setTranslation({ x: e.x, y: heightAt(e.x, e.z) + e.bodyLift, z: e.z }, true);
       e.actor.update(dt, e.going, !!e.dead);
       if (e.dead) e.actor.man.bones.spine_02.rotation.x += 0.3;
       e.combat.apply(dt, { u: e.dead ? -1 : e.attackU, type: MOVES[e.move].pose, hurt: e.flash * 3 });
       e.actor.avatar.update();
-      e.tell.visible = !e.dead && e.ready && e.phase !== 'waiting';
-      e.tell.position.set(e.x, heightAt(e.x, e.z) + 0.04, e.z);
-      e.tell.scale.setScalar(MOVES[e.move].reach);
-      e.tell.material.color.setHex(e.phase === 'recovery' ? 0x8de8cc : 0xef9c77);
-      e.tell.material.opacity = e.phase === 'windup' ? 0.4 + 0.5 * (1 - e.timer / MOVES[e.move].windup) : e.phase === 'recovery' ? 0.55 : 0.15;
+      const gy = heightAt(e.x, e.z);
+      if (e.arena) {
+        e.arena.visible = !e.dead && e.ready;
+        if (e.arena.visible) {
+          const au = e.arena.material.uniforms;
+          au.uColor.value.setRGB(...vis.color);
+          au.uAccent.value.setRGB(...vis.accent);
+          au.uSpin.value = spin;
+          au.uAlpha.value = vis.engaged ? (vis.mode === 'opening' ? 0.92 : 0.88) : 0.34;
+        }
+      }
+      e.tell.visible = vis.engaged;
+      if (e.tell.visible) {
+        const tu = e.tell.material.uniforms;
+        e.tell.position.set(e.x, gy + 0.045, e.z);
+        e.tell.rotation.y = e.attackYaw ?? e.yaw;
+        e.tell.scale.setScalar(vis.reach);
+        tu.uColor.value.setRGB(...vis.color);
+        tu.uAccent.value.setRGB(...vis.accent);
+        tu.uArc.value = vis.arc;
+        tu.uSpin.value = spin;
+        tu.uOpening.value = vis.mode === 'opening' ? 1 : 0;
+        tu.uAlpha.value = e.phase === 'active' ? 0.92 : e.phase === 'windup' ? 0.42 + 0.50 * vis.progress : vis.mode === 'opening' ? 0.78 : 0.24;
+      }
+      if (e.aura) {
+        e.aura.visible = vis.engaged;
+        if (e.aura.visible) {
+          const qu = e.aura.material.uniforms;
+          e.aura.position.set(e.x, gy + 0.058, e.z);
+          const auraR = e.phase === 'windup' ? 0.48 + vis.progress * (vis.reach * 0.98 - 0.48)
+            : e.phase === 'active' ? vis.reach
+            : vis.mode === 'opening' ? 1.22 + 0.14 * Math.sin(spin * 4.2)
+            : 1.06 + 0.06 * Math.sin(spin * 2.5);
+          e.aura.scale.setScalar(auraR);
+          qu.uColor.value.setRGB(...(e.flash > 0 ? [1, 1, 1] : vis.color));
+          qu.uAccent.value.setRGB(...vis.accent);
+          qu.uSpin.value = spin;
+          qu.uAlpha.value = e.phase === 'active' ? 0.88 : e.phase === 'windup' ? 0.45 + 0.42 * vis.progress : vis.mode === 'opening' ? 0.76 : 0.34;
+        }
+      }
       return;
     }
     const u = e.mesh.userData;
@@ -812,7 +934,7 @@ export async function createHunt({ scene, shared, man, animator, player, heightA
       const far = enemies.find(e => e.pool && !e.dead && !e.gone && e.wait < 6 && !(e.angry > 0) && Math.hypot(e.x - px, e.z - pz) > 52);
       if (far) {
         const spot = nextPavement(px + ((far.seed % 5) - 2) * 7, pz + ((far.seed % 3) - 1) * 8, far.dir, false);
-        far.x = far.homeX = spot.x; far.z = far.homeZ = spot.z; far.kx = far.kz = far.vy = far.air = 0;
+        far.x = far.homeX = spot.x; far.z = far.homeZ = spot.z; far.kx = far.kz = far.vy = far.air = 0; far.fleeT = far.chatT = 0;
         const nxt = nextPavement(spot.x, spot.z, far.dir, false);
         far.tx = nxt.x; far.tz = nxt.z;
       }
@@ -824,6 +946,8 @@ export async function createHunt({ scene, shared, man, animator, player, heightA
       if (m.group) m.group.visible = md < 120;
       if (m.ring) m.ring.visible = md < 95;
     }
+    const fighting = swing >= 0 || castPose > 0 || flares.length > 0 || !!(input?.flare && has('flare') && power >= 2 && flareCool <= 0)
+      || enemies.some((o) => !o.dead && !o.gone && (o.duel ? o.ready && o.phase !== 'waiting' : !o.civ && (o.mode === 'chase' || o.windup > 0)) && Math.hypot(o.x - px, o.z - pz) < 20);
     for (const e of enemies) {
       e.flash = Math.max(0, e.flash - dt);
       e.rammed = Math.max(0, (e.rammed ?? 0) - dt);
@@ -834,7 +958,7 @@ export async function createHunt({ scene, shared, man, animator, player, heightA
           e.hp = e.maxHp; e.dead = 0; e.gone = false;
           e.x = e.homeX; e.z = e.homeZ; e.tx = e.homeX; e.tz = e.homeZ;
           e.mode = 'roam'; e.cool = e.windup = e.stagger = e.air = e.vy = e.kx = e.kz = 0; e.wait = 1; e.mesh.visible = true;
-          if (e.civ) { e.angry = 0; e.aggro = 0; }
+          if (e.civ) { e.angry = 0; e.aggro = 0; e.fleeT = 0; e.chatT = 0; }
           if (e.duel) Object.assign(e, createDuel(e.seg));
           if (!e.duel) addBody(e);
         } else continue;
@@ -847,6 +971,7 @@ export async function createHunt({ scene, shared, man, animator, player, heightA
         lay(e, dt);
         if (e.dead > 2.2) {
           setShade(e, false);
+          if (e.combat) e.combat.trail.visible = false;
           if (roam || e.civ) { e.gone = true; e.respawnT = e.civ ? 45 : 20; e.mesh.visible = false; }
           else { scene.remove(e.mesh); e.gone = true; }
         }
@@ -861,9 +986,24 @@ export async function createHunt({ scene, shared, man, animator, player, heightA
       if (other && other.d < ld) { ax = other.x; az = other.z; ay = other.y; }
       const dxp = ax - e.x, dzp = az - e.z, pd = Math.hypot(dxp, dzp);
       const homeD = Math.hypot(e.x - e.homeX, e.z - e.homeZ);
-      // Far beasts keep their pose but skip the thinking: the frame stays cheap.
-      if (pd > 36) { e.going = 0; e.cool = Math.max(0, e.cool - dt); if (!e.duel) { e.mesh.visible = seen(e, ld); setShade(e, e.mesh.visible && ld < 7.5); } lay(e, 0); continue; }
+      // Far beasts keep their pose but skip the thinking: the frame stays cheap. Citizens keep strolling down the block.
+      if (pd > (e.civ ? 46 : 36)) { e.going = 0; e.cool = Math.max(0, e.cool - dt); if (!e.duel) { e.mesh.visible = seen(e, ld); setShade(e, e.mesh.visible && ld < 7.5); } lay(e, 0); continue; }
       if (!e.duel) { e.mesh.visible = seen(e, ld); setShade(e, e.mesh.visible && ld < 7.5); }
+      if (e.chatCool > 0) e.chatCool = Math.max(0, e.chatCool - dt);
+      if (e.chatT > 0) e.chatT = Math.max(0, e.chatT - dt);
+      if (e.fleeT > 0) e.fleeT = Math.max(0, e.fleeT - dt);
+      if (fighting && e.civ && !e.thief && !(e.angry > 0) && e.wait < 50 && pd > 3.2 && pd < 15) {
+        if (e.pool) {
+          const pPos = nextPavement(e.x, e.z, 1, false), pNeg = nextPavement(e.x, e.z, -1, false);
+          const away = Math.hypot(pPos.x - px, pPos.z - pz) >= Math.hypot(pNeg.x - px, pNeg.z - pz) ? 1 : -1;
+          if (!(e.fleeT > 0) || e.dir !== away) {
+            e.dir = away;
+            const nxt = away > 0 ? pPos : pNeg;
+            e.tx = nxt.x; e.tz = nxt.z;
+          }
+        }
+        e.fleeT = 4.5; e.wait = 0; e.chatT = 0;
+      }
       const dv = window.lab?.rides?.driven;
       if (e.angry > 0 && e.civ && !e.thief && pd < WITNESS.pull && dv && Math.hypot(dv.vx, dv.vz) < 3.2 && Math.random() < dt * 1.2) {
         window.lab.rides.leave();
@@ -905,28 +1045,31 @@ export async function createHunt({ scene, shared, man, animator, player, heightA
         e.mode = 'roam'; e.tx = e.homeX; e.tz = e.homeZ; e.wait = 0;
       }
       let speed = 0;
+      const pace = e.fleeT > 0 ? (e.kind === 'civ' ? e.roam * 2.1 : Math.max(e.roam, 4.8)) : e.snatch > 0 ? e.roam * 1.5 : e.roam;
       if (e.mode === 'chase') {
         e.tx = ax; e.tz = az; speed = pd > e.reach * 0.83 ? e.chase : 0;
         if (e.keep && pd < e.keep) { e.tx = e.x - dxp; e.tz = e.z - dzp; speed = e.chase; } // rushed, a gunner gives ground
       }
       else if (e.wait > 0) e.wait -= dt;
       else if (Math.hypot(e.tx - e.x, e.tz - e.z) < 0.45) {
-        e.wait = 0.7 + Math.random() * 1.8;
+        e.wait = e.fleeT > 0 ? 0 : 0.7 + Math.random() * 1.8;
         const a = Math.random() * Math.PI * 2, r = Math.random() * e.home;
         e.tx = e.homeX + Math.sin(a) * r; e.tz = e.homeZ + Math.cos(a) * r;
         // the street's people keep to their beat: there and back along the pavement
-        if (e.walk) { e.leg ^= 1; [e.tx, e.tz] = e.walk[e.leg]; e.wait = e.thief || e.kind === 'thief' ? 0.2 : Math.random() * 3; }
+        if (e.walk) { e.leg ^= 1; [e.tx, e.tz] = e.walk[e.leg]; e.wait = e.fleeT > 0 ? 0 : e.thief || e.kind === 'thief' ? 0.2 : Math.random() * 3; }
         else if (e.pool) {
           // nextPavement only actually crosses when this point is already in the intersection.
-          const nxt = nextPavement(e.x, e.z, e.dir, e.thief || Math.random() < 0.4);
-          e.tx = nxt.x; e.tz = nxt.z; e.wait = e.thief ? 0.15 : Math.random() * 1.4;
+          let nxt = nextPavement(e.x, e.z, e.dir, e.fleeT > 0 ? false : (e.thief || Math.random() < 0.4));
+          if (Math.hypot(nxt.x - e.x, nxt.z - e.z) < 0.8) { e.dir *= -1; nxt = nextPavement(e.x, e.z, e.dir, false); }
+          e.tx = nxt.x; e.tz = nxt.z; e.wait = e.fleeT > 0 ? 0 : e.thief ? 0.15 : Math.random() * 1.4;
           // A thief beside a civilian sometimes grabs and runs. The bag is the tell; the grab is the other one.
           if (e.thief && !(e.angry > 0) && Math.random() < 0.35) {
-            const mark = enemies.find(o => o.kind === 'civ' && !o.dead && !o.gone && !(o.angry > 0) && Math.hypot(o.x - e.x, o.z - e.z) < 2.4);
+            const mark = enemies.find(o => o.kind === 'civ' && !o.dead && !o.gone && !(o.angry > 0) && o.wait < 50 && Math.hypot(o.x - e.x, o.z - e.z) < 2.4);
             if (mark) { e.dir *= -1; e.snatch = 2.5; mark.stagger = 0.55; mark.kx = (mark.x - e.x) * 1.5; mark.kz = (mark.z - e.z) * 1.5; }
           }
         }
-      } else speed = (e.snatch > 0 ? e.roam * 1.5 : e.roam);
+        if (e.wait <= 0) speed = pace;
+      } else speed = pace;
       if (e.snatch > 0) e.snatch -= dt;
       const mx = e.tx - e.x, mz = e.tz - e.z, md = Math.hypot(mx, mz) || 1;
       if (e.windup > 0 || e.stagger > 0) speed = 0;
@@ -943,6 +1086,10 @@ export async function createHunt({ scene, shared, man, animator, player, heightA
         const turn = Math.atan2(Math.sin(want - e.yaw), Math.cos(want - e.yaw));
         e.yaw += Math.max(-8 * dt, Math.min(8 * dt, turn));
       } else if (e.shot && e.mode === 'chase' && e.windup <= 0) e.yaw = Math.atan2(dxp, dzp);
+      else if (e.chatT > 0 && e.windup <= 0 && !(e.angry > 0) && !(e.fleeT > 0)) {
+        const turn = Math.atan2(Math.sin(e.chatYaw - e.yaw), Math.cos(e.chatYaw - e.yaw));
+        e.yaw += Math.max(-6 * dt, Math.min(6 * dt, turn));
+      }
       e.phase += dt * (3 + e.going * 2);
       e.cool = Math.max(0, e.cool - dt);
       const near = pd;
@@ -975,9 +1122,22 @@ export async function createHunt({ scene, shared, man, animator, player, heightA
     for (let i = 0; i < enemies.length; i++) {
       for (let j = i + 1; j < enemies.length; j++) {
         const a = enemies[i], b = enemies[j];
-        if (a.dead || b.dead || a.duel || b.duel || Math.hypot(a.x - px, a.z - pz) > 36 || Math.hypot(b.x - px, b.z - pz) > 36) continue;
-        const minD = 0.45 * (a.scale + b.scale); // the mech needs more room than a punk
+        if (a.dead || b.dead || a.gone || b.gone || a.duel || b.duel) continue;
+        const limit = a.civ && b.civ && a.wait < 50 && b.wait < 50 ? 46 : 36;
+        if (Math.hypot(a.x - px, a.z - pz) > limit || Math.hypot(b.x - px, b.z - pz) > limit) continue;
         const dx = b.x - a.x, dz = b.z - a.z, d = Math.hypot(dx, dz) || 0.001;
+        if (
+          !fighting && a.kind === 'civ' && b.kind === 'civ' && d > 1.0 && d < 1.9
+          && !(a.angry > 0) && !(b.angry > 0) && !(a.fleeT > 0) && !(b.fleeT > 0)
+          && a.wait <= 0 && b.wait <= 0 && a.wait < 50 && b.wait < 50
+          && (a.chatCool ?? 0) <= 0 && (b.chatCool ?? 0) <= 0 && Math.random() < dt * 0.55
+        ) {
+          a.wait = b.wait = a.chatT = b.chatT = 1.2;
+          a.chatCool = b.chatCool = 14;
+          a.chatYaw = Math.atan2(dx, dz);
+          b.chatYaw = Math.atan2(-dx, -dz);
+        }
+        const minD = 0.45 * (a.scale + b.scale); // the mech needs more room than a punk
         if (d < minD) {
           const push = (minD - d) * 0.5;
           a.x -= (dx / d) * push; b.x += (dx / d) * push; a.z -= (dz / d) * push; b.z += (dz / d) * push;

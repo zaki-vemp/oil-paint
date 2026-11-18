@@ -83,6 +83,21 @@ export function damageRival(e, amount, source) {
   e.punishes++; return Math.round(amount * 1.25);
 }
 
+export const ARENA_RADIUS = 8.6;
+export function duelVisual(e) {
+  const spec = MOVES[e.move] ?? MOVES.sweep;
+  const engaged = !!(e.ready && !e.dead && e.phase !== 'waiting');
+  if (e.phase === 'recovery') {
+    const remain = Math.max(0, Math.min(1, e.timer / Math.max(spec.recover, 0.001)));
+    return { engaged, mode: 'opening', color: [0.0, 0.96, 0.82], accent: [0.62, 1.0, 0.93], progress: 1 - remain, reach: spec.reach, arc: Math.PI, spin: 2.4 };
+  }
+  if (e.phase === 'windup' || e.phase === 'active') {
+    const progress = e.phase === 'active' ? 1 : Math.max(0, Math.min(1, 1 - e.timer / Math.max(spec.windup, 0.001)));
+    return { engaged, mode: 'danger', color: [1.0, 0.165, 0.427], accent: [1.0, 0.76, 0.84], progress, reach: spec.reach, arc: spec.arc, spin: e.phase === 'active' ? 5.4 : 2.6 + progress * 2.2 };
+  }
+  return { engaged, mode: 'stance', color: [1.0, 0.22, 0.45], accent: [1.0, 0.62, 0.42], progress: 0, reach: spec.reach, arc: spec.arc, spin: 1.1 };
+}
+
 export function demoDuels() {
   for (let i = 0; i < DUELS.length; i++) {
     const e = createDuel(i);
@@ -92,8 +107,10 @@ export function demoDuels() {
     if (stepDuel(e, 1 / 60, ctx) !== 'intro') throw new Error('duel intro');
     for (let k = 0; k < 300 && e.phase !== 'active'; k++) stepDuel(e, 1 / 60, ctx);
     if (!duelHit(e, e.x, 0, e.z + 1, 0) || duelHit(e, e.x + 5, 0, e.z, 0)) throw new Error('committed attack');
+    if (duelVisual(e).mode !== 'danger') throw new Error('danger visual');
     e.phase = 'windup'; if (damageRival(e, 30, 'sword') >= 10) throw new Error('guard');
     e.phase = 'recovery'; if (damageRival(e, 30, 'sword') <= 30 || !e.punishes) throw new Error('punish recovery');
+    if (duelVisual(e).mode !== 'opening') throw new Error('opening visual');
   }
   const e = createDuel(3); e.phase = 'windup'; damageRival(e, 66, 'heavy'); damageRival(e, 66, 'heavy');
   if (e.phase !== 'recovery') throw new Error('heavy guard break');
