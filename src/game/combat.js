@@ -1,9 +1,11 @@
 // Authored sword poses shared by the traveler and the mirror rivals. A two-bone arm solve keeps the grip
 // in the hand, while the shoulders and trunk carry the windup and follow-through. Hero blades and Kael's belt
 // lantern stream from public/street over an instant painted fallback; dual-layer crescent trails follow the blade.
+// Guard and quickstep poses layer over the locomotion so the feet still follow the swept capsule.
 import * as THREE from 'three';
 import { paint } from '../figure/figure.js';
 import { loadStreetAsset, streetClone } from '../street-assets.js';
+import { EVADE_TIME } from '../figure/player.js';
 
 export const ATTACKS = {
   cut: { duration: 0.54, hit: [0.32, 0.69], reach: 2.6 },
@@ -11,7 +13,10 @@ export const ATTACKS = {
   thrust: { duration: 0.66, hit: [0.42, 0.72], reach: 3.1 },
   heavy: { duration: 0.88, hit: [0.42, 0.73], reach: 3.4 },
   spin: { duration: 0.62, hit: [0.16, 0.84], reach: 3.3 }, // the whirl: hunt.js turns the whole body once round
+  counter: { duration: 0.47, hit: [0.24, 0.65], reach: 3.15 },
+  advance: { duration: 0.64, hit: [0.36, 0.66], reach: 3.35 },
 };
+const GUARD = [0.22, 1.36, 0.45, -0.84, 0.52, 0.15, -0.28];
 // Each frame is [grip x/y/z, blade x/y/z, trunk turn]. The grip is in character metres.
 const POSES = {
   cut: [[0.34, 0.98, 0.12, 0.1, -0.9, 0.2, 0], [0.52, 1.5, -0.16, 0.5, 0.8, -0.5, -0.65], [-0.25, 1.13, 0.58, -0.8, 0.15, 0.6, 0.6], [-0.3, 0.85, 0.22, -0.5, -0.6, 0.5, 0.35], [0.34, 0.98, 0.12, 0.1, -0.9, 0.2, 0]],
@@ -19,6 +24,8 @@ const POSES = {
   thrust: [[0.34, 0.98, 0.12, 0.1, -0.9, 0.2, 0], [0.3, 1.22, -0.1, 0, 0.1, 1, -0.45], [0.1, 1.18, 0.68, 0, 0.05, 1, 0.35], [0.13, 1.15, 0.58, 0, 0.05, 1, 0.2], [0.34, 0.98, 0.12, 0.1, -0.9, 0.2, 0]],
   heavy: [[0.34, 0.98, 0.12, 0.1, -0.9, 0.2, 0], [0.2, 1.76, -0.08, 0, 0.5, -0.9, -0.15], [0.1, 1.1, 0.68, 0, -0.8, 0.6, 0.2], [0.15, 0.85, 0.5, 0, -0.9, 0.4, 0.3], [0.34, 0.98, 0.12, 0.1, -0.9, 0.2, 0]],
   spin: [[0.34, 0.98, 0.12, 0.1, -0.9, 0.2, 0], [0.62, 1.15, 0.22, 1, 0.05, 0.25, 0.3], [0.64, 1.12, 0.26, 1, 0.0, 0.3, 0.2], [0.6, 1.1, 0.3, 0.9, -0.1, 0.4, 0.1], [0.34, 0.98, 0.12, 0.1, -0.9, 0.2, 0]],
+  counter: [GUARD, [0.19, 1.27, 0.62, -0.35, 0.18, 0.92, -0.15], [0.14, 1.11, 0.70, 0.54, -0.22, 0.81, 0.44], [0.47, 1.08, 0.34, 0.84, -0.37, 0.38, 0.32], [0.34, 0.98, 0.12, 0.1, -0.9, 0.2, 0]],
+  advance: [[0.34, 0.98, 0.12, 0.1, -0.9, 0.2, 0], [0.47, 0.79, -0.10, 0.65, -0.35, -0.68, -0.55], [0.10, 1.24, 0.68, -0.25, 0.44, 0.86, 0.28], [-0.25, 1.53, 0.45, -0.4, 0.89, 0.21, 0.40], [0.34, 0.98, 0.12, 0.1, -0.9, 0.2, 0]],
 };
 export function sampleAttack(type, u) {
   const keys = POSES[type] ?? POSES.cut, times = [0, 0.28, 0.53, 0.76, 1];
@@ -58,10 +65,10 @@ const TRAIL_FRAG = /* glsl */ `
     float outerArc = smoothstep(0.66, 0.94, rad);
     float innerWake = smoothstep(0.0, 0.24, rad) * (1.0 - 0.28 * smoothstep(0.44, 0.68, rad));
     float streak = 0.9 + 0.1 * sin(rad * 26.0 - age * 7.0);
-    vec3 col = mix(vColor, vec3(1.0), clamp(lead * 0.92 + outerArc * (1.0 - age * 0.62) * 0.58, 0.0, 1.0));
-    float tail = pow(1.0 - age, 1.35);
-    float rimCut = smoothstep(1.0, 0.965, rad);
-    float alpha = uFade * tail * streak * rimCut * clamp(innerWake * 0.64 + outerArc * 0.95 + lead * 0.42, 0.0, 1.0);
+    vec3 col = mix(vColor * 1.15, vec3(1.75, 1.95, 2.25), clamp(lead * 0.85 + outerArc * (1.0 - age * 0.65) * 0.52, 0.0, 1.0));
+    float tail = pow(1.0 - age, 1.55);
+    float rimCut = smoothstep(1.0, 0.96, rad);
+    float alpha = uFade * tail * streak * rimCut * clamp(innerWake * 0.30 + outerArc * 0.72 + lead * 0.38, 0.0, 0.88);
     outC = vec4(col, alpha);
   }
 `;
@@ -73,7 +80,7 @@ const TRAIL_GLOW_FRAG = /* glsl */ `
   void main() {
     float age = clamp(vUv.x, 0.0, 1.0);
     float rad = clamp(vUv.y, 0.0, 1.0);
-    float halo = uFade * pow(1.0 - age, 1.75) * smoothstep(0.0, 0.35, rad) * (0.22 + 0.30 * smoothstep(0.58, 0.98, rad));
+    float halo = uFade * pow(1.0 - age, 1.85) * smoothstep(0.0, 0.38, rad) * (0.12 + 0.18 * smoothstep(0.62, 0.98, rad));
     outC = vec4(vColor, halo);
   }
 `;
@@ -234,18 +241,30 @@ export function createCombatPose(man, shared, scene, { rival = false, lantern = 
     uFade.value = trailFade > 0 ? Math.min(1, trailFade / TRAIL_FADE) : 0;
   }
   if (man.appearance) man.appearance.afterUpdate = finishWeapon;
-  return { sword, trail, hipLantern, apply(dt, { u = -1, type = 'cut', hurt = 0, cast = 0 } = {}) {
+  let guardBlend = 0;
+  return { sword, trail, hipLantern, apply(dt, { u = -1, type = 'cut', hurt = 0, cast = 0, guard = false, guardImpact = 0, evade = 0, evadeAngle = 0 } = {}) {
     lastDt = dt; attackType = type; currentU = u;
-    const frame = sampleAttack(type, Math.max(0, u));
+    const frame = u >= 0 ? sampleAttack(type, u) : sampleAttack('cut', 0);
     const weight = u >= 0 ? Math.sin(Math.PI * Math.min(1, u) * 0.9) : 0;
+    guardBlend += ((guard ? 1 : 0) - guardBlend) * (1 - Math.exp(-20 * dt));
+    const brace = u < 0 ? guardBlend : 0;
+    for (let i = 0; i < frame.length; i++) frame[i] = THREE.MathUtils.lerp(frame[i], GUARD[i], brace);
+    frame[1] -= brace * guardImpact * 0.11;
+    frame[2] -= brace * guardImpact * 0.15;
+    const duck = evade > 0 ? Math.sin(Math.PI * evade / EVADE_TIME) : 0;
+    frame[1] -= duck * 0.25;
     for (const [name, amount] of [['spine_01', 0.25], ['spine_02', 0.35], ['spine_03', 0.4]]) {
-      turnQ.setFromAxisAngle(yAxis, frame[6] * amount * (u >= 0 ? 1 : 0)); man.bones[name].quaternion.multiply(turnQ);
+      turnQ.setFromAxisAngle(yAxis, frame[6] * amount); man.bones[name].quaternion.multiply(turnQ);
     }
-    man.bones.spine_02.rotation.x += (type === 'heavy' ? 0.18 * weight : 0.04 * weight) - hurt * 0.22;
+    man.bones.spine_02.rotation.x += (type === 'heavy' || type === 'advance' ? 0.18 * weight : 0.04 * weight) - hurt * 0.22 - brace * guardImpact * 0.21 + duck * (0.18 + 0.13 * Math.cos(evadeAngle));
+    man.bones.spine_02.rotation.z -= duck * Math.sin(evadeAngle) * 0.28;
     if (hipLantern) hipLantern.rotation.z = -0.10 - weight * 0.08 + hurt * 0.12;
     man.object.updateMatrixWorld(true);
     arm('l', target.set(...frame.slice(0, 3)));
-    if (!lantern && (u >= 0 || cast > 0)) arm('r', target.set(-0.4, 1.2 + cast * 0.22, cast > 0 ? 0.55 : -0.12));
+    if (!lantern && (u >= 0 || cast > 0 || brace > 0.02 || duck > 0)) {
+      arm('r', target.set(-0.4 + brace * 0.16, 1.2 + cast * 0.22 + brace * 0.12 - duck * 0.29,
+        cast > 0 ? 0.55 : -0.12 + brace * 0.55));
+    }
     for (const [name, pose] of Object.entries(man.hands)) if (name.endsWith('_l') && man.bones[name]) man.bones[name].quaternion.fromArray(pose.fist);
     bladeDir.set(...frame.slice(3, 6)).normalize(); swordRotation.setFromUnitVectors(up, bladeDir);
     const hit = ATTACKS[type]?.hit ?? ATTACKS.cut.hit;

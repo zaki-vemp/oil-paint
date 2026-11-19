@@ -3,7 +3,10 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
+const publicDir = fileURLToPath(new URL('../public/', import.meta.url));
+const streetDir = process.argv[2] ?? resolve(publicDir, 'street');
 const street = [
   'terminal', 'supply-crate', 'power-core', 'beacon', 'barricade', 'noodle-stall', 'echo-shrine',
   'cyber-katana', 'ren-odachi', 'spirit-lantern',
@@ -12,7 +15,8 @@ const street = [
   'foe-punk', 'foe-enforcer', 'foe-gunner', 'foe-blade', 'foe-mech',
 ];
 for (const file of ['people/citizen-female.glb', 'people/citizen-male.glb', 'people/runner.glb', 'vehicles/eclipse.glb', ...street.map(name => `street/${name}.glb`)]) {
-  const data = readFileSync(resolve('public', file));
+  const authored = file.startsWith('street/');
+  const data = readFileSync(authored ? resolve(streetDir, file.slice('street/'.length)) : resolve(publicDir, file));
   assert.equal(data.readUInt32LE(0), 0x46546c67, file + ' GLB');
   assert.equal(data.readUInt32LE(4), 2, file + ' glTF 2');
   assert.equal(data.readUInt32LE(8), data.length, file + ' length');
@@ -38,18 +42,24 @@ for (const file of ['people/citizen-female.glb', 'people/citizen-male.glb', 'peo
   }
   const authoredRig = /^street\/(resident|mechanic|courier|executive|vendor|foe-punk|foe-enforcer|foe-gunner|foe-blade|foe-mech)\.glb$/.test(file);
   if (file.startsWith('people/') || authoredRig) {
-    assert(g.skins?.some(s => s.joints.length >= (authoredRig ? 17 : 20)), file + ' has a humanoid skeleton');
-    const names = new Set((g.animations ?? []).map(a => a.name));
+    const minJoints = authoredRig ? 18 : 20;
+    assert(g.skins?.some(s => s.joints.length >= minJoints), file + ' has a humanoid skeleton');
     const extraClips = {
       'street/foe-gunner.glb': ['Idle_Shoot'],
       'street/foe-blade.glb': ['Sword_Slash'],
       'street/foe-mech.glb': ['Attack'],
     }[file] ?? [];
-    for (const name of ['Idle', 'Walk', 'Run', 'Punch', 'HitReact', 'Death', ...extraClips]) assert(names.has(name), file + ' clip ' + name);
+    for (const name of ['Idle', 'Walk', 'Run', 'Punch', 'HitReact', 'Death', ...extraClips]) {
+      const clip = g.animations?.find(a => a.name === name);
+      assert(clip, file + ' clip ' + name);
+      assert(clip.channels.filter(c => c.target.path === 'rotation').length >= 6, file + ' animated joints in ' + name);
+    }
     assert(g.meshes.some(m => m.primitives.some(p => p.attributes.JOINTS_0 !== undefined)), file + ' has skinned geometry');
   } else if (file.startsWith('vehicles/')) assert.equal(g.meshes.length, 6, 'car surfaces are merged by material role');
-  if (file.startsWith('street/')) {
+  if (authored) {
     for (const mesh of g.meshes) for (const p of mesh.primitives) assert(p.attributes.COLOR_0 !== undefined, file + ' retains authored vertex colours');
+    assert(g.materials.some(m => m.name === 'VertexPaint'), file + ' retains the VertexPaint role');
+    assert(g.materials.some(m => m.name === 'Signal' && m.emissiveFactor?.some(c => c > 0)), file + ' retains the emissive Signal role');
     assert(g.meshes.length <= 6, file + ' is batched for the game');
     if (/\/(coupe|sports|van|motorbike|scooter)\.glb$/.test(file)) {
       const wheels = (g.nodes ?? []).filter(n => n.name?.startsWith('Wheel_'));

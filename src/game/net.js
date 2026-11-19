@@ -19,14 +19,14 @@ import { inFront } from './hunt.js';
 import { LEVELS } from './levels.js';
 
 const SAVE = 'oilpaint.online.v1';
-const SWINGS = ['cut', 'backhand', 'thrust', 'heavy', 'spin'];
+const SWINGS = ['cut', 'backhand', 'thrust', 'heavy', 'spin', 'counter', 'advance'];
 const SEND = 0.1; // seconds between state packets
 const REVIVE = 2; // seconds beside a downed teammate
 const MECH = { first: 75, every: 180, pay: 200 };
 // Indices into the way's samples (about 2.2 m apart). The ring sits by the spawn, 29 m from the nearest shrine (a
 // shrine heals, and must not end a duel); the race starts past it so the course never crosses the ring.
 const RACE = { start: 30, gates: [42, 54, 66, 78, 90, 102, 114, 126, 138, 150, 162, 174], r: 6.5, limit: 150 };
-const RING = { at: 10, r: 9, dmg: { cut: 12, backhand: 12, thrust: 15, heavy: 30, spin: 18 } };
+const RING = { at: 10, r: 9, dmg: { cut: 12, backhand: 12, thrust: 15, heavy: 30, spin: 18, counter: 18, advance: 14 } };
 // [label, stat it needs, how many]; the first is free
 export const TITLES = [['', null, 0], ['Street Breaker', 'contracts', 1], ['Mech Hunter', 'mechs', 1], ['Road Ghost', 'races', 1],
   ['Duelist', 'duels', 1], ['Medic', 'revives', 1], ['Night Runner', 'races', 5], ['Ring Champion', 'duels', 5]];
@@ -152,6 +152,13 @@ export function createNet({ scene, shared, man, camera, heightAt, route = null, 
     } else if (m.t === 'foes') {
       const f = m.f, at = performance.now();
       for (let i = 0; i < f.length; i += 7) foes.set(f[i], { x: f[i + 1], z: f[i + 2], yaw: f[i + 3], hp: f[i + 4], going: f[i + 5], windup: f[i + 6], at });
+      const moves = Array.isArray(m.a) ? m.a : [];
+      for (let i = 0; i + 5 < moves.length; i += 6) {
+        const foe = foes.get(moves[i]);
+        if (!foe || foe.at !== at) continue;
+        Object.assign(foe, { attackIndex: moves[i + 1] === 1 ? 1 : 0, recover: moves[i + 2], defend: moves[i + 3],
+          defending: moves[i + 4] === 1 ? 'Guard' : 'Evade', defendSide: moves[i + 5] });
+      }
       if (m.m) { mission.seg = m.m[0]; mission.kills = m.m[1]; }
     } else if (m.t === 'ev' && m.k === 'done') pay(m.seg);
     else if (m.t === 'ev' && m.k === 'mech') announce(+m.x, +m.z);
@@ -321,10 +328,13 @@ export function createNet({ scene, shared, man, camera, heightAt, route = null, 
       if (contract) countMission();
       if ((foeT -= dt) <= 0) {
         foeT = SEND;
-        const f = [];
+        const f = [], a = [];
         // a body that is gone reads as dead, so no page brings it back before the host does
-        for (const e of hunt.enemies) if (e.netId != null) f.push(e.netId, r2(e.x), r2(e.z), r2(e.yaw), e.gone ? 0 : Math.round(e.hp), r2(e.going ?? 0), r2(e.windup ?? 0));
-        say({ t: 'foes', f, m: [mission.seg, mission.kills] });
+        for (const e of hunt.enemies) if (e.netId != null) {
+          f.push(e.netId, r2(e.x), r2(e.z), r2(e.yaw), e.gone ? 0 : Math.round(e.hp), r2(e.going ?? 0), r2(e.windup ?? 0));
+          if (e.windup > 0 || e.recover > 0 || e.defend > 0) a.push(e.netId, e.attackIndex ?? 0, r2(e.recover ?? 0), r2(e.defend ?? 0), e.defending === 'Guard' ? 1 : 0, e.defendSide ?? 1);
+        }
+        say({ t: 'foes', f, a, m: [mission.seg, mission.kills] });
       }
     }
     if (route) street(dt, driving);
@@ -383,7 +393,7 @@ export function createNet({ scene, shared, man, camera, heightAt, route = null, 
         const d = Math.hypot(p.x - x, p.z - z);
         if (d < bd) { bd = d; best = p; }
       }
-      return best && { x: best.x, y: best.y, z: best.z, d: bd };
+      return best && { id: best.id, x: best.x, y: best.y, z: best.z, yaw: best.yaw, swing: best.u, type: best.type, d: bd };
     },
     task(at) {
       if (!hunt) return '';

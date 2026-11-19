@@ -4,11 +4,9 @@
 // eight repeatable street contract kiosks across the 720m city grid.
 import * as THREE from 'three';
 import { loadStreetAsset, streetClone } from '../street-assets.js';
-import { SECTOR_MISSIONS, KIOSK_SPOTS, COMMS, COMMS_CHAINS, ECHO_SHARDS } from './story.js';
+import { SECTOR_MISSIONS, KIOSK_SPOTS, COMMS, COMMS_CHAINS, ECHO_SHARDS, LORE_KEY, loadEchoIds } from './story.js';
 import { GOAL, loadProgress } from './levels.js';
 import { AVENUES, STREETS, GRID_MIN, GRID_MAX } from '../world/grid.js';
-
-export const LORE_KEY = 'oilpaint.lore.v1';
 
 const COLOR = {
   mission: 0xff2a6d,
@@ -21,39 +19,74 @@ const COLOR = {
   echoGold: 0xffb000,
 };
 
-function loadCollectedEchoes() {
+function saveCollectedEchoes(idSet) {
   try {
-    if (new URLSearchParams(globalThis.location?.search ?? '').has('fresh')) return [];
-    const raw = globalThis.localStorage?.getItem(LORE_KEY);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw);
-    const ids = Array.isArray(parsed) ? parsed : Array.isArray(parsed?.unlockedIds) ? parsed.unlockedIds : [];
-    const valid = new Set(ECHO_SHARDS.map((s) => s.id));
-    return ids.filter((id) => typeof id === 'string' && valid.has(id));
+    globalThis.localStorage.setItem(LORE_KEY, JSON.stringify([...new Set([...loadEchoIds(), ...idSet])]));
+    return true;
   } catch {
-    return [];
+    return false;
   }
 }
 
-function saveCollectedEchoes(idSet) {
-  try {
-    globalThis.localStorage?.setItem(LORE_KEY, JSON.stringify([...idSet]));
-  } catch { /* ignore private-browsing or quota storage errors */ }
-}
-
 function makeBeam(height, color, radius = 0.22) {
+  const col = new THREE.Color(color);
   const m = new THREE.Mesh(
-    new THREE.CylinderGeometry(radius * 0.65, radius, height, 8, 1, true),
-    new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.22, side: THREE.DoubleSide, depthWrite: false, toneMapped: false }),
+    new THREE.CylinderGeometry(radius * 0.55, radius * 1.1, height, 16, 1, true),
+    new THREE.ShaderMaterial({
+      glslVersion: THREE.GLSL3,
+      uniforms: { uColor: { value: col } },
+      transparent: true, side: THREE.DoubleSide, depthWrite: false, blending: THREE.AdditiveBlending,
+      vertexShader: /* glsl */ `
+        out vec2 vUv; out vec3 vN; out vec3 vV;
+        void main() {
+          vUv = uv;
+          vec4 w = modelMatrix * vec4(position, 1.0);
+          vN = normalize(mat3(modelMatrix) * normal);
+          vV = normalize(cameraPosition - w.xyz);
+          gl_Position = projectionMatrix * viewMatrix * w;
+        }`,
+      fragmentShader: /* glsl */ `
+        precision highp float;
+        uniform vec3 uColor;
+        in vec2 vUv; in vec3 vN; in vec3 vV;
+        layout(location = 0) out vec4 outC;
+        void main() {
+          float fadeY = pow(1.0 - vUv.y, 1.8) * smoothstep(0.0, 0.08, vUv.y);
+          float edge = pow(abs(dot(normalize(vN), normalize(vV))), 1.4);
+          float a = fadeY * edge * 0.42;
+          outC = vec4(uColor * (1.6 * a), a);
+        }`,
+    }),
   );
   m.position.y = height * 0.5;
   return m;
 }
 
 function makeGroundRing(r, color) {
+  const col = new THREE.Color(color);
   const m = new THREE.Mesh(
-    new THREE.RingGeometry(r - 0.28, r, 40),
-    new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.65, side: THREE.DoubleSide, depthWrite: false, toneMapped: false }),
+    new THREE.RingGeometry(r - 0.34, r, 48),
+    new THREE.ShaderMaterial({
+      glslVersion: THREE.GLSL3,
+      uniforms: { uColor: { value: col } },
+      transparent: true, side: THREE.DoubleSide, depthWrite: false, blending: THREE.AdditiveBlending,
+      vertexShader: /* glsl */ `
+        out vec2 vPos;
+        void main() { vPos = position.xy; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
+      fragmentShader: /* glsl */ `
+        precision highp float;
+        uniform vec3 uColor;
+        in vec2 vPos;
+        layout(location = 0) out vec4 outC;
+        void main() {
+          float rad = length(vPos);
+          float t = clamp((rad - ${(r - 0.34).toFixed(3)}) / 0.34, 0.0, 1.0);
+          float rim = smoothstep(0.0, 0.22, t) * (1.0 - smoothstep(0.84, 1.0, t));
+          float core = smoothstep(0.55, 0.86, t) * (1.0 - smoothstep(0.86, 1.0, t));
+          float a = rim * 0.42 + core * 0.58;
+          outC = vec4(uColor * (1.2 + core * 1.4), a);
+        }`,
+    }),
   );
   m.rotation.x = -Math.PI / 2;
   return m;
@@ -65,7 +98,8 @@ export async function createMissions({ scene, shared, player, heightAt, levels =
   const clearedSaved = progress?.cleared ?? 0;
   const doneSectors = new Set(progress?.missions ?? []);
   for (let i = 0; i < clearedSaved; i++) doneSectors.add(i);
-  const collectedEchoes = new Set(activeMode ? loadCollectedEchoes() : []);
+  const collectedEchoes = activeMode ? loadEchoIds() : new Set();
+  let echoSaveWarned = false;
 
   const assetNames = ['terminal', 'beacon', 'power-core', 'supply-crate', 'barricade', 'echo-shrine'];
   const assets = activeMode
@@ -203,7 +237,7 @@ export async function createMissions({ scene, shared, player, heightAt, levels =
           group.add(wrap);
           targets.push({ root: wrap, ring: halo, beam, x: pt.x, y: heightAt(pt.x, pt.z), z: pt.z, kind: 'courier', label: pt.label, done, hp: 50, maxHp: 50 });
         } else if (spec.type === 'intercept' && pt.role === 'terminal') {
-          const vis = buildProp('terminal', pt.x, pt.z, COLOR.terminal, 3.8, 15, true);
+          const vis = buildProp('terminal', pt.x, pt.z, COLOR.terminal, 3.8, 15, !done);
           vis.root.visible = !done;
           targets.push({ ...vis, kind: 'terminal', label: pt.label, done, progress: 0, hp: 1, maxHp: 1, radius: 4.2 });
         } else {
@@ -258,6 +292,7 @@ export async function createMissions({ scene, shared, player, heightAt, levels =
   let syncSoundT = 0;
   const toldFirstField = new Set();
   const commQueue = [];
+  let commDelay = 0;
 
   function echoesSnapshot() {
     const unlockedIds = ECHO_SHARDS.filter((s) => collectedEchoes.has(s.id)).map((s) => s.id);
@@ -268,29 +303,20 @@ export async function createMissions({ scene, shared, player, heightAt, levels =
     };
   }
 
-  function emitLine(speaker, line) {
-    if (!line) return;
+  function advanceComms(dt) {
+    commDelay = Math.max(0, commDelay - dt);
+    if (commDelay > 0 || !commQueue.length) return;
+    const { speaker, line, delay = 0 } = commQueue.shift();
     audio?.speak(line, speaker);
     hunt?.hud?.comms?.(speaker, line);
+    commDelay = Math.max(delay, 6.2, line.length * 0.068);
   }
 
   function speak(commKey) {
     const entry = COMMS[commKey];
     if (!entry) return;
-    commQueue.length = 0;
-    emitLine(entry.speaker, entry.line);
-    const chain = COMMS_CHAINS[commKey];
-    if (Array.isArray(chain)) {
-      for (const step of chain) {
-        if (step?.line) {
-          commQueue.push({
-            speaker: step.speaker,
-            line: step.line,
-            timer: Number.isFinite(step.delay) && step.delay > 0 ? step.delay : 4.8,
-          });
-        }
-      }
-    }
+    commQueue.push(entry, ...(COMMS_CHAINS[commKey] ?? []));
+    advanceComms(0);
   }
 
   function bind(h) {
@@ -446,6 +472,7 @@ export async function createMissions({ scene, shared, player, heightAt, levels =
     if (op.targets.every((t) => t.done)) {
       op.done = true;
       doneSectors.add(seg);
+      hunt?.saveField?.();
       audio?.play('missionDone');
       if (!toldFirstField.has(seg)) {
         toldFirstField.add(seg);
@@ -489,13 +516,7 @@ export async function createMissions({ scene, shared, player, heightAt, levels =
     const timeNow = performance.now() * 0.001;
 
     // Sequenced multi-character radio banter queue (COMMS_CHAINS)
-    if (commQueue.length > 0) {
-      commQueue[0].timer -= dt;
-      if (commQueue[0].timer <= 0) {
-        const nextLine = commQueue.shift();
-        emitLine(nextLine.speaker, nextLine.line);
-      }
-    }
+    advanceComms(dt);
 
     // Particle debris updates
     for (let i = particles.length - 1; i >= 0; i--) {
@@ -534,14 +555,18 @@ export async function createMissions({ scene, shared, player, heightAt, levels =
         s.collected = true;
         s.root.visible = false;
         collectedEchoes.add(s.id);
-        saveCollectedEchoes(collectedEchoes);
+        const savedEcho = saveCollectedEchoes(collectedEchoes);
         burst(s.x, s.y + 0.35, s.z, COLOR.echoCyan, 10);
         burst(s.x, s.y + 0.65, s.z, COLOR.echoGold, 8);
         audio?.play('echoCollect');
         hunt?.reward?.(75, 'Memory Echo recovered · ' + s.title);
         hunt?.heal?.(20);
-        commQueue.length = 0;
-        emitLine(s.speaker, s.quote);
+        if (!savedEcho && !echoSaveWarned) {
+          echoSaveWarned = true;
+          hunt?.hud?.toast('Memory Echoes are not saving in this browser');
+        }
+        commQueue.push({ speaker: s.speaker, line: s.quote });
+        advanceComms(0);
       }
     }
 
@@ -593,8 +618,8 @@ export async function createMissions({ scene, shared, player, heightAt, levels =
             if ((syncSoundT -= dt) <= 0) { syncSoundT = 0.28; audio?.play('syncTick', term.progress); }
             if (term.progress >= 1) {
               term.done = true;
-              term.beam.material.color.setHex(COLOR.kiosk);
-              term.ring.material.color.setHex(COLOR.kiosk);
+              term.root.visible = false;
+              removeCollider(term);
               checkSectorCompletion(currentSeg);
             }
           } else {

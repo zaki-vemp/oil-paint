@@ -145,7 +145,8 @@ export function loadProgress() {
     const cp = LEVELS[Math.min(s.cleared, LEVELS.length - 1)].checkpoint;
     const unlocked = Array.isArray(s.unlocked) ? s.unlocked.filter((k) => GARAGE.includes(k)) : unlocksFor(s.cleared);
     const missions = Array.isArray(s.missions) ? s.missions : [];
-    return { cleared: s.cleared, x: cp.x, z: cp.z, cash: Number.isFinite(s.cash) ? Math.max(0, s.cash) : 0, unlocked, missions };
+    return { cleared: s.cleared, x: cp.x, z: cp.z, cash: Number.isFinite(s.cash) ? Math.max(0, s.cash) : 0, unlocked, missions,
+      won: s.cleared === LEVELS.length && s.won === true };
   } catch {
     return null;
   }

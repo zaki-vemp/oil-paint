@@ -34,11 +34,50 @@ try {
     const animated = meshes[0].skeleton.bones.some((b, i) => before[i].angleTo(b.quaternion) > 0.01);
     mixer.stopAllAction(); u.action = mixer.clipAction(u.clips.Idle).reset().play(); mixer.setTime(0);
     for (const e of L.hunt.enemies) { if (!e.duel) { e.aggro = 0; e.angry = 0; e.wait = 1e4; e.cool = 99; } }
+    const { width, height, data } = L.shared.tStreetLights.value.image;
+    const extent = L.shared.uExtent.value;
+    const lightSamples = [], matrix = new L.THREE.Matrix4();
+    L.scene.traverse(mesh => {
+      if (!mesh.isInstancedMesh || mesh.material.uniforms?.uRole?.value !== 4) return;
+      for (let i = 0; i < mesh.count; i++) {
+        mesh.getMatrixAt(i, matrix);
+        const [x, y, z] = matrix.elements.slice(12, 15);
+        if (z <= L.shared.uZoneSplit.value.x + 6 || Math.abs(y - L.heightAt(x, z) - 4.2) > 0.03) continue;
+        const column = Math.floor((x / (2 * extent) + 0.5) * width);
+        const row = Math.floor((z / (2 * extent) + 0.5) * height);
+        const pixel = (column + row * width) * 4;
+        lightSamples.push([...data.subarray(pixel, pixel + 3)]);
+      }
+    });
+    const unlitFarGround = data.subarray(0, 3).every(value => value === 0);
+    const fixtureLighting = lightSamples.length > 8 && lightSamples.every(rgb => Math.max(...rgb) > 100) &&
+      lightSamples.some(([r, , b]) => r > b * 1.3) && lightSamples.some(([r, , b]) => b > r * 1.3);
+    const { x, z } = L.player.feet;
+    L.teleport(x, z, x, z - 1);
+    L.follow.pitch = 0;
+    L.follow.distance = L.follow.want = 7.2;
+    L.setInput(() => ({ move: { x: 0, y: 0 }, look: { x: 0, y: 0 }, zoom: 0, device: 'keyboard' }));
+    // A narrow overhead beam misses a centre ray but intersects the camera's near plane.
+    const { R, world } = L.player;
+    const beamZ = z + 3;
+    const beam = world.createCollider(R.ColliderDesc.cuboid(1, 0.07, 0.09)
+      .setTranslation(x + 0.25, L.follow.pivot.y + 0.23, beamZ));
+    world.step();
+    L.step(1 / 60, 1, false);
+    const safeCamera = L.camera.position.z < beamZ - 0.2;
+    const short = L.follow.distance;
+    world.removeCollider(beam, true);
+    world.step();
+    L.step(1 / 60, 1, false);
+    const easedCamera = L.follow.distance > short && L.follow.distance < 7.2;
     window.graphicsRunToken = Math.random();
-    return { names, placements: L.street.placements.length, vehicles, animated, people: people.length, token: window.graphicsRunToken };
+    return { names, placements: L.street.placements.length, vehicles, animated, people: people.length,
+      fixtureLighting, unlitFarGround, safeCamera, easedCamera, token: window.graphicsRunToken };
   });
-  assert.deepEqual(art.names.sort(), ['barricade', 'beacon', 'power-core', 'supply-crate', 'terminal']);
+  assert.deepEqual(art.names.sort(), ['barricade', 'beacon', 'noodle-stall', 'power-core', 'supply-crate', 'terminal']);
   assert(art.placements >= 20 && art.people >= 24 && art.animated, 'props, crowd and a deforming walk clip');
+  assert(art.fixtureLighting && art.unlitFarGround, 'the baked street light field follows real fixtures and their warm/cool palettes');
+  assert(art.safeCamera && art.easedCamera, 'the camera retracts before clipping an overhead corner and eases back out');
   for (const kind of ['car', 'sports', 'pickup', 'bike', 'bicycle']) {
     const v = art.vehicles.find(v => v.kind === kind);
     assert(v?.asset && v.wheels === (kind === 'bike' || kind === 'bicycle' ? 2 : 4), kind + ' imported body and wheels');

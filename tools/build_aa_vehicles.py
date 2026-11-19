@@ -42,6 +42,9 @@ if str(TOOLS_DIR) not in sys.path:
 sys.dont_write_bytecode = True
 
 import blender_aa_lib as aa
+import blender_aaa_humans as ah
+
+ECLIPSE_GLB = ROOT_DIR / 'public' / 'vehicles' / 'eclipse.glb'
 
 # Exact wheel centers in Blender coordinates (X, Y, Z) & wheel radii (ride.js + prepare-neon-assets.py)
 WHEEL_SPECS: dict[str, dict] = {
@@ -157,7 +160,7 @@ def _finalize_manifold(
         scale=scale,
         bevel=bevel,
         bevel_segments=bevel_segments,
-        shade_smooth=shade_smooth,
+        shade_smooth=True,
         smooth_angle_cos=smooth_angle_cos,
         color=color,
         signal=signal,
@@ -2700,6 +2703,281 @@ def _render_preview_sheet(preview_dir: Path) -> None:
             bpy.ops.render.render(write_still=True)
 
 
+def _import_eclipse_car(
+    body_color,
+    dark_color=COL_CARBON_BLACK,
+    glass_color=COL_CANOPY_GLASS,
+    accent_color=(0.76, 0.80, 0.85),
+    scale_xyz=(1.0, 1.0, 1.0),
+    z_offset: float = 0.0,
+    subsurf_body: int = 1,
+) -> tuple[list[bpy.types.Object], list[bpy.types.Object]]:
+    """Import smooth realistic Eclipse automotive mesh, weld split seams, apply Catmull-Clark & AAA PBR classes."""
+    before = set(bpy.data.objects)
+    bpy.ops.import_scene.gltf(filepath=str(ECLIPSE_GLB))
+    imported = [o for o in bpy.data.objects if o not in before]
+    body_parts: list[bpy.types.Object] = []
+    sig_parts: list[bpy.types.Object] = []
+    sx, sy, sz = scale_xyz
+    xform = Matrix.Translation((0.0, 0.0, z_offset)) @ Matrix.Diagonal((sx, sy, sz, 1.0))
+
+    for o in imported:
+        if o.type != 'MESH':
+            bpy.data.objects.remove(o, do_unlink=True)
+            continue
+        aa.bake_transform(o)
+        o.data.transform(xform)
+        mat_name = (o.data.materials[0].name if o.data.materials else o.name).lower()
+
+        # Weld glTF split-normal vertices into a continuous watertight automotive shell BEFORE smoothing/subsurf
+        bm = bmesh.new()
+        bm.from_mesh(o.data)
+        bmesh.ops.remove_doubles(bm, verts=bm.verts[:], dist=0.006)
+        bmesh.ops.recalc_face_normals(bm, faces=bm.faces[:])
+        area_before = sum(f.calc_area() for f in bm.faces)
+        if subsurf_body > 0 and ('body' in mat_name or 'glass' in mat_name):
+            # Convert coplanar triangles to quads first so Catmull-Clark produces clean automotive reflection curves
+            bmesh.ops.join_triangles(
+                bm, faces=bm.faces[:], cmp_seam=False, cmp_sharp=False, cmp_uvs=False,
+                angle_face_threshold=0.62, angle_shape_threshold=0.72,
+            )
+        bm.to_mesh(o.data)
+        bm.free()
+
+        if subsurf_body > 0 and ('body' in mat_name or 'glass' in mat_name):
+            mod = o.modifiers.new('AutoSubsurf', 'SUBSURF')
+            mod.levels = subsurf_body
+            mod.render_levels = subsurf_body
+            mod.boundary_smooth = 'PRESERVE_CORNERS'
+            aa._apply_modifier(o, mod)
+            area_after = sum(p.area for p in o.data.polygons)
+            assert area_after >= area_before * 0.90, (
+                f'eclipse.glb {o.name} lost surface area under subsurf ({area_after:.3f} vs {area_before:.3f})'
+            )
+        for p in o.data.polygons:
+            p.use_smooth = True
+        o.data.update()
+
+        if 'headlight' in mat_name:
+            aa.paint_mesh(o, color=COL_SIGNAL_WHITE, signal=True)
+            sig_parts.append(o)
+        elif 'taillight' in mat_name:
+            aa.paint_mesh(o, color=COL_SIGNAL_CRIMSON, signal=True)
+            sig_parts.append(o)
+        elif 'glass' in mat_name:
+            aa.paint_mesh(o, color=glass_color, mat_class=aa.MAT_GLASS, ao_strength=0.14)
+            body_parts.append(o)
+        elif 'accent' in mat_name:
+            aa.paint_mesh(o, color=accent_color, mat_class=aa.MAT_METAL, ao_strength=0.18)
+            body_parts.append(o)
+        elif 'dark' in mat_name:
+            aa.paint_mesh(o, color=dark_color, mat_class=aa.MAT_POLYMER, ao_strength=0.22)
+            body_parts.append(o)
+        else:
+            aa.paint_mesh(o, color=body_color, mat_class=aa.MAT_CARPAINT, ao_strength=0.20, ridge_boost=0.04)
+            body_parts.append(o)
+    return body_parts, sig_parts
+
+
+def build_aaa_coupe() -> list[bpy.types.Object]:
+    """Kestrel Cyber-Coupe: Catmull-Clark smooth clearcoat midnight-teal coupe + flush forged alloy wheels."""
+    aa.reset_scene()
+    body_parts, sig_parts = _import_eclipse_car(
+        body_color=(0.062, 0.285, 0.370),
+        dark_color=(0.045, 0.052, 0.068),
+        glass_color=(0.022, 0.042, 0.072),
+        accent_color='chrome',
+        scale_xyz=(1.08, 1.00, 0.98),
+        z_offset=-0.02,
+        subsurf_body=1,
+    )
+    # Flush under-bumper carbon lip, rear diffuser & twin brushed-steel exhaust pipes
+    splitter = aa.add_bevel_box(
+        name='Coupe_Carbon_Splitter', size=(1.72, 0.26, 0.042),
+        location=(0.0, -1.88, 0.28), bevel=0.012, segments=2, color='carbon',
+    )
+    aa.paint_mesh(splitter, color='carbon', mat_class=aa.MAT_POLYMER)
+    body_parts.append(splitter)
+    diffuser = aa.add_bevel_box(
+        name='Coupe_Rear_Diffuser', size=(1.62, 0.28, 0.13),
+        location=(0.0, 1.94, 0.32), bevel=0.016, segments=2, color='carbon',
+    )
+    aa.paint_mesh(diffuser, color='carbon', mat_class=aa.MAT_POLYMER)
+    body_parts.append(diffuser)
+    for sx in (-0.48, 0.48):
+        pipe = aa.add_cylinder(
+            name=f'Coupe_Exhaust_{"L" if sx > 0 else "R"}', radius=0.046, height=0.22, vertices=18,
+            location=(sx, 2.04, 0.31), rotation=(math.pi * 0.5, 0.0, 0.0), color='chrome',
+        )
+        aa.paint_mesh(pipe, color='chrome', mat_class=aa.MAT_METAL)
+        body_parts.append(pipe)
+    # Tucked cyber-DRL accent bar + rear crimson light strip
+    drl = aa.add_bevel_box(
+        name='Coupe_Cyan_DRL', size=(1.36, 0.032, 0.022),
+        location=(0.0, -2.04, 0.56), bevel=0.005, segments=1, color=COL_SIGNAL_CYAN, signal=True,
+    )
+    tail_bar = aa.add_bevel_box(
+        name='Coupe_Tail_Bar', size=(1.42, 0.036, 0.032),
+        location=(0.0, 2.06, 0.85), bevel=0.008, segments=1, color=COL_SIGNAL_CRIMSON, signal=True,
+    )
+    sig_parts.extend([drl, tail_bar])
+
+    extra_wheels = {}
+    for w_name, center in WHEEL_SPECS['coupe']['wheels']:
+        extra_wheels[w_name] = (
+            aa.build_wheel_assembly(
+                center=center, radius=0.39, width=0.21,
+                tire_color='rubber_tire', rim_color='silver', rotor_color='gunmetal',
+                caliper_color=(0.78, 0.10, 0.14), spokes=8,
+            ),
+            center,
+        )
+    return aa.combine_by_role(body_parts, sig_parts, extra_named=extra_wheels)
+
+
+def build_aaa_sports() -> list[bpy.types.Object]:
+    """Kestrel GT-X Widebody Hypercar: pearl crimson clearcoat, carbon GT wing, flush forged gold wheels."""
+    aa.reset_scene()
+    body_parts, sig_parts = _import_eclipse_car(
+        body_color=(0.74, 0.058, 0.095),
+        dark_color=(0.038, 0.042, 0.054),
+        glass_color=(0.020, 0.035, 0.058),
+        accent_color=COL_GOLD_ALLOY,
+        scale_xyz=(1.11, 1.02, 0.90),
+        z_offset=0.02,
+        subsurf_body=1,
+    )
+    # Sleek tucked carbon front lip + side skirts + swan-neck GT rear wing
+    splitter = aa.add_bevel_box(
+        name='GTX_Front_Splitter', size=(1.86, 0.30, 0.040),
+        location=(0.0, -1.94, 0.27), bevel=0.010, segments=2, color='carbon',
+    )
+    aa.paint_mesh(splitter, color='carbon', mat_class=aa.MAT_POLYMER)
+    body_parts.append(splitter)
+    for sx in (-0.98, 0.98):
+        skirt = aa.add_bevel_box(
+            name=f'GTX_Skirt_{"L" if sx > 0 else "R"}', size=(0.10, 2.05, 0.055),
+            location=(sx, 0.0, 0.27), bevel=0.012, segments=2, color='carbon',
+        )
+        aa.paint_mesh(skirt, color='carbon', mat_class=aa.MAT_POLYMER)
+        body_parts.append(skirt)
+    # Swan-neck carbon GT rear wing + uprights
+    wing = aa.add_bevel_box(
+        name='GTX_GT_Wing', size=(1.86, 0.26, 0.034),
+        location=(0.0, 1.98, 1.24), rotation=(-0.08, 0.0, 0.0), bevel=0.010, segments=2, color='carbon',
+    )
+    aa.paint_mesh(wing, color='carbon', mat_class=aa.MAT_CARPAINT)
+    body_parts.append(wing)
+    for sx in (-0.54, 0.54):
+        pylon = aa.add_bevel_box(
+            name=f'GTX_Wing_Pylon_{"L" if sx > 0 else "R"}', size=(0.036, 0.16, 0.34),
+            location=(sx, 1.94, 1.08), rotation=(0.18, 0.0, 0.0), bevel=0.008, segments=1, color='gunmetal',
+        )
+        aa.paint_mesh(pylon, color='gunmetal', mat_class=aa.MAT_METAL)
+        body_parts.append(pylon)
+        exh = aa.add_cylinder(
+            name=f'GTX_Titanium_Exhaust_{"L" if sx > 0 else "R"}', radius=0.052, height=0.22, vertices=18,
+            location=(sx * 0.72, 2.08, 0.30), rotation=(math.pi * 0.5, 0.0, 0.0), color='chrome',
+        )
+        aa.paint_mesh(exh, color='chrome', mat_class=aa.MAT_METAL)
+        body_parts.append(exh)
+    for sx in (-0.93, 0.93):
+        endplate = aa.add_bevel_box(
+            name=f'GTX_Wing_Endplate_{"L" if sx > 0 else "R"}', size=(0.022, 0.32, 0.15),
+            location=(sx, 1.98, 1.22), bevel=0.006, segments=1, color=(0.74, 0.058, 0.095),
+        )
+        aa.paint_mesh(endplate, color=(0.74, 0.058, 0.095), mat_class=aa.MAT_CARPAINT)
+        body_parts.append(endplate)
+    # Tucked amber splitter accent + glowing crimson rear blade
+    chin = aa.add_bevel_box(
+        name='GTX_Amber_Splitter_LED', size=(1.50, 0.030, 0.020),
+        location=(0.0, -2.08, 0.275), bevel=0.005, segments=1, color=COL_SIGNAL_GOLD, signal=True,
+    )
+    tail = aa.add_bevel_box(
+        name='GTX_Afterburner_Tail', size=(1.52, 0.036, 0.034),
+        location=(0.0, 2.10, 0.80), bevel=0.008, segments=1, color=COL_SIGNAL_CRIMSON, signal=True,
+    )
+    sig_parts.extend([chin, tail])
+
+    extra_wheels = {}
+    for w_name, center in WHEEL_SPECS['sports']['wheels']:
+        extra_wheels[w_name] = (
+            aa.build_wheel_assembly(
+                center=center, radius=0.39, width=0.22,
+                tire_color='rubber_tire', rim_color=COL_GOLD_ALLOY, rotor_color='gunmetal',
+                caliper_color=(0.82, 0.08, 0.12), spokes=8,
+            ),
+            center,
+        )
+    return aa.combine_by_role(body_parts, sig_parts, extra_named=extra_wheels)
+
+
+def build_aaa_rider() -> list[bpy.types.Object]:
+    """Realistic anatomical seated superbike rider on MakeHuman base + glossy full-face racing helmet."""
+    aa.reset_scene()
+    base = ah.load_realistic_human(
+        height=1.18,
+        pose='seated',
+        bulk=(1.0, 1.0),
+        skin_col=(0.82, 0.62, 0.49),
+        jacket_col=(0.075, 0.085, 0.115),
+        yoke_col=(0.65, 0.08, 0.12),
+        sleeve_col=(0.075, 0.085, 0.115),
+        pants_col=(0.065, 0.075, 0.098),
+        belt_col=(0.05, 0.05, 0.06),
+        boot_col=(0.055, 0.055, 0.065),
+        glove_col=(0.05, 0.05, 0.06),
+        keep_hair=False,
+        keep_head=False,
+        jacket_mat=aa.MAT_LEATHER,
+        pants_mat=aa.MAT_LEATHER,
+        sleeve_mat=aa.MAT_LEATHER,
+        suit_decimate=0.22,
+        body_decimate=0.14,
+        boot_decimate=0.18,
+    )
+    parts = list(base['parts'])
+    sigs = []
+    # Align seated rider pelvis squarely over bike saddle (~y=+0.15, z=+0.76)
+    px, py, pz = base['joints']['Pelvis'][0]
+    dy = 0.15 - py
+    dz = 0.76 - pz
+    lift = Matrix.Translation((0.0, dy, dz))
+    for o in parts:
+        o.data.transform(lift)
+        o.data.update()
+    hx, hy, hz = base['joints']['Head'][0]
+    hx, hy, hz = hx, hy + dy, hz + dz
+
+    # Solid armored neck collar + glossy clearcoat full-face aerodynamic racing helmet + mirror visor
+    neck_parts = ah.add_armored_neck_seal(base['joints'], collar_color=(0.06, 0.065, 0.08))
+    for o in neck_parts:
+        o.data.transform(lift)
+        o.data.update()
+        parts.append(o)
+    helm = aa.add_sphere(
+        name='Rider_Racing_Helmet', radius=0.135, segments=26, rings=18,
+        location=(hx, hy + 0.01, hz + 0.042), scale=(1.02, 1.18, 1.04),
+        color=(0.08, 0.09, 0.12),
+    )
+    aa.paint_mesh(helm, color=(0.08, 0.09, 0.12), mat_class=aa.MAT_CARPAINT)
+    parts.append(helm)
+    visor = aa.add_sphere(
+        name='Rider_Mirror_Visor', radius=0.122, segments=22, rings=14,
+        location=(hx, hy - 0.032, hz + 0.040), scale=(0.98, 0.96, 0.72),
+        color='glass_dark',
+    )
+    aa.paint_mesh(visor, color='glass_dark', mat_class=aa.MAT_GLASS)
+    parts.append(visor)
+    hud_rim = aa.add_bevel_box(
+        name='Rider_HUD_Accent', size=(0.145, 0.018, 0.012),
+        location=(hx, hy - 0.142, hz + 0.042), bevel=0.004, segments=1,
+        color=COL_SIGNAL_CYAN, signal=True,
+    )
+    sigs.append(hud_rim)
+    return aa.combine_by_role(parts, sigs)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(add_help=False)
     parser.add_argument('--render-previews', type=Path, default=None)
@@ -2709,12 +2987,12 @@ def main() -> None:
     OUT_DIR.mkdir(parents=True, exist_ok=True)
 
     manifest = [
-        ('coupe', 'coupe.glb', build_coupe, 1800, 4200, 6),
-        ('sports', 'sports.glb', build_sports, 1800, 4200, 6),
-        ('van', 'van.glb', build_van, 1800, 4200, 6),
-        ('motorbike', 'motorbike.glb', build_motorbike, 1800, 4200, 4),
-        ('scooter', 'scooter.glb', build_scooter, 1800, 4200, 4),
-        ('rider', 'rider.glb', build_rider, 900, 1800, 2),
+        ('coupe', 'coupe.glb', build_aaa_coupe, 1800, 18000, 6),
+        ('sports', 'sports.glb', build_aaa_sports, 1800, 18000, 6),
+        ('van', 'van.glb', build_van, 1800, 18000, 6),
+        ('motorbike', 'motorbike.glb', build_motorbike, 1800, 18000, 4),
+        ('scooter', 'scooter.glb', build_scooter, 1800, 18000, 4),
+        ('rider', 'rider.glb', build_aaa_rider, 900, 10000, 2),
     ]
 
     for key, filename, builder, min_budget, max_budget, expected_meshes in manifest:

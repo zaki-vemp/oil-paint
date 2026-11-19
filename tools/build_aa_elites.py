@@ -44,6 +44,7 @@ import bpy
 from mathutils import Euler, Matrix, Quaternion, Vector
 
 import blender_aa_lib as aa
+import blender_aaa_humans as ah
 
 ROOT = TOOLS_DIR.parent
 OUT_DIR = ROOT / 'public' / 'street'
@@ -2672,9 +2673,160 @@ def verify_elite_glb(
     return info
 
 
+def build_realistic_foe_blade() -> Path:
+    """Sculpt realistic anatomical Razor Ronin cyber-assassin on MakeHuman base + lamellar armor & katana."""
+    aa.reset_scene()
+    H = 1.81
+    base = ah.load_realistic_human(
+        height=H,
+        bulk=(1.02, 1.01),
+        skin_col=(0.76, 0.58, 0.48),
+        jacket_col=RONIN_COLORS['jinbaori_outer'],
+        yoke_col=RONIN_COLORS['armor_obsidian'],
+        sleeve_col=RONIN_COLORS['cyber_weave'],
+        pants_col=RONIN_COLORS['hakama_dark'],
+        belt_col=RONIN_COLORS['crimson_cord'],
+        boot_col=RONIN_COLORS['armor_obsidian'],
+        glove_col=(0.06, 0.065, 0.085),
+        keep_hair=False,
+        keep_head=False,
+        jacket_mat=aa.MAT_CLOTH,
+        pants_mat=aa.MAT_CLOTH,
+        sleeve_mat=aa.MAT_POLYMER,
+    )
+    parts = list(base['parts'])
+    sigs = []
+    j = base['joints']
+    v = lambda name, idx=0: j[name][idx]
+
+    # Solid armored samurai nodowa neck guard + seated stealth Kabuto helmet + Oni menpo & horns
+    parts.extend(ah.add_armored_neck_seal(j, collar_color=RONIN_COLORS['armor_obsidian']))
+    hx, hy, hz = v('Head')
+    kabuto = aa.add_sphere(
+        name='Ronin_Kabuto', radius=0.128, segments=24, rings=16,
+        location=(hx, hy + 0.012, hz + 0.048), scale=(1.04, 1.14, 1.02),
+        color=RONIN_COLORS['armor_obsidian'], bone='Head',
+    )
+    aa.paint_mesh(kabuto, color=RONIN_COLORS['armor_obsidian'], mat_class=aa.MAT_CARPAINT)
+    parts.append(kabuto)
+    shikoro = aa.add_cylinder(
+        name='Ronin_Shikoro_Flange', radius=0.148, depth=0.068, vertices=20,
+        location=(hx, hy + 0.034, hz - 0.008), rotation=(-0.18, 0.0, 0.0),
+        color=RONIN_COLORS['armor_obsidian'], bone='Head',
+    )
+    aa.paint_mesh(shikoro, color=RONIN_COLORS['armor_obsidian'], mat_class=aa.MAT_METAL)
+    parts.append(shikoro)
+    menpo = aa.add_bevel_box(
+        name='Ronin_Oni_Mask', size=(0.160, 0.112, 0.138),
+        location=(hx, hy - 0.064, hz + 0.014), bevel=0.022, segments=2,
+        color=RONIN_COLORS['oni_mask'], bone='Head',
+    )
+    aa.paint_mesh(menpo, color=RONIN_COLORS['oni_mask'], mat_class=aa.MAT_METAL)
+    parts.append(menpo)
+    # Sculpted curved gilded samurai maedate horns
+    for sx in (-1.0, 1.0):
+        horn = aa.add_cone(
+            name=f'Oni_Horn_{"L" if sx > 0 else "R"}', radius1=0.018, radius2=0.003, height=0.125, vertices=12,
+            location=(hx + sx * 0.068, hy - 0.088, hz + 0.126),
+            rotation=(-0.38, -sx * 0.42, 0.0), color=RONIN_COLORS['brass_odoshi'], bone='Head',
+        )
+        aa.paint_mesh(horn, color=RONIN_COLORS['brass_odoshi'], mat_class=aa.MAT_METAL)
+        parts.append(horn)
+        eye = aa.add_bevel_box(
+            name=f'Oni_Eye_{"L" if sx > 0 else "R"}', size=(0.036, 0.014, 0.012),
+            location=(hx + sx * 0.036, hy - 0.118, hz + 0.036),
+            rotation=(0.0, sx * 0.22, 0.0), bevel=0.003, segments=1,
+            color=RONIN_COLORS['sig_magenta'], signal=True, bone='Head',
+        )
+        sigs.append(eye)
+
+    # Armored Cyber-Do breastplate + gilded samurai mon emblem
+    cx, cy, cz = v('Chest')
+    do_front = aa.add_bevel_box(
+        name='Ronin_Do_Plate', size=(0.30, 0.10, 0.28),
+        location=(cx, cy - 0.092, cz + 0.015), bevel=0.024, segments=2,
+        color=RONIN_COLORS['armor_obsidian'], bone='Chest',
+    )
+    aa.paint_mesh(do_front, color=RONIN_COLORS['armor_obsidian'], mat_class=aa.MAT_METAL)
+    parts.append(do_front)
+    mon = aa.add_torus(
+        name='Ronin_Chest_Sigil', major_radius=0.044, minor_radius=0.008,
+        major_segments=20, minor_segments=8, location=(cx, cy - 0.144, cz + 0.04),
+        rotation=(math.pi * 0.5, 0.0, 0.0), color=RONIN_COLORS['sig_magenta'], signal=True, bone='Chest',
+    )
+    sigs.append(mon)
+
+    # Layered 3-tier O-sode lamellar samurai shoulder armor plates
+    for side, sx in (('L', 1.0), ('R', -1.0)):
+        shx, shy, shz = v(f'UpperArm_{side}')
+        for tier in range(3):
+            lame = aa.add_bevel_box(
+                name=f'Osode_{side}_{tier}', size=(0.045, 0.185 - tier * 0.014, 0.058),
+                location=(shx + sx * (0.088 + tier * 0.008), shy, shz + 0.03 - tier * 0.052),
+                rotation=(0.0, -sx * 0.18, 0.0), bevel=0.010, segments=2,
+                color=RONIN_COLORS['armor_obsidian'] if tier % 2 == 0 else RONIN_COLORS['armor_titanium'],
+                bone=f'UpperArm_{side}',
+            )
+            aa.paint_mesh(lame, color=RONIN_COLORS['armor_obsidian'] if tier % 2 == 0 else RONIN_COLORS['armor_titanium'], mat_class=aa.MAT_METAL)
+            parts.append(lame)
+        trim = aa.add_bevel_box(
+            name=f'Osode_Sig_{side}', size=(0.014, 0.15, 0.010),
+            location=(shx + sx * 0.116, shy, shz + 0.03), bevel=0.003, segments=1,
+            color=RONIN_COLORS['sig_magenta'], signal=True, bone=f'UpperArm_{side}',
+        )
+        sigs.append(trim)
+
+    # Fluted armored shin greaves (suneate) with magenta energy strips
+    for side, sx in (('L', 1.0), ('R', -1.0)):
+        kx, ky, kz = v(f'Shin_{side}')
+        greave = aa.add_bevel_box(
+            name=f'Suneate_{side}', size=(0.105, 0.055, 0.30),
+            location=(kx, ky - 0.058, kz - 0.21), bevel=0.016, segments=2,
+            color=RONIN_COLORS['armor_obsidian'], bone=f'Shin_{side}',
+        )
+        aa.paint_mesh(greave, color=RONIN_COLORS['armor_obsidian'], mat_class=aa.MAT_METAL)
+        parts.append(greave)
+        gsig = aa.add_bevel_box(
+            name=f'Suneate_Sig_{side}', size=(0.014, 0.014, 0.22),
+            location=(kx, ky - 0.086, kz - 0.21), bevel=0.003, segments=1,
+            color=RONIN_COLORS['sig_magenta'], signal=True, bone=f'Shin_{side}',
+        )
+        sigs.append(gsig)
+
+    # Lacquered saya scabbard slung cleanly on left hip
+    px, py, pz = v('Pelvis')
+    saya = aa.add_bevel_box(
+        name='Ronin_Saya', size=(0.032, 0.72, 0.048),
+        location=(px + 0.185, py + 0.16, pz - 0.06), rotation=(-0.28, 0.0, 0.18),
+        bevel=0.010, segments=2, color=RONIN_COLORS['armor_obsidian'], bone='Pelvis',
+    )
+    aa.paint_mesh(saya, color=RONIN_COLORS['armor_obsidian'], mat_class=aa.MAT_CARPAINT)
+    parts.append(saya)
+
+    # High-frequency curved magenta katana held in Hand_R (reusing bespoke forged katana builder)
+    rx, ry, rz = v('Hand_R')
+    k_body, k_sig = _build_ronin_katana(Vector((rx, ry - 0.02, rz - 0.02)))
+    for o in k_body:
+        aa.pin_to_bone(o, 'Hand_R')
+    for o in k_sig:
+        aa.pin_to_bone(o, 'Hand_R')
+    parts.extend(k_body)
+    sigs.extend(k_sig)
+
+    merged = aa.combine_by_role(parts, sigs)
+    rig = ah.build_realistic_rig_and_clips(
+        merged, j, rig_name='RoninRig', height=H, style='blade',
+        attack_clip_name='Sword_Slash', weapon_hand='Hand_R',
+    )
+    out_path = OUT_DIR / 'foe-blade.glb'
+    info = aa.export_glb(out_path, [rig, *merged], min_tris=2200, max_meshes=6)
+    print(f"[build_aa_elites] Exported {info['path']}: {info['triangles']} tris, {info['meshes']} meshes, {info['size_kb']} KB")
+    return out_path
+
+
 def main() -> None:
     OUT_DIR.mkdir(parents=True, exist_ok=True)
-    blade_path = build_foe_blade()
+    blade_path = build_realistic_foe_blade()
     mech_path = build_foe_mech()
 
     core_bones = [
@@ -2684,17 +2836,17 @@ def main() -> None:
     ]
     verify_elite_glb(
         blade_path,
-        tri_range=(2200, 3800),
+        tri_range=(2200, 12000),
         required_clips=('Idle', 'Walk', 'Run', 'Punch', 'Sword_Slash', 'HitReact', 'Death'),
         required_bones=core_bones,
     )
     verify_elite_glb(
         mech_path,
-        tri_range=(2800, 4800),
+        tri_range=(2800, 12000),
         required_clips=('Idle', 'Walk', 'Run', 'Punch', 'Attack', 'HitReact', 'Death'),
         required_bones=[*core_bones, 'Pod_L', 'Pod_R'],
     )
-    print('[build_aa_elites] Both elite AA enemy rigs built and verified.')
+    print('[build_aa_elites] Both elite AAA enemy rigs built and verified.')
 
 
 if __name__ == '__main__':

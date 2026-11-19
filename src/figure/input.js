@@ -1,6 +1,7 @@
 // Keyboard, mouse, touch and gamepad, read once a frame into one plain state.
 //   move: {x, y} (x right, y forward, length 0..1), walk, sprint, strafe (held),
 //   jump, attack, heavy, power, dash, flare, whirl, ride (pressed this frame; ride: G, in or out of a vehicle),
+//   target, nextTarget, evade (pressed this frame), guard (held),
 //   look: {x, y} (radians this frame), zoom (wheel steps)
 export class Input {
   constructor(el, { pads = true } = {}) {
@@ -10,7 +11,7 @@ export class Input {
     this.pressed = new Set();
     this.mouse = { x: 0, y: 0, wheel: 0, right: false, drag: false, attack: false };
     this.walkToggle = false;
-    this.pad = { a: false, l3: false, sprint: false, x: false, y: false, b: false, lb: false, start: false, r3: false, back: false };
+    this.pad = { a: false, l3: false, sprint: false, x: false, y: false, b: false, lb: false, start: false, r3: false, back: false, lock: false, next: false, evade: false };
     this.sensitivity = 0.0022;
     this.override = null; // scripted input for captures
     this.lockable = true;
@@ -115,6 +116,10 @@ export class Input {
       dash: this.pressed.has('KeyE'),
       flare: this.pressed.has('KeyR'),
       whirl: this.pressed.has('KeyC'),
+      target: this.pressed.has('KeyT'),
+      nextTarget: this.pressed.has('KeyY'),
+      evade: this.pressed.has('KeyX'),
+      guard: k.has('KeyZ'),
       ride: this.pressed.has('KeyG'),
       look: { x: this.mouse.x * this.sensitivity, y: this.mouse.y * this.sensitivity },
       zoom: this.mouse.wheel,
@@ -149,11 +154,15 @@ export class Input {
       if (btn(9) && !this.pad.start) s.flare = true;
       if (btn(11) && !this.pad.r3) s.whirl = true;
       if (btn(8) && !this.pad.back) s.ride = true;
-      if ((pad.buttons[6]?.value ?? 0) > 0.4) s.strafe = true;
+      if ((pad.buttons[6]?.value ?? 0) > 0.4) { s.strafe = true; s.guard = true; }
+      if (btn(14) && !this.pad.lock) s.target = true;
+      if (btn(15) && !this.pad.next) s.nextTarget = true;
+      if (btn(7) && !this.pad.evade) s.evade = true;
       if (btn(12)) s.zoom -= 4 * dt;
       if (btn(13)) s.zoom += 4 * dt;
       this.pad.a = btn(0); this.pad.l3 = btn(10); this.pad.x = btn(2); this.pad.y = btn(3);
       this.pad.b = btn(1); this.pad.lb = btn(4); this.pad.start = btn(9); this.pad.r3 = btn(11); this.pad.back = btn(8);
+      this.pad.lock = btn(14); this.pad.next = btn(15); this.pad.evade = btn(7);
       if (rx || ry || pl > 0.01 || btn(0)) s.device = 'pad';
     }
     return s;

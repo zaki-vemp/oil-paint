@@ -37,30 +37,24 @@ the shared `paint3` cel/oil shader (`toneMapped: false`, at most 6 meshes per as
   Cyber-Assassin, adds `Sword_Slash`) on 21-bone humanoid skeletons, plus `foe-mech.glb`
   (Aethelgard Titan Siege Mech, adds `Attack`) on a 25-bone walker rig.
 
-## Reproducing with Blender 4.2 LTS
+## Reproducing with Blender 4.2.23 LTS
 
 All eight builders share `tools/blender_aa_lib.py` (chamfered manifold primitives, vertex-colour AO,
-role batching, skinning, animation baking and GLB export). Rebuild from the repository root and
-validate every asset with `tools/assets.mjs`:
+role batching, skinning, animation baking and GLB export). Get Blender 4.2.23 LTS for your
+platform from the [Blender release archive](https://download.blender.org/release/Blender4.2/).
+On Linux, the official package can be extracted into `.test/blender` for a portable install.
+On other platforms set `BLENDER` to the Blender executable in the extracted package or app.
+
+From the repository root, rebuild and check all 26 exports in a temporary directory:
 
 ```sh
 BLENDER=${BLENDER:-.test/blender/blender}
-for script in \
-  tools/build_aa_mission_props.py \
-  tools/build_aa_landmarks.py \
-  tools/build_aa_blades.py \
-  tools/build_aa_vehicles.py \
-  tools/build_aa_civilians.py \
-  tools/build_aa_specialists.py \
-  tools/build_aa_infantry.py \
-  tools/build_aa_elites.py
-do
-  "$BLENDER" --background --disable-autoexec --python "$script"
-done
-node tools/assets.mjs
+"$BLENDER" --background --factory-startup --disable-autoexec --python-exit-code 1 --python tools/build_aa.py
 ```
 
-Do not edit GLB bytes by hand; regenerate from the Python sculptors above.
+The command reports any binary differences against `public/street`. Append `-- --install` to
+copy changed exports after validation. Run `node tools/assets.mjs` to check the published set
+directly. Regenerate model changes from the Python sculptors.
 
 ## Historical pipeline note
 

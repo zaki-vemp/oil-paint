@@ -40,7 +40,7 @@ export function createCabin(shared) {
       frame: { l: [0.13, 0.12, 0.13], m: [0.06, 0.055, 0.065], s: [0.022, 0.02, 0.035], own: [0.4, 0.26, 0.15] },
       door: { l: [0.2, 0.17, 0.17], m: [0.09, 0.075, 0.08], s: [0.03, 0.026, 0.04], own: [0.62, 0.36, 0.18] },
       ice: { l: [0.5, 0.75, 0.85], m: [0.25, 0.45, 0.6], s: [0.1, 0.2, 0.35], own: [1.0, 0.9, 0.7] },
-      pane: { l: [1.0, 0.7, 0.28], glow: true },
+      pane: { l: [3.1, 1.65, 0.48], glow: true },
     },
     light: /* glsl */ `
       vec3 kitPaint(vec3 P, vec3 Nn, int k, float tone, float r) {

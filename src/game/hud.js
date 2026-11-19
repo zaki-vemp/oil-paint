@@ -5,6 +5,7 @@ import * as THREE from 'three';
 import { CHAPTERS } from './chapters.js';
 import { POWERS, POWER_ORDER } from './levels.js';
 import { MOVES } from './duel.js';
+import { attackFor } from './tactics.js';
 import { SPEAKERS } from './audio.js';
 import { AVENUES, STREETS, GRID_MIN, GRID_MAX, zoneAt, ZONES } from '../world/grid.js';
 
@@ -45,6 +46,8 @@ export function createHUD({ levels, roam, marks, route, camera = null, audio = n
       </div>
     </section>
     <div class="target" hidden><div><strong></strong><span></span></div><div class="target-hp"><i></i></div><p></p></div>
+    <div class="focus-marker" hidden aria-hidden="true"></div>
+    <div class="combat-status" hidden><span></span><i></i></div>
     <section class="bossbar" hidden aria-label="Rival duel">
       <div class="boss-heading"><span>Duel protocol</span><strong></strong><b></b></div>
       <div class="boss-health" role="meter" aria-label="Rival health" aria-valuemin="0"><i></i></div>
@@ -84,6 +87,7 @@ export function createHUD({ levels, roam, marks, route, camera = null, audio = n
     count: get('.count'), distance: get('.distance'), cash: get('.cash'),
     steps: [...hud.querySelectorAll('.journey i')], actions: [...hud.querySelectorAll('.actions button')],
     target: get('.target'), targetName: get('.target strong'), targetHp: get('.target span'), targetFill: get('.target-hp i'), tell: get('.target p'),
+    focusMarker: get('.focus-marker'), combatStatus: get('.combat-status'),
     wp: get('.waypoint'), wpArrow: get('.wp-arrow'), wpLabel: get('.wp-label'), wpDist: get('.wp-dist'),
     dayClock: get('.day-clock'), echoCount: get('.echo-count'),
     commsImg: get('.comms-portrait img'), commsSpeaker: get('.comms-speaker'), commsRole: get('.comms-role'), commsFreq: get('.comms-freq'),
@@ -268,8 +272,20 @@ export function createHUD({ levels, roam, marks, route, camera = null, audio = n
     rideEl.classList.toggle('loose', !!(state.air || state.sliding));
   }
   const wpLocal = new THREE.Vector3(), wpNdc = new THREE.Vector3();
+  const focusNdc = new THREE.Vector3();
+  const touchLock = document.getElementById('touch-lock'), touchNext = document.getElementById('touch-next');
+  const touchEvade = document.getElementById('touch-evade');
+  function focusMarker(target) {
+    const marker = els.focusMarker;
+    if (!camera || !target || target.dead || target.gone || !target.mesh.visible) { marker.hidden = true; return; }
+    focusNdc.set(target.x, target.mesh.position.y + (target.kind === 'brute' ? 2.65 : 1.85), target.z).project(camera);
+    const { x, y, z } = focusNdc;
+    marker.hidden = z < -1 || z > 1 || Math.abs(x) > 1 || Math.abs(y) > 1;
+    if (!marker.hidden) marker.style.transform = `translate(${(0.5 + x / 2) * innerWidth}px, ${(0.5 - y / 2) * innerHeight}px)`;
+  }
   let lastStepsKey = '', lastTip = '', lastObj = '', lastWpLabel = '', lastWpDist = '', lastClock = '', lastEchoes = '';
-  function update(dt, { hp, power, cleared, won, enemies, player, has, dashCool, flareCool, invuln, boss, heat = 0, cash = 0, stars = 0, task = '', mission = null, dayNight = null }) {
+  function update(dt, { hp, power, cleared, won, enemies, player, has, dashCool, flareCool, invuln, boss, heat = 0, cash = 0, stars = 0, task = '', mission = null, dayNight = null,
+    focus, guarding, guardMeter = 1, guardBreak = 0, counter = 0, evadeCool = 0 }) {
     const dn = dayNight ?? window.lab?.dayNight;
     if (dn && els.dayClock) {
       const label = `${dn.phase === 'night' ? '☾ Night' : '☀ Day'} · ${dn.mmss}`;
@@ -409,17 +425,30 @@ export function createHUD({ levels, roam, marks, route, camera = null, audio = n
       dashButton.querySelector('small').textContent = dashCool > 0 ? `${Math.ceil(dashCool)}s` : '';
       powersButton.hidden = !els.actions.some(el => !el.hidden);
       if (powersButton.hidden) showPowers(false);
+      touchLock.setAttribute('aria-pressed', String(!!focus));
+      touchNext.hidden = !focus;
+      touchEvade.disabled = evadeCool > 0;
+    }
+    els.combatStatus.hidden = !guarding && guardMeter >= 1 && counter <= 0 && guardBreak <= 0;
+    if (!els.combatStatus.hidden) {
+      els.combatStatus.querySelector('span').textContent = guardBreak > 0 ? 'Guard broken' : counter > 0 ? (mobile ? 'Counter · Attack' : 'Counter · Strike') : 'Guard';
+      els.combatStatus.querySelector('i').style.setProperty('--guard', guardMeter);
     }
     // a calm passer-by reads as a few metres further off, so a real threat beside them takes the panel
     const reach = e => Math.hypot(e.x - player.feet.x, e.z - player.feet.z) + (e.civ && !(e.angry > 0) ? 5 : 0);
-    const target = enemies.filter(e => !e.dead && !e.gone).sort((a, b) => reach(a) - reach(b))[0];
-    els.target.hidden = !!boss || !target || target.duel || Math.hypot(target.x - player.feet.x, target.z - player.feet.z) > 10;
+    const locked = focus && !focus.dead && !focus.gone;
+    const target = locked ? focus : enemies.filter(e => !e.dead && !e.gone).sort((a, b) => reach(a) - reach(b))[0];
+    els.target.hidden = (!!boss && !locked) || !target || target.duel || (!locked && Math.hypot(target.x - player.feet.x, target.z - player.feet.z) > 10);
     if (!els.target.hidden) {
       const [name, tier] = FOES[target.kind];
-      els.targetName.textContent = name;
+      els.targetName.textContent = locked ? `Locked · ${name}` : name;
       els.targetHp.textContent = target.civ ? (target.angry > 0 ? 'Hostile' : target.mark ? 'Mission Target' : 'Bystander') : `T${tier} · ${Math.ceil(target.hp)} HP`;
       els.targetFill.style.transform = `scaleX(${target.hp / target.maxHp})`;
-      els.tell.textContent = target.mark ? 'Mission target — defeat to recover the cipher key!' : target.kind === 'thief' ? 'Thief or jogger? A thief carries loot at the hip.' : target.civ && !(target.angry > 0) ? 'Not your fight. Hurting them costs you.' : target.windup > 0 ? (target.shot ? 'Laser lock — sidestep, dash or cut the shot back' : 'Incoming — dodge, or strike now to parry') : target.air > 0 ? 'Airborne — keep the chain going' : target.stagger > 0 ? 'Staggered — strike now' : target.shot ? 'Close the gap. He backs off.' : 'Keep moving. Watch for the windup.';
+      const move = attackFor(target);
+      if (target.defend > 0 && target.defending === 'Guard') els.tell.textContent = 'Guard up · circle or break it with a heavy strike';
+      else if (target.windup > 0 && move) els.tell.textContent = `${move.name} · ${move.unblockable ? 'Unblockable' : move.shot ? 'Sidestep the sight line' : 'Watch the windup'}`;
+      else if (target.recover > 0) els.tell.textContent = 'Recovering · strike now';
+      else els.tell.textContent = target.mark ? 'Mission target — defeat to recover the cipher key!' : target.kind === 'thief' ? 'Thief or jogger? A thief carries loot at the hip.' : target.civ && !(target.angry > 0) ? 'Not your fight. Hurting them costs you.' : target.air > 0 ? 'Airborne — keep the chain going' : target.stagger > 0 ? 'Staggered — strike now' : target.shot ? 'Close the gap. He backs off.' : 'Keep moving. Watch for the windup.';
       els.target.classList.toggle('warning', target.windup > 0);
     }
     const bar = get('.bossbar'); bar.hidden = !boss;
@@ -432,11 +461,13 @@ export function createHUD({ levels, roam, marks, route, camera = null, audio = n
       const open = boss.phase === 'recovery';
       bar.classList.toggle('opening', open);
       const keys = ['J', has('spark') ? 'Q' : null, has('heavy') ? 'F' : null].filter(Boolean).join(' / ');
-      bar.querySelector('.boss-cue').textContent = open ? `Opening — strike now!  ${keys}` : boss.phase === 'windup' || boss.phase === 'active' ? MOVES[boss.move].cue : boss.phase === 'intro' ? 'A familiar face. A new lesson.' : 'Watch the blade. Keep room to move.';
+      bar.querySelector('.boss-cue').textContent = open ? `Opening — strike now!  ${keys}`
+        : boss.phase === 'guard' ? 'Guard up — expect a riposte' : boss.phase === 'sidestep' ? 'Circling — watch his return cut'
+        : boss.phase === 'windup' || boss.phase === 'active' ? MOVES[boss.move].cue : boss.phase === 'intro' ? 'A familiar face. A new lesson.' : 'Watch the blade. Keep room to move.';
       bar.querySelector('.boss-lesson').textContent = boss.lesson;
       [...bar.querySelectorAll('.lesson-steps span')].forEach((el, i) => el.classList.toggle('done', i === 0 ? boss.phase !== 'intro' : i === 1 ? boss.evaded : boss.punishes > 0));
     }
     if ((mapTime -= dt) <= 0) { drawMap(player, enemies, next, mission?.markers ?? []); mapTime = 0.1; }
   }
-  return { update, toast, story, comms, combo, flashText, ride, element: hud };
+  return { update, toast, story, comms, combo, flashText, ride, focusMarker, element: hud };
 }

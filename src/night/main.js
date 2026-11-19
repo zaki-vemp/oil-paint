@@ -143,11 +143,10 @@ lap('physics');
 
 const figure = await figureComing;
 const { man } = figure;
-// the drawn traveler's day colours dimmed and cooled for the night, so the aurora rim is what picks him out
+// Realistic PBR lighting handles moonlight & warm lantern naturally without darkening base albedo.
 const avatarTints = [];
 for (const m of figure.avatar?.materials.values() ?? []) {
-  avatarTints.push({ mat: m, base: m.uniforms.uTint.value.clone(), night: m.uniforms.uTint.value.clone().multiply(new THREE.Color(0.6, 0.66, 0.84)) });
-  m.uniforms.uTint.value.copy(avatarTints[avatarTints.length - 1].night);
+  avatarTints.push({ mat: m, base: m.uniforms.uTint.value.clone(), night: m.uniforms.uTint.value.clone() });
 }
 scene.add(man.object, figure.cloakMesh, figure.dabs);
 const animator = new Animator(man);
@@ -173,16 +172,20 @@ addEventListener('pagehide', () => {
 });
 fitFrame = () => frame.resize();
 frame.uniforms.uCanvas.value = 0;
-frame.uniforms.uShafts.value = 0; // no sun stands in this air
-// drawn, not painted: ink round every silhouette near him, and the corners lost in the dark
-frame.uniforms.uInk.value = 1;
+frame.uniforms.uShafts.value = 0;
+// Realistic AAA Snowbound mode: no ink outlines, rich HDR aurora & cabin bloom, subtle optical vignette
+frame.uniforms.uInk.value = 0;
 frame.uniforms.uInkColor.value.setRGB(0.008, 0.014, 0.035);
 frame.uniforms.uInkFar.value = 170;
-frame.uniforms.uVignette.value = 0.62;
-if (q.has('ink')) frame.uniforms.uInk.value = +q.get('ink'); // ?ink=0 to compare
+frame.uniforms.uVignette.value = 0.28;
+if (q.has('ink')) frame.uniforms.uInk.value = +q.get('ink');
+shared.uAurora.value = 1;
+shared.uExposure.value = 1.15;
 graphics = createGraphics({ renderer, capture, apply(profile) {
   frame.setSamples(profile.samples);
   frame.resize();
+  frame.uniforms.uAOStrength.value = profile.level === 'low' ? 0 : profile.level === 'medium' ? 0.30 : 0.42;
+  frame.uniforms.uBloomStrength.value = profile.level === 'low' ? 0.28 : 0.44;
   sky.setQuality(profile.level);
   drift.geometry.instanceCount = profile.drift;
 } });
@@ -297,12 +300,14 @@ function tick(dt, draw = true) {
   time += dt;
   // Online the ridge goes on under the menu (the host runs it for everyone), and a downed wanderer waits for a hand.
   if (window.__paused || hunt?.downed) input.reset();
-  const inp = input.read(realDt);
+  let inp = input.read(realDt);
   const isIn = cabin.inside(player.feet);
   first += ((firstKey || cabin.threshold(player.feet) ? 1 : 0) - first) * (1 - Math.exp(-6 * dt));
   const fp = first * first * (3 - 2 * first);
   cabin.update(time);
-  player.update(dt, inp, follow.yaw);
+  if (window.__paused) hunt?.combatInput(dt, null, follow.yaw);
+  else inp = hunt?.combatInput(dt, inp, follow.yaw, fp < 0.5) ?? inp;
+  player.update(dt, inp, inp.combatYaw ?? follow.yaw);
   // off the ridge and into the fjord, or off the map: he starts again
   if (player.feet.y < 1.5 || Math.max(Math.abs(player.feet.x), Math.abs(player.feet.z)) > EXTENT - 30) place(spawn.x, spawn.z, Math.PI);
   const root = player.visualRoot(dt);
@@ -323,7 +328,7 @@ function tick(dt, draw = true) {
   man.object.updateMatrixWorld(true);
   holdLantern();
   dayNight.update(time);
-  hunt?.update(dt, inp, realDt);
+  hunt?.update(dt, { ...inp, viewYaw: follow.yaw }, realDt);
   if (hunt) {
     if (hudChapter) hudChapter.textContent = hunt.won ? 'Memory 00 // Complete' : 'Memory 00 // Prologue';
     if (hudTitle) hudTitle.textContent = 'Ridge Above Old Kyoto';
@@ -370,7 +375,8 @@ function tick(dt, draw = true) {
 
   // a trunk between the eye and him brings the eye in; over the ground it rises instead
   follow.shake = hunt?.cameraKick ?? 0;
-  follow.update(realDt, root, inp.look, inp.zoom, (o, d, max) => {
+  if (inp.combatYaw != null && !follow.free) follow.track(inp.combatYaw, realDt);
+  follow.update(realDt, root, inp.combatYaw == null ? inp.look : { x: 0, y: inp.look.y }, inp.zoom, (o, d, max) => {
     let hit = player.castRay(o, d, max);
     if (hit != null && o.y + d.y * hit - heightAt(o.x + d.x * hit, o.z + d.z * hit) < 0.5) hit = null;
     const tree = pines.block(o, d, max);
@@ -403,6 +409,8 @@ const DAY_BOUNCE = new THREE.Color(0.10, 0.14, 0.18), NIGHT_BOUNCE = new THREE.C
 const DAY_GLAZE = new THREE.Color(0.55, 0.62, 0.78), NIGHT_GLAZE = new THREE.Color(0.3, 0.38, 0.62);
 function renderScene() {
   camera.updateMatrixWorld(true);
+  hunt?.hud.focusMarker(hunt.visibleTarget);
+  camera.updateMatrixWorld(true);
   renderer.getDrawingBufferSize(size);
   const dn = dayNight.update(time);
   const n = dn.night;
@@ -429,11 +437,12 @@ function renderScene() {
 }
 
 window.lab = {
-  THREE, player, follow, camera, input, animator, figure, shared, frame, renderer, graphics, timings, counts: { ...snow.counts, ...pines.counts, ...cabin.counts }, cabin, heightAt, crestX, tracks, sky, audio, dayNight,
+  THREE, player, follow, camera, input, animator, figure, shared, frame, renderer, graphics, timings, counts: { ...snow.counts, ...pines.counts, ...cabin.counts }, cabin, heightAt, crestX, tracks, sky, lantern, audio, dayNight,
   step(dt = 1 / 60, n = 1, draw = true) { for (let i = 0; i < n; i++) tick(dt, draw && i === n - 1); },
   setInput(fn) { input.override = fn; },
   /** Puts him at (x, z) on the ground, facing (fx, fz), with the eye behind him. */
   teleport(x, z, fx, fz) {
+    hunt?.clearFocus();
     place(x, z, Math.atan2(fx - x, fz - z));
     follow.yaw = player.yaw; follow.pivot.set(0, 0, 0);
     tick(1 / 60);

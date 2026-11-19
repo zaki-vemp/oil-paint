@@ -3,11 +3,10 @@
 import { SCENE, showScene } from './scenes.js';
 import { qualityMode } from './quality.js';
 import { getAudio, SPEAKERS } from './game/audio.js';
-import { STORY_ACTS, CHARACTER_DOSSIERS, ECHO_SHARDS } from './game/story.js';
+import { STORY_ACTS, CHARACTER_DOSSIERS, ECHO_SHARDS, loadEchoIds } from './game/story.js';
 import { CHAPTERS } from './game/chapters.js';
 import { loadProgress } from './game/levels.js';
 
-const LORE_KEY = 'oilpaint.lore.v1';
 const q = new URLSearchParams(location.search);
 const root = document.documentElement;
 root.dataset.scene = SCENE;
@@ -244,20 +243,7 @@ if (SCENE !== 'autumn') {
   });
 
   function readUnlockedEchoIds() {
-    if (window.lab?.missions?.echoes?.unlockedIds) {
-      return new Set(window.lab.missions.echoes.unlockedIds);
-    }
-    try {
-      if (q.has('fresh')) return new Set();
-      const raw = localStorage.getItem(LORE_KEY);
-      if (!raw) return new Set();
-      const parsed = JSON.parse(raw);
-      const list = Array.isArray(parsed) ? parsed : Array.isArray(parsed?.unlockedIds) ? parsed.unlockedIds : [];
-      const valid = new Set(ECHO_SHARDS.map((s) => s.id));
-      return new Set(list.filter((id) => typeof id === 'string' && valid.has(id)));
-    } catch {
-      return new Set();
-    }
+    return new Set(window.lab?.missions?.echoes.unlockedIds ?? loadEchoIds());
   }
 
   if (castPane) {
@@ -288,8 +274,9 @@ if (SCENE !== 'autumn') {
     if (codexTabEchoes) codexTabEchoes.textContent = `Echoes (${unlocked.size}/${total})`;
 
     if (actsPane) {
-      const roamMode = Boolean(window.lab?.hunt?.roam) || ['roam', 'online'].includes(q.get('mode'));
-      const cleared = window.lab?.hunt?.seg ?? loadProgress()?.cleared ?? 0;
+      const roamMode = SCENE === 'autumn' && ['roam', 'online'].includes(q.get('mode'));
+      const live = SCENE === 'autumn' ? window.lab?.hunt : null;
+      const cleared = live?.seg ?? loadProgress()?.cleared ?? 0;
       actsPane.innerHTML = STORY_ACTS.map((act) => {
         const accent = CHAPTERS[act.seg]?.color ?? '#00f0ff';
         const state = roamMode ? 'done' : act.seg < cleared ? 'done' : act.seg === cleared ? 'active' : '';

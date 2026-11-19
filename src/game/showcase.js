@@ -1,9 +1,10 @@
 // Cinematic Investor Showcase & Camera Tour for "Komorebi: Protocol Zero-Seven".
 // Smoothly glides `follow.free` across six curated 7-second shots spanning Neo-Kyoto's landmarks,
 // wet-asphalt neon reflections, sunlit woodland parks, street life, skybridges, siege mechs, and
-// the Amber Sanctuary Spire. Never auto-starts unless `?tour` is in the URL or triggered by UI.
+// the Amber Sanctuary Spire. Starts from `?tour=1` or the Tour button.
 import * as THREE from 'three';
 import { EXTENT } from '../oilpaint/common.js';
+import { createDayNight } from './daynight.js';
 
 export const SHOT_DURATION = 7.0;
 
@@ -12,7 +13,7 @@ export const SHOTS = [
     id: 'sunleaf-torii',
     kicker: 'Shot 01 // Sunleaf Row · Midnight Neon',
     title: 'Sunleaf Row Cyber-Skyline & Neon Torii Gateways',
-    subtitle: 'Custom World-Pinned Painterly Shader · Zero Post-Process Filters · Wet-Asphalt Neon Speculars',
+    subtitle: 'World-Pinned Paint · Neon Reflections on Wet Asphalt',
     phase: 'night',
     accent: '#00f0ff',
     fromPos: [-118.2, 3.6, 214.0],
@@ -36,7 +37,7 @@ export const SHOTS = [
     id: 'petal-arcade',
     kicker: 'Shot 03 // Petal Arcade · Living Street Simulation',
     title: 'Petal Arcade Bustling Street Life, Night-Market Stalls & Fleet Vehicles',
-    subtitle: 'Real-Time Rapier Physics · 5 Driveable Vehicle Classes · Autonomous Traffic & Crowd AI',
+    subtitle: 'Market Stalls, Pedestrians & Five Vehicle Classes',
     phase: 'night',
     accent: '#ff4fa3',
     fromPos: [-26.5, 3.8, 164.0],
@@ -60,7 +61,7 @@ export const SHOTS = [
     id: 'ashen-mech',
     kicker: 'Shot 05 // Ashen Hollow · Combat & Enemy Escalation',
     title: 'Ashen Hollow Aethelgard Siege Mech & Syndicate Garrison',
-    subtitle: 'Tactical Swordplay, Parries & Perfect-Dodge Slow-Mo · 6 Escalating Enemy Archetypes & Rivals',
+    subtitle: 'Swordplay, Parries & Perfect Dodges · Aethelgard Infantry and Siege Mechs',
     phase: 'night',
     accent: '#ff5a4d',
     fromPos: [4.5, 4.9, -127.5],
@@ -72,7 +73,7 @@ export const SHOTS = [
     id: 'amber-sanctuary',
     kicker: 'Shot 06 // Amber Sanctuary · Protocol Zero-Seven Finale',
     title: 'The Amber Sanctuary Spire — Finale Overlook',
-    subtitle: '6-Sector Story Campaign · 8-Player Online City · 60 FPS WebGL2 Directly in the Browser',
+    subtitle: 'Six-Sector Campaign · Eight-Player Online City',
     phase: 'night',
     accent: '#ffb000',
     fromPos: [21.0, 5.4, -256.0],
@@ -94,7 +95,6 @@ export function createShowcase({ follow, player = null, heightAt, dayNight = nul
   let active = false;
   let index = 0;
   let elapsed = 0;
-  let savedPhase = 'day';
   let startedAtMs = 0;
 
   const eyePos = new THREE.Vector3();
@@ -188,8 +188,8 @@ export function createShowcase({ follow, player = null, heightAt, dayNight = nul
 
   function applyShotMeta() {
     const shot = SHOTS[index];
-    if (dayNight && shot.phase && dayNight.phase !== shot.phase) {
-      dayNight.setPhase(shot.phase, worldTimeNow());
+    if (dayNight) {
+      dayNight.previewPhase(shot.phase, worldTimeNow());
       globalThis.window?.lab?.syncDayNight?.(10);
     }
     if (!overlay || !els) return;
@@ -233,9 +233,6 @@ export function createShowcase({ follow, player = null, heightAt, dayNight = nul
   }
 
   function start(startIndex = 0) {
-    if (!active) {
-      savedPhase = dayNight?.phase ?? 'day';
-    }
     active = true;
     startedAtMs = globalThis.performance?.now?.() ?? 0;
     if (doc) {
@@ -250,7 +247,7 @@ export function createShowcase({ follow, player = null, heightAt, dayNight = nul
     goTo(startIndex);
   }
 
-  function stop({ restorePhase = true, silent = false } = {}) {
+  function stop({ silent = false } = {}) {
     if (!active) return;
     active = false;
     follow.free = null;
@@ -259,8 +256,8 @@ export function createShowcase({ follow, player = null, heightAt, dayNight = nul
     }
     if (overlay) overlay.hidden = true;
     if (doc) delete doc.documentElement.dataset.showcase;
-    if (restorePhase && dayNight) {
-      dayNight.setPhase(savedPhase, worldTimeNow());
+    if (dayNight) {
+      dayNight.previewPhase(null, worldTimeNow());
       globalThis.window?.lab?.syncDayNight?.(10);
     }
     syncButtons();
@@ -403,13 +400,9 @@ export function demoShowcase() {
     throw new Error('showcase must preview both day and night');
   }
 
-  let currentPhase = 'night';
   const follow = { free: null, pivot: new THREE.Vector3(1, 2, 3) };
   const player = { feet: new THREE.Vector3(0, 0, 234) };
-  const dayNight = {
-    get phase() { return currentPhase; },
-    setPhase(p) { currentPhase = p; },
-  };
+  const dayNight = createDayNight({ startPhase: 'night' });
   const tour = createShowcase({ follow, player, heightAt: () => 0, dayNight });
   if (tour.active || follow.free !== null) throw new Error('must not auto-start');
   tour.start(0);
@@ -418,11 +411,14 @@ export function demoShowcase() {
   tour.update(3.5);
   if (Math.abs(follow.free.position.x - startX) < 0.2) throw new Error('camera must glide over time');
   tour.update(3.6);
-  if (tour.index !== 1 || currentPhase !== 'day') throw new Error('advance to shot 1 daybreak preview');
+  if (tour.index !== 1 || dayNight.phase !== 'day') throw new Error('advance to shot 1 daybreak preview');
   tour.next();
-  if (tour.index !== 2 || currentPhase !== 'night') throw new Error('next shot transitions back to night');
+  if (tour.index !== 2 || dayNight.phase !== 'night') throw new Error('next shot transitions back to night');
+  dayNight.advance(120);
   tour.stop({ silent: true });
-  if (tour.active || follow.free !== null || currentPhase !== 'night') throw new Error('stop cleans follow.free and restores phase');
+  if (tour.active || follow.free !== null || dayNight.phase !== 'night' || dayNight.remaining !== 480) {
+    throw new Error('stop releases the camera and restores the live phase and countdown');
+  }
   console.log('showcase.js: ok');
 }
 

@@ -28,8 +28,9 @@ await new Promise((r) => server.listen(0, '127.0.0.1', r));
 const exe = process.env.CHROME; // a Chromium of your own; without it, Playwright's
 const browser = await chromium.launch({ executablePath: exe, headless: true, args: ['--mute-audio', '--ignore-gpu-blocklist', ...(process.platform === 'win32' ? ['--use-angle=d3d11'] : process.platform === 'darwin' ? ['--use-angle=metal'] : []), '--enable-gpu', '--disable-gpu-vsync', '--disable-frame-rate-limit'] });
 const page = await browser.newPage({ viewport: { width, height }, deviceScaleFactor: 1 });
-const problems = [];
-page.on('pageerror', (e) => problems.push(e.message));
+const problems = new Set();
+page.on('pageerror', (e) => problems.add(e.message));
+page.on('console', (m) => { if (m.type() === 'error') problems.add(m.text()); });
 const t0 = Date.now();
 await page.goto(`http://127.0.0.1:${server.address().port}/?nopad&clean&${/scene=/.test(flag('query', '')) ? '' : 'scene=autumn&'}${flag('query', '')}`);
 await page.waitForFunction(() => window.lab?.ready, null, { timeout: 120000 });
@@ -47,8 +48,15 @@ const result = await page.evaluate(async (seconds) => {
   });
   times.sort((a, b) => a - b);
   const mean = times.reduce((a, b) => a + b, 0) / times.length;
-  return { frames: times.length, fps: Math.round(1000 / mean), median: +times[times.length >> 1].toFixed(2), p99: +times[Math.floor(times.length * 0.99)].toFixed(2), worst: +times[times.length - 1].toFixed(2) };
+  const gl = L.renderer.getContext();
+  const debug = gl.getExtension('WEBGL_debug_renderer_info');
+  const renderer = gl.getParameter(debug?.UNMASKED_RENDERER_WEBGL ?? gl.RENDERER);
+  return { renderer, contextLost: gl.isContextLost(), frames: times.length, fps: Math.round(1000 / mean),
+    median: +times[times.length >> 1].toFixed(2), p99: +times[Math.floor(times.length * 0.99)].toFixed(2), worst: +times[times.length - 1].toFixed(2) };
 }, seconds);
-console.log(JSON.stringify(result), problems.length ? 'problems: ' + problems.join(' | ') : '');
+console.log(JSON.stringify(result));
+if (result.contextLost) console.error('WebGL context was lost. Discard this measurement.');
+if (problems.size) console.error([...problems].slice(0, 3).join('\n'));
+if (result.contextLost || problems.size) process.exitCode = 1;
 await browser.close();
 server.close();

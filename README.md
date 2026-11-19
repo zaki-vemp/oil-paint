@@ -3,23 +3,31 @@ kind: game
 engine: three.js
 ---
 
-# Komorebi — A spirit trail
+# Komorebi: Protocol Zero-Seven
 
-An anime-inspired third-person adventure through six changing forests. Defeat each chapter’s creatures and mirror rival to open its shrine, learn a new ability, and reach the sanctuary. The trail is the default world; **Snowbound** is a separate lantern-lit journey under the aurora.
+A third-person action adventure set in Neo-Kyoto, five years after the Silent
+Autumn. You play Kael, Courier 07, carrying Dr. Mira’s Komorebi Seed through
+Aethelgard’s Eternity Grid. Recover twelve Memory Echo Shards, duel Ren’s six
+Neural Specters, and reach Amber Sanctuary Spire. **Snowbound** is the playable
+prologue, *Memory 00 // Ridge Above Old Kyoto*.
 
 ## Play locally
 
 ```sh
-git lfs pull
 npm install
 npm run dev
 ```
 
-Open [localhost:5406](http://127.0.0.1:5406). Click the world to look, then click again or press J to strike. Escape opens the pause menu, including story/free exploration, world travel and scenery quality. A first click only captures the mouse. The game is silent.
+Open [localhost:5406](http://127.0.0.1:5406). Click the world to capture the
+mouse, then click again or press J to strike. Escape opens the pause menu with
+the Codex, audio and graphics settings, and mode selection. Music and spoken
+radio comms start after a user gesture. Radio voices use browser speech with
+procedural audio as a fallback.
 
-On phones and tablets, choose **Full screen** or **Normal screen** before the world loads. Fullscreen asks the browser to hide its chrome and lock landscape where supported; if the browser declines, choose Normal screen instead. Rotate the phone sideways to play with the touch stick and action buttons. The pause menu lets you switch screen modes later; ordinary gameplay taps never request fullscreen.
-
-Mobile starts with **Attack** and **Jump**. **Dash** appears when earned, and **Powers** opens a compact menu of unlocked abilities with charge and cooldown feedback. The left stick moves (push to its edge to sprint); dragging the world looks around. Vehicle actions appear only in reach. Driving hides combat buttons and changes Jump to **Brake**, with **Exit vehicle** beside it.
+On a phone or tablet, choose **Full screen** or **Normal screen** before loading.
+Use the left stick to move and drag the world to look. **Dash** and **Powers**
+appear when earned. While driving, **Jump** becomes **Brake** and the vehicle
+prompt becomes **Exit vehicle**.
 
 | Action | Keyboard / mouse | Gamepad |
 |---|---|---|
@@ -28,6 +36,9 @@ Mobile starts with **Attack** and **Jump**. **Dash** appears when earned, and **
 | Sprint | Shift | L3 toggle / RB |
 | Jump / short hop | Hold / tap Space | Hold / tap A |
 | Strike | J / left click | X |
+| Lock / next target | T / Y | D-pad left / right |
+| Quickstep | X | RT |
+| Guard | Hold Z | Hold LT |
 | Spark | Q | Y |
 | Dash | E | B |
 | Heavy strike | F | LB |
@@ -39,103 +50,125 @@ Mobile starts with **Attack** and **Jump**. **Dash** appears when earned, and **
 
 Touch devices have a movement stick, camera drag, jump and ability buttons. Snowbound also supports V for first person; the cabin switches to it automatically. F remains a normal strike in Snowbound.
 
-## Chapters and progression
+Lock a hostile to circle it and aim strikes. Start a combo with forward and Strike to close in with an advancing cut. Quickstep in any direction or backstep from rest. A guard covers attacks from the front and consumes guard strength. Raise it just before impact, release it, and strike to counter. Evade Ren’s overhead slam.
 
-| Chapter | World palette | HUD | Earned ability |
-|---|---|---|---|
-| Sunleaf Trail | Sunlit green | Field journal | Spark |
-| Petalwood | Rose blossoms | Field journal | Dash |
-| Jade Highlands | Deep jade | Spirit watch | Heavy strike |
-| Moonveil Grove | Blue moonlight | Spirit watch | Flare |
-| Ashen Hollow | Smoky rose | Spirit watch | Whirl |
-| Amber Sanctuary | Golden foliage | Field journal | Sanctuary victory |
+Enemy crews take turns pressing you in melee while their allies flank. Gunners look for a clear lane and use a close-range stock strike if rushed. Punks and blades sidestep a windup, enforcers brace and answer with a shield bash, and the mech can armor through light hits. Gold signals a guard and orange signals an unblockable windup. Break a guard with Heavy, Whirl, or Flare, or move around its front.
 
-The world palette blends as you cross chapter boundaries. HUD treatment follows the chapter automatically. The live trail map shows your position, checkpoints and nearby beasts; objectives and enemy health read actual game state.
+Ren’s Specters build from a single sweep to thrusts, paired cuts, sidesteps, guard ripostes, and feints. Wait for the green recovery cue before committing to a punish.
 
-Each chapter ends in a **mirror duel against Ren**, a swordsman from the same anime character family as the traveler. Defeating the creatures reveals Ren at the shrine; the gate stays closed until the duel is won. The six lessons build in order:
+## Campaign and preview
 
-1. Read an orange sweep, jump or backstep, and strike during the green recovery window.
-2. Sidestep a committed thrust and punish it with Spark.
-3. Dash to evade the two-cut pattern; wait for the second cut before attacking.
-4. Evade the overhead slam or break the guard with two heavy strikes.
-5. Use the earlier lessons to win Whirl from the Ember Spiral rival.
-6. Combine Whirl guard breaks and Flare openings against your final mirror.
+| District | Earned ability |
+|---|---|
+| Sunleaf Row | Spark |
+| Petal Arcade | Dash |
+| Jade Heights | Heavy strike |
+| Moonveil Stacks | Flare |
+| Ashen Hollow | Whirl |
+| Amber Sanctuary | Sanctuary victory |
 
-The boss HUD shows the current cue, the lesson, health and the real “read / evade / punish” milestones. Guarded attacks deal chip damage; recovery hits deal extra damage. Duels start with full health and spirit energy and set a nearby retry point. Leaving the duel resets it. Losing resets the living rival, while cleared creatures stay defeated for that session. Existing cleared-chapter saves remain valid.
+Each district pairs a field operation with a crew fight and a mirror duel.
+Read the telegraph, evade the attack, and use the recovery window. Relays heal
+and save the campaign. Two Echo Shrines per district unlock entries in the
+Memory Codex. Free Roam opens the city and all powers. Online City uses the
+room server from `npm run room` and has its own quick-match and private rooms.
 
-The traveler has an authored three-strike sword chain (cut, backhand, thrust), an overhead heavy, casting and hit recoil. Sword grips use a two-bone arm solve; blade trails follow the actual weapon. Brief hit pauses, bounded sparks, impact rings and camera feedback make hits readable; reduced-motion mode disables camera shake. Projectiles sweep against world colliders. Flare is an expanding ring rather than an opaque sphere.
+| URL query | Experience |
+|---|---|
+| `?scene=autumn&fresh` | Start a fresh campaign |
+| `?scene=autumn&mode=roam` | Explore the city freely |
+| `?scene=autumn&mode=online` | Join an open room |
+| `?scene=aurora` | Play the Snowbound prologue |
+| `?scene=autumn&tour=1` | Start the six-shot Investor Showcase |
+| `?phase=day` or `?phase=night` | Open in the chosen lighting phase |
+| `?quality=high`, `medium`, or `low` | Fix the graphics setting |
 
-Enemy strikes have a visible orange windup and commit to a direction. Step away, jump or dash to evade them. Sword hits stagger enemies, show impact sparks and restore a little spirit energy on defeat. Strikes are deliberate; proximity never attacks for you. Abilities unlock in order and show cooldowns or their required chapter.
+The pause menu also switches between day and night in a running solo game.
+`?clean` hides the HUD. `?capture` is for deterministic camera tools and disables
+the hunt.
 
-Movement uses a 60 Hz simulation, responsive acceleration/braking, buffered jumps, a 120 ms ledge grace period and variable jump height. Dashes sweep the Rapier capsule continuously against terrain, trees, rocks and closed gates. The camera checks three rays across its near plane for obstacles. Respawns reset physics and visual history together.
+## Rendering, physics and assets
 
-Shrines heal and set the respawn point. Story progress remains compatible with `localStorage['oilpaint.levels.v1']`: `{ cleared, x, z }`; powers are derived from the cleared count. Free exploration unlocks all abilities, removes gates and respawns beasts after 20 seconds, without writing the story save.
+Neo-Kyoto uses instanced towers, painted clouds, detailed windows and neon
+signs. Street fixtures tint their surroundings and cast broken reflections
+across wet asphalt. Filtered markings and distance-tinted ink keep the scene
+readable at speed. Auto graphics adjusts scenery detail, resolution and
+anti-aliasing in both scenes. High, Balanced and Low can also be selected live
+in the pause menu.
 
-## Rendering and assets
+Rapier sweeps the player capsule through movement, dashes and knockback. Jumps
+have an input buffer and a short ledge grace period. The city follow camera
+sweeps a sphere around its near plane, retracts on contact and eases back out.
+Vehicles use an arcade handling model with independent wheel travel, damped
+suspension, weight transfer, progressive tyre grip, handbrake slides, ramming
+and rollovers. Parked vehicles and traffic share the same collision system.
+Press G beside a stopped overturned vehicle to right it.
 
-The reviewed Blender street set is now active: Kestrel cars, Parcel vans, Razor
-motorcycles, courier scooters and a seated helmeted rider. The resident, mechanic
-and hooded courier use skinned models with six in-place animation clips and the
-existing civilian/thief AI. Terminals, supply crates, portable cores, uplink beacons
-and barricades form service areas beside checkpoints. Their colliders stay off
-roads and combat spaces. Authored vertex colours are rendered through the cel
-painter; no physical lighting or tone mapping is added. Preparation and provenance
-are documented in `public/street/SOURCE.md`.
+Twenty-six procedural Blender GLBs cover the Cyber-Katana, Ren’s odachi,
+Spirit Lantern, shrine, ramen stall, service props, five civilians, five foes,
+five vehicles and seated rider. The vertex-colour shader reads baked ambient
+occlusion and a separate emissive material. Rigged street characters have
+at least six skeletal clips. The traveler and rivals use **Seed-san by
+VirtualCast, Inc.** with the game’s locomotion rig and original gear.
+See [asset provenance and the Blender 4.2.23 LTS build](public/street/SOURCE.md).
 
-Graphics default to **Auto** in both worlds. Auto starts conservatively using
-available device hints, then adjusts resolution, anti-aliasing and scenery after
-sustained frame performance. It ignores loading, pauses and hidden tabs, lowers
-detail sooner than it raises it, and keeps the 1.5 pixel-ratio ceiling. The pause
-menu offers live **High**, **Balanced** and **Low** overrides without restarting a
-run. `?quality=high`, `?quality=medium` and `?quality=low` select fixed detail;
-`?capture` keeps fixed pixels and disables adaptation. Use a fixed quality query
-when comparing FPS, so adaptation cannot change the work being measured.
-
-The skyline has dark corner piers and lit shop bays, and fixed road puddles carry
-broken neon streaks. Checkpoint rings follow `heightAt` around the actual healing
-area; their thin cyan marks and narrow beacons leave the street readable.
-
-The trail is now a night city in solid cel-shaded geometry: instanced towers with lit windows, neon signs, street lamps, lane dashes, crates, smog banks and shrine gates, in six neon districts. Chapter palettes live in `src/game/chapters.js`, scenery in `src/world/anime.js`, and HUD/layout in `src/game/hud.js` and `src/ui.css`. Everything sits on the existing `heightAt` terrain; no new packages are required.
-
-The visible traveler is now **Seed-san by VirtualCast, Inc.**, a detailed textured anime model from the VRM Consortium samples. Rivals reuse it with a contrasting outfit. Its humanoid joints follow the existing hidden MakeHuman animation rig with rest-pose corrections, preserving locomotion and foot IK. Boots, scarf and katana are original geometry. No VRM runtime dependency was added; the model loads through the existing GLTFLoader.
-
-The street is 2.2× longer, with shrines 2.3× larger and roads wide enough to drive. A car and a bike wait past every shrine (`G`), and each district has moving traffic that yields to people. Vehicles exchange momentum in crashes and can overturn; step out and press `G` beside a stopped wreck to right it. Steering, tyre grip, handbrake slides, terrain support and airborne motion use an arcade handling model. Ramming throws enemies, but armed crews brace against it: a punk survives one full-speed hit. Citizens walk the pavement; hurting one costs health, killing one turns the street on you, and a hooded runner may be a thief who costs nothing. Earlier citizens and runners used original OpenGameArt meshes by pistachio (CC0) and Clint Bellanger (CC BY 3.0), with clothing variations and six authored animation clips. Earlier cars used the Eclipse SRC body by shotman_16 from Jreo’s VitaVehicle (CC BY 4.0), converted to the existing handling system. Source credits and reproduction steps are in `public/people/SOURCE.md` and `public/vehicles/SOURCE.md`. The enemies are now Quaternius CC0 people and a mech (`public/enemies/`, see its `SOURCE.md`): street punks, corp enforcers, hazmat gunners, razor ronin and a siege mech. Earlier builds used a textured animated Fox (PixelMannen/tomkranis/Asobo Studio/scurest, via Khronos) and Demon/BlueDemon from Quaternius Ultimate Monsters. They use their own locomotion, punch, hit-reaction and death clips where supplied. The original dog/wolf files remain for compatibility, but are no longer the active creature models. Snowbound retains the original world geometry but uses flat marks and clean character surfaces, without impasto or canvas grain. The original painter remains available in `src/oilpaint/`; its implementation notes follow below.
+```mermaid
+flowchart LR
+  Blender["Blender 4.2.23 LTS"] --> Assets["GLB exports · geometry and rig validation"]
+  Assets --> Runtime["Three.js painterly city · Rapier movement and collisions"]
+  Campaign["Six field operations · 12 Echoes · six duels"] --> Runtime
+  Runtime --> Preview["Snowbound prologue · six-shot city tour"]
+  Runtime --> Release["Production build · Playwright checks · eight screenshots"]
+```
 
 ## Build and verify
 
 ```sh
 npm run build
 npm run serve
-node src/game/hunt.js
-node src/game/levels.js
-node src/game/chapters.js
-node src/game/combat.js
-node src/game/duel.js
-node src/quality.js
-node tools/assets.mjs
-CHROME=/path/to/chrome node tools/graphics.mjs
-CHROME=/path/to/chrome node tools/mobile.mjs
-CHROME=/path/to/chrome node tools/gameplay.mjs
-CHROME=/path/to/chrome node tools/fps.mjs --seconds 8
 ```
 
-`tools/gameplay.mjs` runs against the served build on port 5405 (pass another URL as its first argument). It exercises movement, short/held jumps, dash collision, enemy windup/dodging, deliberate attacks, all rival lessons and chapter clears, victory, save restoration, pause and free-roam save isolation. The FPS tool chooses the native graphics backend on macOS/Windows.
+In another terminal, set `CHROME` to your Chrome or Chromium executable and run:
 
-Useful URLs: `?scene=autumn&fresh` ignores the existing save, `?scene=autumn&mode=roam` explores all chapters, `?scene=aurora` opens Snowbound, and `?quality=low` reduces scenery. `?capture` is deterministic and disables enemies; `?clean` hides the HUD without disabling gameplay.
+```sh
+node src/game/hunt.js
+node src/game/ride.js
+node src/game/story.js
+node src/game/daynight.js
+node src/game/showcase.js
+node src/game/net.js
+node src/quality.js
+node server/room.mjs --check
+node tools/assets.mjs
+node tools/combat.mjs
+node tools/enemies.mjs
+node tools/gameplay.mjs
+node tools/street.mjs
+node tools/graphics.mjs
+node tools/mobile.mjs
+node tools/fps.mjs --seconds 8 --query quality=high
+node tools/capture-investor-shots.mjs
+```
 
-The existing `window.lab` debug handle exposes `player`, `hunt`, `teleport(x,z,fx,fz)`, `step(dt,n)`, `setInput(fn)` and `view(eye,target)`. Headless scripts must use `tools/no-pointer-lock.mjs` to avoid capturing the real cursor.
+The Playwright gameplay, street, graphics and mobile scripts use the production
+server on port 5405 by default. Compare FPS back to back at a fixed quality and
+resolution. The capture script opens a local server for `dist/` and writes
+eight 1600×900 PNGs under `shots/`.
+
+The `window.lab` debug handle exposes `player`, `hunt`, `rides`,
+`teleport(x,z,fx,fz)`, `step(dt,n)`, `setInput(fn)` and `view(eye,target)`.
+Headless scripts use `tools/no-pointer-lock.mjs` to keep the real cursor free.
 
 ## Credits
 
-Code MIT; original scenery and procedural combat artwork CC0. Seed-san uses the VRM Public License 1.0 (required credit in the game menu); the Fox model is CC0 with CC BY 4.0 animation/conversion; Quaternius monsters and the hidden locomotion driver are CC0. Rapier is Apache-2.0 and three.js is MIT. No Pokémon characters or other franchise assets are included. See [LICENCE-NOTES.md](LICENCE-NOTES.md) and [public/CREDITS.md](public/CREDITS.md).
-
-## Model upgrade performance
-
-The detailed anime avatar, creature rigs and chapter rivals increase the complete build from about 9 MB to 22 MB. On the same local Chrome run at 1920×1080 over 8 seconds, the earlier models measured 139 fps and the upgraded models 105 fps. This is an intentional art-quality cost of the model replacement. Rivals share geometry/textures, appear only after their creature pack clears, and skip rendering/animation outside 36 m; there are no per-enemy render targets or shader variants. Low detail still reduces the grass budget and pixel ratio remains capped at 1.5.
+Code is MIT. Original procedural art is CC0 or MIT as credited at its source.
+Seed-san uses the VRM Public License 1.0. Three.js is MIT and Rapier is
+Apache-2.0. See [LICENCE-NOTES.md](LICENCE-NOTES.md) and
+[the asset credits](public/CREDITS.md).
 
 ## Original painter reference
 
-The sections below document the retained paint engine. The active trail uses the cel renderer described above.
+The sections below document the retained paint engine. Neo-Kyoto and Snowbound use the cel treatment described above.
 
 ### Paint engine concepts
 

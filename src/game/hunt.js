@@ -28,6 +28,8 @@ import { LEVELS, GOAL, KINDS, POWERS, POWER_ORDER, STORY, powersFor, unlocksFor,
 import { loadStreetAsset, streetClone } from '../street-assets.js';
 import { nextPavement } from '../world/grid.js';
 import { GUILT, CASH, MOB, WITNESS, RAM, HEAT, demoConfig } from './config.js';
+import { DEFENSE, PATTERNS, attackFor, chooseAttack, crewOrder, demoTactics } from './tactics.js';
+import { foePoses } from './foe-poses.js';
 export { GUILT, MOB, RAM, HEAT, CASH, WITNESS };
 
 export const POWER_MAX = 3;
@@ -115,8 +117,8 @@ export function inFront(px, pz, yaw, ex, ez, reach, arc, close = 0.65) {
 }
 
 /** A committed enemy strike can be dodged sideways, backwards, or over with a jump. */
-export function strikeHits(e, x, y, z, groundY) {
-  return Math.abs(y - groundY) < 0.9 && inFront(e.x, e.z, e.attackYaw, x, z, e.reach + 0.2, 0.85, 0.35);
+export function strikeHits(e, x, y, z, groundY, spec = attackFor(e)) {
+  return Math.abs(y - groundY) < (spec?.height ?? 0.9) && inFront(e.x, e.z, e.attackYaw, x, z, (spec?.reach ?? e.reach) + 0.2, spec?.arc ?? 0.85, 0.35);
 }
 
 const CLIP = (clip) => clip.name.split('|').pop().replace(/ \d+$/, '');
@@ -125,6 +127,7 @@ export async function createHunt({ scene, shared, man, animator, player, heightA
   // Level mode builds its own marks and mission relays from the level list; the night
   // scene passes marks and spots directly, which keeps working as before.
   const segs = levels ? levels.map((L) => ({ ...L })) : null;
+  const saved = segs && !roam ? loadProgress() : null;
   if (segs) {
     marks = [...segs.map((s) => ({ ...s.checkpoint })), { ...GOAL, goal: true }];
     spots = segs.flatMap((s, i) => s.spots.map((p) => ({ ...p, seg: i })));
@@ -137,6 +140,7 @@ export async function createHunt({ scene, shared, man, animator, player, heightA
     segs ? loadStreetAsset('terminal') : Promise.resolve(null),
   ]);
   const sources = Object.fromEntries(sourcesList);
+  const extraClips = new WeakMap();
   const white = new THREE.DataTexture(new Uint8Array([255, 255, 255, 255]), 1, 1);
   white.needsUpdate = true;
   const mats = new Map();
@@ -174,11 +178,15 @@ export async function createHunt({ scene, shared, man, animator, player, heightA
       if (!own.has(key)) {
         const picks = cast.paint?.[o.material.name.split('.')[0]];
         const vertexColors = !!o.geometry.getAttribute('color');
-        const tint = signal ? [1.6, 1.6, 1.6]
+        const tint = signal ? [1.15, 1.15, 1.15]
           : vertexColors ? (kind === 'civ' ? CIV_TINTS[variant % CIV_TINTS.length] : [1, 1, 1])
-          : o.material.map ? [1.2, 1.2, 1.2]
+          : o.material.map ? [1.1, 1.1, 1.1]
           : picks?.[variant % picks.length] ?? NEON[o.material.name] ?? o.material.color.toArray().map((v) => v ** (1 / 2.2));
-        const m = paint(shared, signal ? SIGNAL_PAL : PAL.steel, { grain: 2.6, skinned: o.isSkinnedMesh, vertexColors, map: vertexColors ? null : o.material.map ?? white, tint });
+        const m = paint(shared, signal ? SIGNAL_PAL : PAL.steel, {
+          grain: 2.6, skinned: o.isSkinnedMesh, vertexColors,
+          map: vertexColors ? null : o.material.map ?? white, tint,
+          surfaceKind: signal ? 6 : 0,
+        });
         if (vertexColors) m.side = THREE.FrontSide;
         own.set(key, { m, tint: m.uniforms.uTint.value.clone() });
       }
@@ -188,7 +196,8 @@ export async function createHunt({ scene, shared, man, animator, player, heightA
     });
     const named = {};
     for (const clip of src.animations) named[CLIP(clip)] = clip;
-    const clips = { Idle: named.Idle_Sword ?? named.Idle, Walk: named.Walk ?? named.Run, Run: named.Run, Attack: named[cast.attack], Hit: named.HitReact ?? named.HitRecieve ?? named.RecieveHit, Death: named.Death };
+    if (!extraClips.has(src)) extraClips.set(src, foePoses(model, kind));
+    const clips = { Idle: named.Idle_Sword ?? named.Idle, Walk: named.Walk ?? named.Run, Run: named.Run, Attack: named[cast.attack], Hit: named.HitReact ?? named.HitRecieve ?? named.RecieveHit, Death: named.Death, ...extraClips.get(src) };
     const mixer = new THREE.AnimationMixer(mesh);
     const action = mixer.clipAction(clips.Idle);
     action.play();
@@ -321,7 +330,7 @@ export async function createHunt({ scene, shared, man, animator, player, heightA
         transparent: true, side: THREE.DoubleSide, depthWrite: false, toneMapped: false,
       }));
       e.arena.position.set(e.homeX, 0, e.homeZ); e.arena.visible = false;
-      e.beacon = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.28, 22, 8, 1, true), new THREE.MeshBasicMaterial({ color: 0xff2a6d, transparent: true, opacity: 0.28, side: THREE.DoubleSide, depthWrite: false, toneMapped: false }));
+      e.beacon = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.22, 22, 10, 1, true), new THREE.MeshBasicMaterial({ color: 0xff2a6d, transparent: true, opacity: 0.16, side: THREE.DoubleSide, depthWrite: false, blending: THREE.AdditiveBlending, toneMapped: false }));
       e.beacon.visible = false;
       scene.add(e.mesh, e.tell, e.aura, e.arena, e.beacon); enemies.push(e);
     });
@@ -339,7 +348,7 @@ export async function createHunt({ scene, shared, man, animator, player, heightA
   const gates = [];
   if (segs && !roam) {
     for (const [i, s] of segs.entries()) {
-      if (!s.gate) continue;
+      if (!s.gate || i < (saved?.cleared ?? 0)) continue;
       const g = new THREE.Group();
       for (const x of [-5.3, 5.3]) {
         put(g, new THREE.CylinderGeometry(0.17, 0.24, 4.8, 8), mat('shrine'), m => m.position.set(x, 2.4, 0));
@@ -443,6 +452,8 @@ export async function createHunt({ scene, shared, man, animator, player, heightA
   let hp = MAX_HP, power = POWER_MAX, swing = -1, swingH = false, struck = new Set(), invuln = 0, won = false;
   let dashCool = 0, flareCool = 0, gateToastT = 0, lockToastT = 0, saveWarned = false, runTold = false;
   let attackBuffer = 0, queuedHeavy = false, comboIndex = -1, comboWindow = 0, swingType = 'cut';
+  let focus = null, focusBlocked = 0, evadeCool = 0;
+  let guarding = false, guardAge = 0, guardMeter = 1, guardBreak = 0, guardImpact = 0, counter = 0;
   let hitPause = 0, cameraKick = 0, hurtPose = 0, castPose = 0, slowMo = 0, combo = 0, comboT = 0, poolT = 0;
   let toldHeat = false;
   let heat = 0, cash = 0, cops = [], block = null;
@@ -459,15 +470,14 @@ export async function createHunt({ scene, shared, man, animator, player, heightA
   function persist(cleared) {
     if (!segs || roam) return;
     const cp = segs[Math.min(cleared, segs.length - 1)].checkpoint;
-    if (!saveProgress({ cleared, x: +cp.x.toFixed(2), z: +cp.z.toFixed(2), cash, unlocked: unlocksFor(cleared), missions: missions?.doneSectors ?? [] }) && !saveWarned) {
+    if (!saveProgress({ cleared, x: +cp.x.toFixed(2), z: +cp.z.toFixed(2), cash, unlocked: unlocksFor(cleared), missions: missions?.doneSectors ?? [], won }) && !saveWarned) {
       saveWarned = true;
       saveWarningPending = true;
     }
   }
   if (segs && !roam) {
     marks[0].used = true; // he starts on the first relay: no toast for standing still
-    const saved = loadProgress();
-    if (saved && saved.cleared > 0) {
+    if (saved) {
       const n = Math.min(saved.cleared, segs.length);
       for (const e of enemies) {
         if (e.seg >= 0 && e.seg < n) { scene.remove(e.mesh); if (e.body) player.world.removeRigidBody(e.body); e.body = e.collider = null; e.dead = 1; e.gone = true; }
@@ -475,9 +485,11 @@ export async function createHunt({ scene, shared, man, animator, player, heightA
       for (let i = 0; i < n; i++) { marks[i].used = true; missions?.completeSector(i); }
       powers = powersFor(n);
       cash = saved.cash || 0;
+      won = saved.won;
+      if (won) marks.at(-1).used = true;
       moveSpawn(saved.x, saved.z);
       down();
-      toast(n >= segs.length ? 'Amber Sanctuary lies ahead' : `Sector ${n + 1} · ${segs[n].name}`);
+      toast(won ? 'Amber Sanctuary stabilized' : n >= segs.length ? 'Amber Sanctuary lies ahead' : `Sector ${n + 1} · ${segs[n].name}`);
     }
   } else if (segs && roam) {
     for (const m of marks) m.cool = 0;
@@ -549,6 +561,21 @@ export async function createHunt({ scene, shared, man, animator, player, heightA
     if (!from) e.mineT = performance.now();
     const provoked = e.angry > 0;
     if (e.duel && (!e.ready || e.phase === 'intro' || e.phase === 'waiting')) return;
+    const by = from ?? player.feet;
+    const melee = ['sword', 'thrust', 'heavy', 'whirl'].includes(source);
+    const breaking = source === 'heavy' || source === 'whirl' || source === 'flare';
+    if (e.defending === 'Evade' && e.defend > 0.06 && melee && !breaking) return;
+    const blocked = e.defending === 'Guard' && e.defend > 0 && melee && !breaking &&
+      inFront(e.x, e.z, e.yaw, by.x, by.z, 5, 1.12, 0);
+    if (blocked) {
+      if (!shadow) e.hp -= Math.max(0, Math.min(e.hp - 1, Math.max(1, Math.round(n * 0.2))));
+      e.reprisal = true;
+      pulse(e.x, heightAt(e.x, e.z) + 0.9, e.z, 0xffcd77);
+      if (!from) { hud.flashText('Enemy blocked'); audio?.play('parry'); }
+      return;
+    }
+    if (breaking && e.defending === 'Guard' && e.defend > 0 && !from) hud.flashText('Enemy guard broken');
+    e.defend = e.recover = 0;
     const guarded = e.duel && e.phase !== 'recovery';
     if (e.duel) n = damageRival(e, n, source);
     if (guarded && e.phase === 'recovery') toast('Guard broken — strike now!');
@@ -557,7 +584,6 @@ export async function createHunt({ scene, shared, man, animator, player, heightA
     if (!from) { combo++; comboT = 2.2; hud.combo(combo); }
     if (!e.duel) {
       e.stagger = n > 40 ? 0.55 : 0.22; e.windup = 0;
-      const by = from ?? player.feet;
       const k = (KNOCK[source] ?? 3) * (HEFT[e.kind] ?? 1), dx = e.x - by.x, dz = e.z - by.z, d = Math.hypot(dx, dz) || 1;
       e.kx = dx / d * k; e.kz = dz / d * k;
       // a heavy blow takes the light ones off their feet; in the air they cannot answer
@@ -601,12 +627,37 @@ export async function createHunt({ scene, shared, man, animator, player, heightA
     if (Math.hypot(s.x - e.x, s.z - e.z) > 6) { e.x = s.x; e.z = s.z; } else { e.x += (s.x - e.x) * k; e.z += (s.z - e.z) * k; }
     e.yaw += Math.atan2(Math.sin(s.yaw - e.yaw), Math.cos(s.yaw - e.yaw)) * k;
     e.going = s.going; e.hp = s.hp;
-    if (e.netAt !== s.at) { e.netAt = s.at; e.windup = s.windup; } else e.windup = Math.max(0, e.windup - dt);
+    if (e.netAt !== s.at) {
+      e.netAt = s.at; e.windup = s.windup; e.attackIndex = s.attackIndex ?? 0;
+      e.recover = s.recover ?? 0; e.defend = s.defend ?? 0;
+      e.defending = s.defending; e.defendSide = s.defendSide ?? 1;
+    } else {
+      e.windup = Math.max(0, e.windup - dt); e.recover = Math.max(0, e.recover - dt);
+      e.defend = Math.max(0, e.defend - dt);
+    }
     if (e.windup > 0) e.attackYaw = e.yaw;
   }
 
   function takeHit(damage, from = null, shove = 5) {
     if (invuln > 0) return false;
+    if (guarding && from && !(from.duel && MOVES[from.move].unblockable) && !attackFor(from)?.unblockable &&
+        inFront(player.feet.x, player.feet.z, player.yaw, from.x, from.z, Infinity, 1.15, 0)) {
+      const timed = guardAge <= 0.17;
+      const cost = timed ? 0.12 : Math.max(0.29, damage / 70);
+      guardImpact = 1;
+      if (guardMeter >= cost) {
+        guardMeter -= cost;
+        invuln = 0.25;
+        if (timed) { counter = 1.05; power = Math.min(POWER_MAX, power + 0.35); }
+        else hp -= damage * 0.2;
+        audio?.play('parry');
+        hud.flashText(timed ? 'Perfect guard' : 'Guarded');
+        if (hp <= 0) die();
+        return true;
+      }
+      guarding = false; guardMeter = 0; guardBreak = 0.9;
+      hud.flashText('Guard broken');
+    }
     hp -= damage; invuln = 0.7; hurtPose = 1; hitPause = 0.07; cameraKick = 0.16;
     audio?.play('playerHurt'); audio?.bark('hurt');
     combo = 0; hud.combo(0);
@@ -625,6 +676,7 @@ export async function createHunt({ scene, shared, man, animator, player, heightA
   const DOWN = 15;
   let downT = 0;
   function die(force = false) {
+    focus = null; guarding = false; guardMeter = 1; guardBreak = counter = 0;
     if (net && !force) {
       if (downT > 0) return;
       downT = DOWN; hp = 0; invuln = DOWN + 1; swing = -1; swingH = false; attackBuffer = 0;
@@ -644,7 +696,7 @@ export async function createHunt({ scene, shared, man, animator, player, heightA
       if (e.civ) { e.angry = 0; e.aggro = 0; e.mode = 'roam'; e.fleeT = 0; e.chatT = 0; } // his fall settles the street's score
       if (Math.hypot(e.x - player.feet.x, e.z - player.feet.z) < 5) {
         e.x = e.homeX; e.z = e.homeZ; e.mode = 'roam'; e.tx = e.homeX; e.tz = e.homeZ;
-        e.windup = e.stagger = e.cool = e.air = e.vy = e.kx = e.kz = 0;
+        e.windup = e.recover = e.defend = e.defendCool = e.stagger = e.cool = e.air = e.vy = e.kx = e.kz = 0;
       }
     }
     plunge = false;
@@ -653,10 +705,10 @@ export async function createHunt({ scene, shared, man, animator, player, heightA
   }
 
   function playClip(e, name) {
-    if (e.mesh.userData.clip === name) return;
     const u = e.mesh.userData;
+    if (u.clip === name) return;
     const next = u.mixer.clipAction(u.clips[name]);
-    if (name === 'Death' || name === 'Attack') { next.setLoop(THREE.LoopOnce, 1); next.clampWhenFinished = true; }
+    if (name === 'Death' || name === 'Attack' || name === 'Alternate' || name === 'Guard' || name.startsWith('Evade')) { next.setLoop(THREE.LoopOnce, 1); next.clampWhenFinished = true; }
     else next.setLoop(THREE.LoopRepeat);
     next.reset().fadeIn(0.15).play();
     u.action.fadeOut(0.15);
@@ -679,11 +731,11 @@ export async function createHunt({ scene, shared, man, animator, player, heightA
       const spin = e.duelSpin + (e.phase === 'waiting' ? shared.uTime.value * 0.7 : 0);
       const pd = Math.hypot(e.x - player.feet.x, e.z - player.feet.z);
       if (e.beacon) {
-        e.beacon.visible = !e.dead && !e.gone && e.ready;
+        e.beacon.visible = !e.dead && !e.gone && e.ready && (!vis.engaged || pd > 16);
         if (e.beacon.visible) {
           e.beacon.position.set(e.x, heightAt(e.x, e.z) + 11, e.z);
           e.beacon.material.color.setRGB(...vis.color);
-          e.beacon.material.opacity = vis.engaged ? 0.16 + 0.08 * Math.sin(spin * 2) : 0.3;
+          e.beacon.material.opacity = vis.engaged ? 0.10 : 0.18;
         }
       }
       e.mesh.visible = !e.gone && (e.ready || !!e.dead) && pd < SEEN;
@@ -695,10 +747,14 @@ export async function createHunt({ scene, shared, man, animator, player, heightA
         return;
       }
       e.mesh.position.set(e.x, heightAt(e.x, e.z), e.z); e.mesh.rotation.set(0, e.yaw, 0);
+      if (e.move === 'spiral' && e.phase === 'active') e.mesh.rotateY(-Math.PI * 2 * (1 - e.timer / MOVES.spiral.active));
+      const spec = MOVES[e.move];
+      const stance = e.phase === 'guard', sidestep = e.phase === 'sidestep';
       if (e.body) e.body.setTranslation({ x: e.x, y: heightAt(e.x, e.z) + e.bodyLift, z: e.z }, true);
       e.actor.update(dt, e.going, !!e.dead);
       if (e.dead) e.actor.man.bones.spine_02.rotation.x += 0.3;
-      e.combat.apply(dt, { u: e.dead ? -1 : e.attackU, type: MOVES[e.move].pose, hurt: e.flash * 3 });
+      e.combat.apply(dt, { u: e.dead ? -1 : e.attackU, type: e.beat ? spec.second ?? spec.pose : spec.pose, hurt: e.flash * 3,
+        guard: !e.dead && stance, guardImpact: e.flash * 4, evade: sidestep ? Math.min(0.28, e.timer) : 0, evadeAngle: e.reactSide * Math.PI / 2 });
       e.actor.avatar.update();
       const gy = heightAt(e.x, e.z);
       if (e.arena) {
@@ -749,18 +805,33 @@ export async function createHunt({ scene, shared, man, animator, player, heightA
     e.mesh.position.set(e.x, heightAt(e.x, e.z) + e.air - (e.dead ? Math.min(0.4, Math.max(0, e.dead - 1.2) * 0.45) : 0), e.z);
     e.mesh.rotation.set(e.air > 0 ? -0.5 * Math.min(1, e.air) : e.windup > 0 ? -Math.sin(e.windup * 8) * 0.04 : 0, e.yaw, 0);
     if (e.body) e.body.setTranslation({ x: e.x, y: heightAt(e.x, e.z) + e.air + e.bodyLift, z: e.z }, true);
+    const attack = attackFor(e);
+    const firing = attack?.shot ?? !!e.shot;
+    const defense = e.defend > 0 ? (e.defending === 'Guard' ? 'Guard' : e.defendSide > 0 ? 'EvadeLeft' : 'EvadeRight') : null;
     if (e.aim) {
       // steady while he tracks, flickering once the line is locked
-      e.aim.visible = !e.dead && e.windup > 0;
+      e.aim.visible = !e.dead && e.mesh.visible && firing && e.windup > 0;
       e.aim.position.set(e.x, heightAt(e.x, e.z) + 1.25, e.z); e.aim.rotation.y = e.attackYaw ?? 0; e.aim.scale.z = e.reach + 2;
       e.aim.material.opacity = e.windup < AIM_LOCK ? 0.55 + 0.45 * Math.sin(e.windup * 70) : 0.35;
     }
-    e.tell.visible = !e.dead && e.windup > 0 && !e.shot;
+    e.tell.visible = !e.dead && e.mesh.visible && (e.windup > 0 && !firing || defense === 'Guard');
     e.tell.position.set(e.x, heightAt(e.x, e.z) + 0.04, e.z);
-    e.tell.scale.setScalar(e.reach * (0.6 + e.windup * 0.4));
-    const name = e.dead ? 'Death' : e.flash > 0 && u.clips.Hit ? 'Hit' : e.windup > 0 ? 'Attack' : e.going > 2.4 ? 'Run' : e.going > 0.25 ? 'Walk' : 'Idle';
+    if (e.tell.visible) {
+      e.tell.material.color.setHex(defense === 'Guard' ? 0xffcd77 : attack?.unblockable ? 0xff692d : 0xff2a6d);
+      e.tell.scale.setScalar(defense === 'Guard' ? 0.86 * e.scale : (attack?.reach ?? e.reach));
+      e.tell.material.opacity = defense === 'Guard' ? 0.8 : 0.38 + 0.5 * (1 - e.windup / (attack?.wind ?? e.wind));
+    }
+    const attacking = e.windup > 0 || e.recover > 0;
+    const name = e.dead ? 'Death' : e.flash > 0 && u.clips.Hit ? 'Hit' : defense && u.clips[defense] ? defense : attacking ? (e.attackIndex === 1 ? 'Alternate' : 'Attack') : e.going > 2.4 ? 'Run' : e.going > 0.25 ? 'Walk' : 'Idle';
     playClip(e, name);
-    if (dt > 0 && e.mesh.visible) e.mesh.userData.mixer.update(dt); // a pose nobody sees, or a frozen one, is not worked out
+    if (dt > 0 && e.mesh.visible) {
+      if (attack && (name === 'Attack' || name === 'Alternate')) {
+        const progress = e.windup > 0 ? 0.5 * (1 - e.windup / attack.wind) : 0.5 + 0.5 * (1 - e.recover / attack.recover);
+        u.action.paused = true;
+        u.action.time = u.clips[name].duration * THREE.MathUtils.clamp(progress, 0, 1);
+      }
+      u.mixer.update(dt);
+    }
   }
 
   function pose() {
@@ -769,7 +840,8 @@ export async function createHunt({ scene, shared, man, animator, player, heightA
       man.object.rotateY(-k * k * (3 - 2 * k) * Math.PI * 2);
       man.object.updateMatrixWorld(true);
     }
-    combatPose.apply(1 / 60, { u: swing, type: swingType, hurt: hurtPose, cast: castPose });
+    combatPose.apply(1 / 60, { u: swing, type: swingType, hurt: hurtPose, cast: castPose,
+      guard: guarding, guardImpact, evade: player.evadeTime, evadeAngle: player.moveAngle });
   }
 
   // A body is many small skinned meshes with no bounds worth trusting, so they cannot be left to the renderer's
@@ -812,8 +884,106 @@ export async function createHunt({ scene, shared, man, animator, player, heightA
     return vy;
   }
 
-  const swingMul = () => swingH ? 3 : swingType === 'spin' ? WHIRL : swingType === 'thrust' ? 1.3 : 1;
+  function firingLane(e, target, lockedYaw) {
+    const y = heightAt(e.x, e.z) + 1.25;
+    let x = target.x - e.x, z = target.z - e.z;
+    if (lockedYaw != null) {
+      const horizontal = Math.hypot(x, z);
+      x = Math.sin(lockedYaw) * horizontal; z = Math.cos(lockedYaw) * horizontal;
+    }
+    const dy = target.y + 1.05 - y;
+    const d = Math.hypot(x, dy, z);
+    return d < 0.8 || player.castRay({ x: e.x, y, z: e.z }, { x: x / d, y: dy / d, z: z / d }, d - 0.65, e.collider) == null;
+  }
+
+  const swingMul = () => swingH ? 3 : swingType === 'spin' ? WHIRL : swingType === 'counter' ? 1.65 : swingType === 'thrust' ? 1.3 : 1;
   const swingSource = () => swingH ? 'heavy' : swingType === 'spin' ? 'whirl' : swingType === 'thrust' ? 'thrust' : 'sword';
+
+  function perfectEvade(evade, gated = () => false) {
+    const { x, z } = player.feet;
+    const imminent = enemies.some(e => !e.dead && !e.gone && !gated(e.z) && (e.duel
+      ? (e.phase === 'windup' && e.timer < PERFECT || e.phase === 'active' && !e.hitDone) && Math.hypot(e.x - x, e.z - z) < MOVES[e.move].reach + 1
+      : e.windup > 0 && e.windup < PERFECT && Math.hypot(e.x - x, e.z - z) < (attackFor(e)?.reach ?? e.reach) + 1));
+    if (!imminent) return;
+    slowMo = evade ? 0.35 : 0.7;
+    if (!evade) invuln = Math.max(invuln, 0.6);
+    power = Math.min(POWER_MAX, power + (evade ? 0.5 : 1));
+    audio?.play('dodge');
+    pulse(x, player.feet.y + 1, z, 0xffffff);
+    hud.flashText('Perfect dodge');
+  }
+
+  const chest = new THREE.Vector3(), aimLine = new THREE.Vector3();
+  function combatInput(dt, input, cameraYaw, focusAllowed = true) {
+    evadeCool = Math.max(0, evadeCool - dt);
+    guardBreak = Math.max(0, guardBreak - dt);
+    guardImpact = Math.max(0, guardImpact - dt * 6);
+    counter = Math.max(0, counter - dt);
+    if (!input || hp <= 0) { focus = null; guarding = false; return input; }
+
+    const { x, y, z } = player.feet;
+    const gate = !roam && !won && gates.find(g => g.group.parent);
+    const gated = ez => gate && (z - gate.group.position.z) * (ez - gate.group.position.z) < 0;
+    const viable = (e, range) => !e.dead && !e.gone && (!e.civ || e.angry > 0 || e.mark) &&
+      (!e.duel || e.ready) && !gated(e.z) && Math.hypot(e.x - x, e.z - z) <= range && Math.abs(heightAt(e.x, e.z) - y) < 5;
+    function visible(e) {
+      chest.set(x, y + 1.25, z);
+      aimLine.set(e.x - x, heightAt(e.x, e.z) + (e.air ?? 0) - y, e.z - z);
+      const distance = aimLine.length();
+      return distance < 0.4 || player.castRay(chest, aimLine.divideScalar(distance), distance - 0.2, undefined, true) == null;
+    }
+    if (!focusAllowed || (focus && !viable(focus, 27))) focus = null;
+    if (focus) {
+      focusBlocked = visible(focus) ? 0 : focusBlocked + dt;
+      if (focusBlocked > 0.35) focus = null;
+    }
+    if (focusAllowed && (input.target || input.nextTarget)) {
+      if (input.target && focus) focus = null;
+      else {
+        const choices = [];
+        for (const e of enemies) {
+          if (!viable(e, 22)) continue;
+          const offset = Math.atan2(e.x - x, e.z - z) - cameraYaw;
+          const angle = Math.atan2(Math.sin(offset), Math.cos(offset));
+          if ((Math.abs(angle) <= 1.3 || e === focus) && visible(e)) choices.push({ e, angle, distance: Math.hypot(e.x - x, e.z - z) });
+        }
+        if (focus && input.nextTarget) {
+          choices.sort((a, b) => b.angle - a.angle || a.distance - b.distance);
+          const next = choices.findIndex(choice => choice.e === focus) + 1;
+          if (choices.length) focus = choices[next % choices.length].e;
+        } else {
+          const score = choice => Math.abs(choice.angle) * 12 + choice.distance;
+          focus = choices.sort((a, b) => score(a) - score(b))[0]?.e ?? null;
+          if (!focus) hud.flashText('Aim toward a hostile');
+        }
+        focusBlocked = 0;
+      }
+    }
+
+    const aim = focus ? Math.atan2(focus.x - x, focus.z - z) : cameraYaw;
+    const recoverable = swing < 0 || swing > ATTACKS[swingType].hit[1];
+    if (input.evade && recoverable && evadeCool <= 0) {
+      const { dir, mag } = player.intent(input, aim);
+      if (mag <= 0.08) dir.copy(player.facing(focus ? aim : player.yaw)).negate();
+      if (player.startEvade(dir)) {
+        swing = -1; attackBuffer = 0; evadeCool = 0.82;
+        invuln = Math.max(invuln, 0.17);
+        audio?.play('dash', 0.65);
+        perfectEvade(true, gated);
+      }
+    }
+
+    const held = input.guard && !input.attack && !input.heavy && player.grounded && player.dashTime <= 0 && player.evadeTime <= 0 && swing < 0 && guardBreak <= 0;
+    guardAge = held && guarding ? guardAge + dt : 0;
+    guarding = !!held;
+    if (!input.guard && guardBreak <= 0) guardMeter = Math.min(1, guardMeter + dt * 0.55);
+    if (!focus && !guarding && player.evadeTime <= 0) return input;
+    const busy = player.evadeTime > 0 || guarding;
+    return { ...input, combatYaw: focus ? aim : null, strafe: !!focus || guarding || input.strafe,
+      walk: guarding || input.walk, sprint: false, jump: !guarding && input.jump,
+      attack: !busy && input.attack, heavy: !busy && input.heavy, whirl: !busy && input.whirl,
+      power: !busy && input.power, flare: !busy && input.flare, dash: !busy && input.dash };
+  }
 
   function update(dt, input, realDt = dt) {
     if (downT > 0 && (downT -= realDt) <= 0) die(true);
@@ -847,10 +1017,10 @@ export async function createHunt({ scene, shared, man, animator, player, heightA
     const gated = (ez) => segs && !roam && !won && gates.some((g) => c <= g.seg && (ez - g.group.position.z) * (pz - g.group.position.z) < 0);
     /** His own blade against one body. */
     function swingAt(e) {
-      if (!hitting || struck.has(e) || gated(e.z) || Math.abs(player.feet.y - heightAt(e.x, e.z)) >= 1.7 || !inFront(px, pz, yaw, e.x, e.z, ATTACKS[swingType].reach, swingType === 'spin' ? Math.PI : swingH ? 1.6 : 1.2)) return;
+      if (!hitting || struck.has(e) || (e === focus && focusBlocked > 0) || gated(e.z) || Math.abs(player.feet.y - heightAt(e.x, e.z)) >= 1.7 || !inFront(px, pz, yaw, e.x, e.z, ATTACKS[swingType].reach, swingType === 'spin' ? Math.PI : swingH ? 1.6 : 1.2)) return;
       struck.add(e);
       // A blow landed in the last moment of his windup turns the strike aside.
-      const parry = !e.shot && e.windup > 0 && e.windup < PARRY;
+      const parry = !(attackFor(e)?.shot ?? e.shot) && e.windup > 0 && e.windup < PARRY;
       hurt(e, swingMul() * HIT.sword[e.kind] * (parry ? PARRY_MUL : 1), swingSource());
       if (parry && !e.dead) {
         e.stagger = 1.2; power = Math.min(POWER_MAX, power + 0.5); slowMo = Math.max(slowMo, 0.25);
@@ -873,19 +1043,26 @@ export async function createHunt({ scene, shared, man, animator, player, heightA
     }
     if (swing < 0 && attackBuffer > 0 && hp > 0) {
       comboIndex = comboWindow > 0 ? (comboIndex + 1) % 3 : 0;
-      swingType = queuedHeavy ? 'heavy' : ['cut', 'backhand', 'thrust'][comboIndex];
+      swingType = ['cut', 'backhand', 'thrust'][comboIndex];
+      if (queuedHeavy) swingType = 'heavy';
+      else if (counter > 0) swingType = 'counter';
+      else if (focus && focusBlocked === 0 && comboWindow <= 0 && input?.move?.y > 0.62) swingType = 'advance';
+      if (swingType === 'counter') counter = 0;
       swing = 0; swingH = queuedHeavy; struck = new Set(); attackBuffer = 0;
       // A strike in the air is a plunge: he drops on the blade and the landing does the rest.
       plunge = !player.grounded && player.feet.y - heightAt(px, pz) > 0.7;
       if (plunge) { swingType = 'heavy'; swingH = false; player.slam(26); }
       if (queuedHeavy || plunge) { audio?.play('heavy'); audio?.bark('heavy'); }
       else { audio?.play('slash', swingType === 'thrust' ? 0.85 : 1); audio?.bark('swing'); }
-      const target = plunge ? null : enemies.filter(e => !e.dead && (!e.civ || e.angry > 0) && (!e.duel || e.ready) && !gated(e.z) && inFront(px, pz, yaw, e.x, e.z, 3.6, 1.8)).sort((a, b) => Math.hypot(a.x - px, a.z - pz) - Math.hypot(b.x - px, b.z - pz))[0];
+      const target = plunge ? null : (focusBlocked === 0 ? focus : null) ?? enemies.filter(e => !e.dead && (!e.civ || e.angry > 0) && (!e.duel || e.ready) && !gated(e.z) && inFront(px, pz, yaw, e.x, e.z, 3.6, 1.8)).sort((a, b) => Math.hypot(a.x - px, a.z - pz) - Math.hypot(b.x - px, b.z - pz))[0];
       if (target) {
-        const turn = Math.atan2(Math.sin(Math.atan2(target.x - px, target.z - pz) - yaw), Math.cos(Math.atan2(target.x - px, target.z - pz) - yaw)); yaw = player.yaw += Math.max(-0.7, Math.min(0.7, turn));
+        const aim = Math.atan2(target.x - px, target.z - pz), turn = aim - yaw;
+        yaw = player.yaw = target === focus ? aim : yaw + Math.max(-0.7, Math.min(0.7, Math.atan2(Math.sin(turn), Math.cos(turn))));
         // close the gap a knockback opened: a short swept lunge to striking distance
-        const gap = Math.hypot(target.x - px, target.z - pz) - (target.kind === 'brute' ? 2.1 : 1.5);
-        if (gap > 0.1) player.knock(target.x - px, target.z - pz, Math.min(gap, 1.6) * 8.4);
+        const distance = Math.hypot(target.x - px, target.z - pz);
+        const gap = distance - (target.kind === 'brute' ? 2.1 : 1.5);
+        const stride = swingType === 'advance' ? 2.6 : 1.6;
+        if (gap > 0.1 && distance <= ATTACKS[swingType].reach + stride - 0.5) player.knock(target.x - px, target.z - pz, Math.min(gap, stride) * 8.4);
       }
     }
     if (input?.heavy && segs && !has('heavy') && lockToastT <= 0) {
@@ -910,18 +1087,11 @@ export async function createHunt({ scene, shared, man, animator, player, heightA
 
     // A dash: one quick step where he faces, too fast to be bitten.
     if (input?.dash && has('dash') && dashCool <= 0 && hp > 0) {
-      if (player.startDash()) {
+      const move = player.intent(input, input.combatYaw ?? input.viewYaw ?? player.yaw);
+      if (player.startDash(move.mag > 0.08 ? move.dir : player.facing())) {
         dashCool = 2.5; invuln = Math.max(invuln, 0.3);
         audio?.play('dash');
-        // Perfect: a strike was about to land on him.
-        const close = enemies.some((e) => !e.dead && !e.gone && !gated(e.z) && (e.duel
-          ? (e.phase === 'windup' && e.timer < PERFECT || e.phase === 'active') && Math.hypot(e.x - px, e.z - pz) < MOVES[e.move].reach + 1
-          : e.windup > 0 && e.windup < PERFECT && Math.hypot(e.x - px, e.z - pz) < e.reach + 1));
-        if (close) {
-          slowMo = 0.7; invuln = Math.max(invuln, 0.6); power = Math.min(POWER_MAX, power + 1);
-          audio?.play('dodge');
-          pulse(px, player.feet.y + 1, pz, 0xffffff); hud.flashText('Perfect dodge');
-        }
+        perfectEvade(false, gated);
       }
     } else if (input?.dash && !has('dash') && lockToastT <= 0) {
       lockToastT = 4; toast('Clear Sector 2 to learn the dash');
@@ -948,6 +1118,27 @@ export async function createHunt({ scene, shared, man, animator, player, heightA
     }
     const fighting = swing >= 0 || castPose > 0 || flares.length > 0 || !!(input?.flare && has('flare') && power >= 2 && flareCool <= 0)
       || enemies.some((o) => !o.dead && !o.gone && (o.duel ? o.ready && o.phase !== 'waiting' : !o.civ && (o.mode === 'chase' || o.windup > 0)) && Math.hypot(o.x - px, o.z - pz) < 20);
+    const local = { x: px, y: player.feet.y, z: pz, yaw, swing, type: swingType };
+    const orders = new Map(), groups = new Map();
+    for (const e of enemies) {
+      if (!PATTERNS[e.kind] || e.dead || e.gone || puppet(e)) continue;
+      const distance = Math.hypot(px - e.x, pz - e.z);
+      if (distance > 36 && !net?.host) continue;
+      const peer = net && e.netId != null ? net.near(e.x, e.z) : null;
+      const target = peer?.d < distance ? peer : local;
+      const d = target === local ? distance : peer.d;
+      const index = chooseAttack(e, d), ranged = !!PATTERNS[e.kind][e.windup > 0 ? e.attackIndex ?? 0 : index].shot;
+      const order = { e, target, index, ranged, lead: true };
+      orders.set(e, order);
+      if (d > 19 || e.mode !== 'chase' && d >= e.aggro || Math.hypot(e.x - e.homeX, e.z - e.homeZ) > e.leash) continue;
+      if (target === local && gated(e.z)) continue;
+      // Prefer the ally already in range, with a penalty for anyone still busy recovering.
+      const move = PATTERNS[e.kind][index];
+      order.score = Math.abs(d - (ranged ? 7 : move.reach + (move.rush ?? 0))) + e.cool * 5 + ((e.defend ?? 0) + e.stagger) * 7 - (e.pressuring ? 0.65 : 0);
+      const group = groups.get(target.id) ?? [];
+      group.push(order); groups.set(target.id, group);
+    }
+    crewOrder(groups);
     for (const e of enemies) {
       e.flash = Math.max(0, e.flash - dt);
       e.rammed = Math.max(0, (e.rammed ?? 0) - dt);
@@ -957,7 +1148,8 @@ export async function createHunt({ scene, shared, man, animator, player, heightA
         if (puppet(e) ? (net.foe(e)?.hp ?? 0) > 0 : (roam || e.civ) && !e.event && (e.respawnT -= dt) <= 0) { // the street refills in level mode too
           e.hp = e.maxHp; e.dead = 0; e.gone = false;
           e.x = e.homeX; e.z = e.homeZ; e.tx = e.homeX; e.tz = e.homeZ;
-          e.mode = 'roam'; e.cool = e.windup = e.stagger = e.air = e.vy = e.kx = e.kz = 0; e.wait = 1; e.mesh.visible = true;
+          e.mode = 'roam'; e.cool = e.windup = e.recover = e.defend = e.defendCool = e.attackCount = e.attackIndex = e.stagger = e.air = e.vy = e.kx = e.kz = 0;
+          e.reprisal = false; e.wait = 1; e.mesh.visible = true;
           if (e.civ) { e.angry = 0; e.aggro = 0; e.fleeT = 0; e.chatT = 0; }
           if (e.duel) Object.assign(e, createDuel(e.seg));
           if (!e.duel) addBody(e);
@@ -980,10 +1172,9 @@ export async function createHunt({ scene, shared, man, animator, player, heightA
       const ld = Math.hypot(px - e.x, pz - e.z);
       if (puppet(e)) { follow(e, dt); e.mesh.visible = seen(e, ld); setShade(e, !e.duel && e.mesh.visible && ld < 7.5); swingAt(e); lay(e, dt); continue; }
       shove(e, dt);
-      // Online the host's crews go for the nearest wanderer, his or another page's.
-      let ax = px, az = pz, ay = player.feet.y;
-      const other = net && e.netId != null ? net.near(e.x, e.z) : null;
-      if (other && other.d < ld) { ax = other.x; az = other.z; ay = other.y; }
+      const order = orders.get(e), goal = order?.target ?? local;
+      e.pressuring = !!order?.lead;
+      const { x: ax, z: az, y: ay } = goal;
       const dxp = ax - e.x, dzp = az - e.z, pd = Math.hypot(dxp, dzp);
       const homeD = Math.hypot(e.x - e.homeX, e.z - e.homeZ);
       // Far beasts keep their pose but skip the thinking: the frame stays cheap. Citizens keep strolling down the block.
@@ -1018,7 +1209,8 @@ export async function createHunt({ scene, shared, man, animator, player, heightA
         const ready = roam ? e === closestRival : (!enemies.some(b => !b.duel && b.seg === e.seg && !b.dead) && (!missions || missions.isSectorDone(e.seg)));
         if (ready && !e.body) addBody(e);
         if (!ready && e.body) { player.world.removeRigidBody(e.body); e.body = e.collider = null; }
-        const event = stepDuel(e, dt, { x: px, z: pz, ready, move(dx, dz) {
+        const threatening = swing > 0.1 && swing < ATTACKS[swingType].hit[0] && inFront(px, pz, yaw, e.x, e.z, 3.45, 1.05);
+        const event = stepDuel(e, dt, { x: px, z: pz, ready, threatening, move(dx, dz) {
           const distance = Math.hypot(dx, dz); if (distance < 1e-6) return;
           const hit = player.castRay({ x: e.x, y: heightAt(e.x, e.z) + 0.9, z: e.z }, { x: dx / distance, y: 0, z: dz / distance }, distance + 0.5, e.collider);
           const amount = Math.min(distance, Math.max(0, (hit ?? distance + 0.5) - 0.5)) / distance;
@@ -1033,9 +1225,9 @@ export async function createHunt({ scene, shared, man, animator, player, heightA
         if (event === 'reset') toast('Duel reset. Approach the beacon when you are ready.');
         if (event === 'opening') toast('Opening — strike now!');
         if (duelHit(e, px, player.feet.y, pz, heightAt(e.x, e.z)) && !gated(e.z)) {
-          if (takeHit(MOVES[e.move].damage, e, e.move === 'slam' ? 8 : 5.5)) e.hitDone = true;
+          if (takeHit(MOVES[e.move].damage, e, e.move === 'slam' ? 8 : 5.5)) e.hitDone = e.connected = true;
         }
-        if (hitting && !struck.has(e) && !gated(e.z) && inFront(px, pz, yaw, e.x, e.z, ATTACKS[swingType].reach, swingType === 'spin' ? Math.PI : 1.3)) {
+        if (hitting && !struck.has(e) && !(e === focus && focusBlocked > 0) && !gated(e.z) && inFront(px, pz, yaw, e.x, e.z, ATTACKS[swingType].reach, swingType === 'spin' ? Math.PI : 1.3)) {
           struck.add(e); hurt(e, swingMul() * HIT.sword.rival, swingSource());
         }
         lay(e, dt); continue;
@@ -1044,11 +1236,40 @@ export async function createHunt({ scene, shared, man, animator, player, heightA
       if (e.mode === 'chase' && !(e.angry > 0) && (pd > e.aggro + 5 || homeD > e.leash)) {
         e.mode = 'roam'; e.tx = e.homeX; e.tz = e.homeZ; e.wait = 0;
       }
+      e.defend = Math.max(0, (e.defend ?? 0) - dt);
+      e.defendCool = Math.max(0, (e.defendCool ?? 0) - dt);
+      e.recover = Math.max(0, (e.recover ?? 0) - dt);
+      const defense = DEFENSE[e.kind];
+      const goalAttack = ATTACKS[goal.type];
+      if (defense && e.mode === 'chase' && e.windup <= 0 && e.recover <= 0 && e.stagger <= 0 && e.air <= 0 &&
+          e.defendCool === 0 && goalAttack && goal.swing > 0.08 && goal.swing < goalAttack.hit[0] - 0.01 &&
+          inFront(ax, az, goal.yaw, e.x, e.z, defense.range, 0.88, 0) &&
+          inFront(e.x, e.z, e.yaw, ax, az, defense.range, 1.55, 0) && firingLane(e, goal)) {
+        e.defending = defense.kind;
+        e.defend = defense.time; e.defendCool = defense.cooldown;
+        e.defendSide = order?.side ?? 1;
+        e.yaw = Math.atan2(dxp, dzp);
+      }
+      const prepared = order ? PATTERNS[e.kind][order.index] : null;
+      const attack = attackFor(e);
       let speed = 0;
       const pace = e.fleeT > 0 ? (e.kind === 'civ' ? e.roam * 2.1 : Math.max(e.roam, 4.8)) : e.snatch > 0 ? e.roam * 1.5 : e.roam;
       if (e.mode === 'chase') {
-        e.tx = ax; e.tz = az; speed = pd > e.reach * 0.83 ? e.chase : 0;
-        if (e.keep && pd < e.keep) { e.tx = e.x - dxp; e.tz = e.z - dzp; speed = e.chase; } // rushed, a gunner gives ground
+        e.tx = ax; e.tz = az;
+        const reach = (prepared?.reach ?? e.reach) + (prepared?.rush ?? 0) * 0.65;
+        speed = pd > reach * 0.83 ? e.chase : 0;
+        if (prepared?.shot && pd < e.keep) { e.tx = e.x - dxp; e.tz = e.z - dzp; speed = e.chase; }
+        const evading = e.defend > 0 && e.defending === 'Evade';
+        if (order && !order.lead || evading || e.laneStep > 0) {
+          const d = pd || 1, ux = dxp / d, uz = dzp / d;
+          const side = evading ? e.defendSide : e.laneStep > 0 ? e.laneSide : order.side;
+          // A short tangential waypoint takes the wing around the target instead of following the lead into their back.
+          const radius = order?.radius ?? (prepared?.shot ? 7 : 4);
+          const radial = evading ? (e.kind === 'gunner' ? -1.45 : -0.5) : THREE.MathUtils.clamp(pd - radius, -2.4, 2.4);
+          e.tx = e.x + uz * side * 2.2 + ux * radial;
+          e.tz = e.z - ux * side * 2.2 + uz * radial;
+          speed = evading ? defense.speed : e.chase * 0.82;
+        }
       }
       else if (e.wait > 0) e.wait -= dt;
       else if (Math.hypot(e.tx - e.x, e.tz - e.z) < 0.45) {
@@ -1072,7 +1293,7 @@ export async function createHunt({ scene, shared, man, animator, player, heightA
       } else speed = pace;
       if (e.snatch > 0) e.snatch -= dt;
       const mx = e.tx - e.x, mz = e.tz - e.z, md = Math.hypot(mx, mz) || 1;
-      if (e.windup > 0 || e.stagger > 0) speed = 0;
+      if (e.windup > 0 || e.stagger > 0 || e.recover > (attack?.recover ?? 0) * 0.62 || e.defend > 0 && e.defending === 'Guard') speed = 0;
       let step = Math.min(speed * dt, md);
       if (step > 0) {
         const hit = player.castRay({ x: e.x, y: heightAt(e.x, e.z) + 0.6, z: e.z }, { x: mx / md, y: 0, z: mz / md }, step + 0.6, e.collider);
@@ -1081,8 +1302,8 @@ export async function createHunt({ scene, shared, man, animator, player, heightA
       const x0 = e.x, z0 = e.z;
       e.x += (mx / md) * step; e.z += (mz / md) * step;
       e.going = Math.hypot(e.x - x0, e.z - z0) / Math.max(dt, 1e-4);
-      if (step > 0.0001 && e.windup <= 0) {
-        const want = Math.atan2(mx, mz);
+      if ((step > 0.0001 || e.defend > 0) && e.windup <= 0) {
+        const want = e.defend > 0 || order && !order.lead ? Math.atan2(dxp, dzp) : Math.atan2(mx, mz);
         const turn = Math.atan2(Math.sin(want - e.yaw), Math.cos(want - e.yaw));
         e.yaw += Math.max(-8 * dt, Math.min(8 * dt, turn));
       } else if (e.shot && e.mode === 'chase' && e.windup <= 0) e.yaw = Math.atan2(dxp, dzp);
@@ -1092,29 +1313,37 @@ export async function createHunt({ scene, shared, man, animator, player, heightA
       }
       e.phase += dt * (3 + e.going * 2);
       e.cool = Math.max(0, e.cool - dt);
-      const near = pd;
+      if (e.laneStep > 0) e.laneStep -= dt;
       if (e.windup > 0) {
-        if (e.shot && e.windup > AIM_LOCK) e.yaw = e.attackYaw = Math.atan2(ax - e.x, az - e.z);
-        if (e.shot && e.windup < AIM_LOCK && !e.lockedPlayed) { e.lockedPlayed = true; audio?.play('lock'); }
-        if (e.lunge && e.windup < 0.2) sweep(e, Math.sin(e.attackYaw), Math.cos(e.attackYaw), e.lunge / 0.2 * dt);
+        if (attack?.shot && e.windup > AIM_LOCK) e.yaw = e.attackYaw = Math.atan2(ax - e.x, az - e.z);
+        if (attack?.shot && e.windup < AIM_LOCK && !e.lockedPlayed) { e.lockedPlayed = true; audio?.play('lock'); }
+        if (attack?.rush && e.windup <= 0.2) sweep(e, Math.sin(e.attackYaw), Math.cos(e.attackYaw), attack.rush / 0.2 * Math.min(e.windup, dt));
         e.windup = Math.max(0, e.windup - dt);
         // Shared strikes and shots are announced; every page tests them against its own wanderer.
-        if (e.windup === 0 && e.shot) {
+        if (e.windup === 0 && attack?.shot) {
           e.lockedPlayed = false;
-          if (hp > 0 && !gated(e.z)) {
+          if (hp > 0 && !gated(e.z) && firingLane(e, goal, e.attackYaw)) {
             const vy = fire(e, { x: ax, y: ay, z: az });
             if (net && e.netId != null) net.send({ t: 'ev', k: 'bolt', i: e.netId, yaw: r2(e.attackYaw), vy: r2(vy) });
           }
         } else if (e.windup === 0) {
-          if (net && e.netId != null) net.send({ t: 'ev', k: 'strike', i: e.netId });
-          if (invuln <= 0 && hp > 0 && !gated(e.z) && strikeHits(e, px, player.feet.y, pz, heightAt(e.x, e.z))) takeHit(e.dmg, e, e.push);
+          if (net && e.netId != null) net.send({ t: 'ev', k: 'strike', i: e.netId, move: e.attackIndex ?? 0, yaw: r2(e.attackYaw) });
+          if (invuln <= 0 && hp > 0 && !gated(e.z) && strikeHits(e, px, player.feet.y, pz, heightAt(e.x, e.z))) takeHit(attack?.damage ?? e.dmg, e, e.push);
         }
+        if (e.windup === 0) e.recover = attack?.recover ?? 0;
         if (e.windup === 0 && e.kind === 'brute') { pulse(e.x, heightAt(e.x, e.z) + 0.06, e.z, 0xff9f7a, true); cameraKick = Math.max(cameraKick, 0.06); }
-      } else if (e.mode === 'chase' && near < e.reach + 0.25 + (e.lunge ?? 0) && e.cool <= 0 && e.stagger <= 0 && hp > 0 && !gated(e.z)) {
-        e.windup = e.wind; e.lockedPlayed = false;
+      } else if (e.mode === 'chase' && order?.lead !== false && pd < (prepared?.reach ?? e.reach) + 0.25 + (prepared?.rush ?? 0) &&
+          e.cool <= 0 && e.stagger <= 0 && e.defend <= 0 && hp > 0 && !gated(e.z)) {
+        if (prepared?.shot && !firingLane(e, goal)) {
+          if (!e.laneSide || e.going < 0.2) e.laneSide = e.laneSide === 1 ? -1 : 1;
+          e.laneStep = e.cool = 0.56;
+          swingAt(e); lay(e, dt); continue;
+        }
+        e.attackIndex = order?.index ?? 0; e.attackCount = (e.attackCount ?? 0) + 1; e.reprisal = false;
+        e.windup = prepared?.wind ?? e.wind; e.lockedPlayed = false;
         e.attackYaw = Math.atan2(ax - e.x, az - e.z);
         e.yaw = e.attackYaw;
-        e.cool = e.windup + 1.0;
+        e.cool = e.windup + (prepared?.recover ?? 1);
       }
       swingAt(e);
       lay(e, dt);
@@ -1359,10 +1588,13 @@ export async function createHunt({ scene, shared, man, animator, player, heightA
     } else if (stars < 3 && block) {
       scene.remove(block.mesh); player.world.removeCollider(block.col, true); block = null;
     }
-    hud.update(dt, { hp, power, cleared: c, won, enemies, player, has, dashCool, flareCool, invuln, boss, heat, cash, stars, task, mission });
+    hud.update(dt, { hp, power, cleared: c, won, enemies, player, has, dashCool, flareCool, invuln, boss, heat, cash, stars, task, mission,
+      focus, guarding, guardMeter, guardBreak, counter, evadeCool });
   }
 
-  return { update, pose, enemies, hud, ram, get swing() { return swing; },
+  return { update, pose, combatInput, enemies, hud, ram, clearFocus() { focus = null; },
+    get target() { return focus; }, get visibleTarget() { return focusBlocked === 0 ? focus : null; }, get swing() { return swing; },
+    saveField() { persist(clearedCount()); },
     /** Restores health cleanly from side contract completions or relays. */
     heal(n) { hp = Math.min(MAX_HP, hp + n); },
     /** The room's payment for a finished contract. */
@@ -1376,7 +1608,8 @@ export async function createHunt({ scene, shared, man, animator, player, heightA
     summon(x, z) {
       const e = mech;
       if (!e) return;
-      Object.assign(e, { x, z, homeX: x, homeZ: z, tx: x, tz: z, hp: e.maxHp, dead: 0, gone: false, mode: 'roam', cool: 0, windup: 0, stagger: 0, air: 0, vy: 0, kx: 0, kz: 0, wait: 1 });
+      Object.assign(e, { x, z, homeX: x, homeZ: z, tx: x, tz: z, hp: e.maxHp, dead: 0, gone: false, mode: 'roam', cool: 0, windup: 0, recover: 0,
+        defend: 0, defendCool: 0, attackCount: 0, attackIndex: 0, stagger: 0, air: 0, vy: 0, kx: 0, kz: 0, wait: 1 });
       e.mesh.visible = true;
       if (!e.body) addBody(e);
     },
@@ -1388,7 +1621,10 @@ export async function createHunt({ scene, shared, man, animator, player, heightA
         if (net.host) hurt(e, Math.max(0, Math.min(500, +m.n || 0)), KNOCK[m.src] != null || m.src === 'ram' ? m.src : 'sword', { x: +m.x || e.x, z: +m.z || e.z });
       } else if (!puppet(e)) return;
       else if (m.k === 'strike') {
-        if (invuln <= 0 && hp > 0 && strikeHits(e, player.feet.x, player.feet.y, player.feet.z, heightAt(e.x, e.z))) takeHit(e.dmg, e, e.push);
+        e.attackIndex = m.move === 1 ? 1 : 0;
+        if (Number.isFinite(m.yaw)) e.attackYaw = m.yaw;
+        const attack = attackFor(e);
+        if (invuln <= 0 && hp > 0 && strikeHits(e, player.feet.x, player.feet.y, player.feet.z, heightAt(e.x, e.z))) takeHit(attack?.damage ?? e.dmg, e, e.push);
       } else if (m.k === 'bolt' && e.shot) { e.attackYaw = +m.yaw || 0; fire(e, null, Math.max(-4, Math.min(4, +m.vy || 0))); }
     },
     /** For the vehicles: a jolt through the camera, and a knock he takes from his own crash. */
@@ -1405,6 +1641,7 @@ export async function createHunt({ scene, shared, man, animator, player, heightA
 }
 
 export function demo() {
+  demoTactics();
   let p = POWER_MAX;
   p = spendPower(p); p = spendPower(p); p = spendPower(p);
   if (p !== 0) throw new Error('empty ' + p);

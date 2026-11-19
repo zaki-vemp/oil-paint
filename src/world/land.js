@@ -186,146 +186,199 @@ export function createLand(shared) {
       ${COMMON}
       in vec3 vWorld;
       layout(location = 0) out vec4 outC;
+      float stripe(float p, float lo, float hi, float width) {
+        return smoothstep(lo - width, lo + width, p) * (1.0 - smoothstep(hi - width, hi + width, p));
+      }
+      // Smooth wide-filter terrain normal prevents staircase moire on steep alpine ridges
+      vec3 terrainNormal(vec2 xz) {
+        const float e = 1.25;
+        float hx = heightAt(xz + vec2(e, 0.0)) - heightAt(xz - vec2(e, 0.0));
+        float hz = heightAt(xz + vec2(0.0, e)) - heightAt(xz - vec2(0.0, e));
+        return normalize(vec3(-hx, 2.0 * e, -hz));
+      }
+      // Animated concentric raindrop ripples in wet night puddles
+      vec2 rainRipple(vec2 p, float t) {
+        vec2 cell = floor(p);
+        vec2 f = fract(p) - 0.5;
+        vec4 rnd = hash4(cell, 19.3);
+        float life = fract(t * (0.85 + 0.55 * rnd.x) + rnd.y);
+        vec2 center = (rnd.zw - 0.5) * 0.52;
+        vec2 d = f - center;
+        float dist = length(d);
+        float ring = sin((dist - life * 0.48) * 52.0) * exp(-abs(dist - life * 0.48) * 18.0) * (1.0 - life) * smoothstep(0.02, 0.08, life);
+        return (d / max(dist, 0.01)) * ring * 0.048;
+      }
       void main() {
         vec4 m = texture(tLand, landUv(vWorld.xz));
-        if (uAnime > 0.5) {
-          float lit = woodSunAt(vWorld + vec3(0.0, 0.15, 0.0));
-          float patches = texture(tNoise, vWorld.xz / 13.0).r;
-          vec3 Nn = normalAt(vWorld.xz);
-          float h = vWorld.y;
-          float day = 1.0 - uNight;
-          vec3 pave = zoneGrassAt(vWorld.xz);
-          vec3 neon = zoneFoliageAt(vWorld.xz);
-          vec3 pale = zoneLeafAt(vWorld.xz);
-          vec3 roadCol = zonePathAt(vWorld.xz);
-          // Pavement in painted stone slabs with fine joints, raised kerbstones, and slate/wet-neon asphalt
-          vec3 c = paint3(pave * 1.10, pave * 0.98, pave * 0.84, mix(0.32, 0.86, lit), patches);
-          float slabMask = 1.0 - smoothstep(0.15, 0.65, m.a);
-          vec2 slab = abs(fract(vWorld.xz / 3.2) - 0.5);
-          vec2 fineSlab = abs(fract(vWorld.xz / 1.6) - 0.5);
-          float joint = max(step(0.475, max(slab.x, slab.y)), 0.42 * step(0.484, max(fineSlab.x, fineSlab.y)));
-          c *= 1.0 - 0.28 * joint * slabMask;
+        float h = vWorld.y;
+        vec3 baseN = h > 0.04 ? terrainNormal(vWorld.xz) : vec3(0.0, 1.0, 0.0);
+        vec3 V = normalize(cameraPosition - vWorld);
+        float distCam = length(cameraPosition - vWorld);
+        float detailFade = 1.0 - smoothstep(26.0, 90.0, distCam);
 
-          float road = smoothstep(0.14, 0.85, m.r);
-          vec2 agg = texture(tNoise, vWorld.xz * 0.62).ba;
-          float grain = (agg.x - 0.5) * 0.10 + (agg.y - 0.5) * 0.06;
-          float puddle = smoothstep(0.46, 0.74, patches * 0.72 + texture(tNoise, vWorld.xz / 6.8).b * 0.38);
-          vec3 dayAsphalt = paint3(roadCol * 1.12, roadCol * 0.98, roadCol * 0.78, lit, patches) * (1.0 + grain * (0.35 + 0.85 * day));
-          vec3 nightAsphalt = roadCol * mix(0.96, 0.62, puddle) * mix(0.74, 1.0, lit) * (1.0 + grain * 0.35);
-          c = mix(c, mix(dayAsphalt, nightAsphalt, uNight), road);
+        vec4 nMacro = texture(tNoise, vWorld.xz / 18.0);
+        vec4 nMed = texture(tNoise, vWorld.xz / 5.5);
+        vec4 detFine = texture(tDetail, vWorld.xz * 0.55);
+        vec4 detMicro = texture(tDetail, vWorld.xz * 1.45);
+        vec4 detCoarse = texture(tDetail, vWorld.xz * 0.12);
+        vec2 aa = clamp(fwidth(vWorld.xz) * 0.5, vec2(0.014), vec2(0.64));
 
-          float dx = gridAxis(vWorld.x), dz = gridAxis(vWorld.z), gdist = min(dx, dz);
-          float flatCity = step(abs(vWorld.x), 282.0) * step(abs(vWorld.z), 282.0) * (1.0 - smoothstep(0.3, 1.2, h));
-          float walk = smoothstep(uGrid.z + 0.06, uGrid.z + 0.32, gdist) * (1.0 - smoothstep(uGrid.z + 2.2, uGrid.z + 3.3, gdist));
-          c = mix(c, pave * mix(1.24, 1.36, uNight) * mix(0.78, 1.04, lit), walk * flatCity * (1.0 - road));
-          // Granite kerbstone lip and dark recessed asphalt gutter around every grid block
-          float kerbLip = smoothstep(uGrid.z - 0.02, uGrid.z + 0.06, gdist) * (1.0 - smoothstep(uGrid.z + 0.28, uGrid.z + 0.40, gdist));
-          float kerbBlock = 0.88 + 0.12 * step(0.09, fract((dx < dz ? vWorld.z : vWorld.x) * 0.85));
-          c = mix(c, pave * mix(1.48, 1.72, uNight) * kerbBlock * mix(0.80, 1.06, lit), kerbLip * flatCity * (1.0 - road) * slabMask);
-          float gutter = smoothstep(uGrid.z - 0.42, uGrid.z - 0.06, gdist) * (1.0 - smoothstep(uGrid.z - 0.02, uGrid.z + 0.08, gdist));
-          c *= 1.0 - 0.28 * gutter * flatCity * road;
+        // 1. Concrete / Granite Sidewalk Paving Slabs
+        float slabMask = 1.0 - smoothstep(0.15, 0.65, m.a);
+        vec2 slab = abs(fract(vWorld.xz / 3.2) - 0.5);
+        vec2 fineSlab = abs(fract(vWorld.xz / 1.6) - 0.5);
+        vec2 seam = smoothstep(vec2(0.478) - aa / 3.2, vec2(0.478) + aa / 3.2, slab);
+        vec2 hairline = smoothstep(vec2(0.486) - aa / 1.6, vec2(0.486) + aa / 1.6, fineSlab);
+        float joint = max(max(seam.x, seam.y), 0.45 * max(hairline.x, hairline.y)) * slabMask;
+        vec2 tileId = floor(vWorld.xz / 1.6);
+        float tileVar = 0.88 + 0.22 * hash4(tileId, 3.1).x;
 
-          // Dashed lane lines, stop bars, and warm-ivory zebra crosswalks near grid intersections
-          float lane = 0.0;
-          if (dx < uGrid.z && dz > uGrid.z + 5.1) lane = step(0.55, fract(vWorld.z * 0.16)) * step(min(abs(dx - 1.15), abs(dx + 1.15)), 0.07);
-          if (dz < uGrid.z && dx > uGrid.z + 5.1) lane = step(0.55, fract(vWorld.x * 0.16)) * step(min(abs(dz - 1.15), abs(dz + 1.15)), 0.07);
-          float crosswalk = 0.0, stopBar = 0.0;
-          if (dx < uGrid.z - 0.32 && dz > uGrid.z + 1.2 && dz < uGrid.z + 3.8) {
-            float bar = smoothstep(0.28, 0.23, abs(fract(vWorld.x * 1.05) - 0.5));
-            float ends = smoothstep(uGrid.z + 1.2, uGrid.z + 1.32, dz) * (1.0 - smoothstep(uGrid.z + 3.68, uGrid.z + 3.8, dz));
-            crosswalk = bar * ends * (1.0 - smoothstep(uGrid.z - 0.48, uGrid.z - 0.32, dx));
-          }
-          if (dz < uGrid.z - 0.32 && dx > uGrid.z + 1.2 && dx < uGrid.z + 3.8) {
-            float bar = smoothstep(0.28, 0.23, abs(fract(vWorld.z * 1.05) - 0.5));
-            float ends = smoothstep(uGrid.z + 1.2, uGrid.z + 1.32, dx) * (1.0 - smoothstep(uGrid.z + 3.68, uGrid.z + 3.8, dx));
-            crosswalk = max(crosswalk, bar * ends * (1.0 - smoothstep(uGrid.z - 0.48, uGrid.z - 0.32, dz)));
-          }
-          if (dx < uGrid.z - 0.45 && dz > uGrid.z + 4.30 && dz < uGrid.z + 4.58) stopBar = 1.0;
-          if (dz < uGrid.z - 0.45 && dx > uGrid.z + 4.30 && dx < uGrid.z + 4.58) stopBar = 1.0;
-          float paintMask = clamp(lane + crosswalk + stopBar, 0.0, 1.0) * flatCity;
-          float paintWear = 0.90 + 0.10 * patches;
-          vec3 ivoryDay = vec3(0.93, 0.90, 0.81) * mix(0.78, 1.04, lit) * paintWear;
-          vec3 ivoryNight = (vec3(0.64, 0.66, 0.72) + neon * 0.14 + pale * 0.08) * paintWear;
-          vec3 markCol = mix(ivoryDay, ivoryNight, uNight);
-          c = mix(c, markCol * 0.92, lane * flatCity * road);
-          c = mix(c, markCol, clamp(crosswalk + stopBar, 0.0, 1.0) * flatCity * road);
+        vec3 paveBase = mix(vec3(0.20, 0.21, 0.23), vec3(0.28, 0.28, 0.29), nMacro.r) * tileVar;
+        paveBase *= 0.84 + 0.26 * detCoarse.b;
+        paveBase *= 1.0 - 0.42 * joint;
+        vec3 albedo = paveBase;
+        float rough = mix(0.76, 0.58, nMed.g * 0.6) + joint * 0.16;
+        float metal = 0.0;
+        float coat = 0.0;
+        float sss = 0.0;
+        vec2 bumpXY = (detFine.rg * 2.0 - 1.0) * 0.22 * detailFade;
 
-          // Wet-pavement neon specular streaks at night: crisp vertical reflections in rain-puddle patches
-          float nightGlow = mix(0.05, 1.0, uNight);
-          if (uNight > 0.01) {
-            vec3 toCam = cameraPosition - vWorld;
-            vec2 vDir = normalize(toCam.xz + vec2(1e-4));
-            vec2 wv = vDir * vDir;
-            float graze = smoothstep(0.18, 0.92, 1.0 - abs(toCam.y) * inversesqrt(dot(toCam, toCam) + 1e-4));
-            float ripple = (texture(tNoise, vWorld.xz * vec2(0.22, 0.95)).g - 0.5) * 0.06;
-            vec2 sNS = texture(tNoise, vec2(vWorld.x / 0.92 + ripple, vWorld.z / 16.0)).rg;
-            vec2 sEW = texture(tNoise, vec2(vWorld.x / 16.0, vWorld.z / 0.92 + ripple)).gb;
-            float streakFol = sNS.x * wv.y + sEW.x * wv.x;
-            float streakPale = sNS.y * wv.y + sEW.y * wv.x;
-            float puddlePatch = smoothstep(0.42, 0.72, puddle);
-            float wetMask = road * (1.0 - paintMask * 0.85) * mix(0.10, 1.0, puddlePatch) * mix(0.25, 1.15, graze) * uNight;
-            float bandFol = smoothstep(0.50, 0.68, streakFol) + 0.60 * smoothstep(0.74, 0.85, streakFol);
-            float bandPale = smoothstep(0.55, 0.73, streakPale) + 0.55 * smoothstep(0.78, 0.89, streakPale);
-            c += (neon * bandFol * 0.36 + pale * bandPale * 0.26) * wetMask;
-            float paveWet = (1.0 - road) * slabMask * smoothstep(0.64, 0.84, patches) * graze * uNight;
-            c += mix(neon, pale, step(0.5, streakPale)) * smoothstep(0.56, 0.76, streakFol) * paveWet * 0.16;
-          }
-          // Soft neon wash at the road edge; kept smooth so the winding trail's mask never shows teeth
-          c = mix(c, neon, smoothstep(0.12, 0.42, m.r) * (1.0 - smoothstep(0.42, 0.78, m.r)) * 0.3 * nightGlow);
+        // 2. Wet Crushed-Aggregate Asphalt Roads & Rainwater Puddles
+        float road = smoothstep(0.14, 0.85, m.r);
+        float dx = gridAxis(vWorld.x), dz = gridAxis(vWorld.z), gdist = min(dx, dz);
+        float flatCity = step(abs(vWorld.x), 282.0) * step(abs(vWorld.z), 282.0) * (1.0 - smoothstep(0.3, 1.2, h));
 
-          // Forest floor: cel-painted grass, moss and earth replacing pavement off-road inside forest zones.
-          float nature = smoothstep(0.18, 0.65, m.a) * (1.0 - smoothstep(0.2, 0.7, m.r));
-          if (nature > 0.001) {
-            float sunVal = lit * clamp(dot(Nn, uSunDir) * 0.55 + 0.5, 0.0, 1.0);
-            vec3 dayG = mix(vec3(0.26, 0.50, 0.20), vec3(0.42, 0.64, 0.25), smoothstep(0.25, 0.75, patches));
-            dayG = mix(dayG, vec3(0.35, 0.30, 0.21), smoothstep(0.66, 0.88, m.b) * 0.65);
-            vec3 nightG = mix(vec3(0.05, 0.13, 0.12), vec3(0.09, 0.20, 0.16), smoothstep(0.25, 0.75, patches));
-            nightG = mix(nightG, vec3(0.07, 0.07, 0.09), smoothstep(0.66, 0.88, m.b) * 0.65);
-            vec3 gCol = mix(dayG, nightG, uNight);
-            vec3 natureCol = paint3(gCol * 1.12, gCol * 0.88, gCol * vec3(0.58, 0.64, 0.72), sunVal, patches);
-            c = mix(c, natureCol, nature);
-          }
+        // Sidewalk apron, bevelled granite curbstones, and damp gutter
+        float walk = smoothstep(uGrid.z + 0.06, uGrid.z + 0.30, gdist) * (1.0 - smoothstep(uGrid.z + 2.2, uGrid.z + 3.2, gdist));
+        albedo = mix(albedo, paveBase * 1.18, walk * flatCity * (1.0 - road));
+        float kerbLip = smoothstep(uGrid.z - 0.02, uGrid.z + 0.06, gdist) * (1.0 - smoothstep(uGrid.z + 0.26, uGrid.z + 0.36, gdist));
+        float kerbBlock = 0.88 + 0.12 * step(0.08, fract((dx < dz ? vWorld.z : vWorld.x) * 0.85));
+        albedo = mix(albedo, vec3(0.32, 0.33, 0.35) * kerbBlock * (0.88 + 0.22 * detFine.b), kerbLip * flatCity * (1.0 - road) * slabMask);
+        rough = mix(rough, 0.56, kerbLip * flatCity * (1.0 - road));
 
-          // Mountains: stratified 3-band rock slopes rising into snow-capped alpine peaks.
-          float rockMask = clamp(smoothstep(1.8, 7.0, h) * 0.88 + smoothstep(0.88, 0.70, Nn.y), 0.0, 1.0);
-          if (rockMask > 0.001) {
-            float sunVal = lit * clamp(dot(Nn, uSunDir) * 0.65 + 0.38, 0.0, 1.0);
-            float strata = 0.5 + 0.5 * sin(h * 0.55 + patches * 3.0);
-            vec3 dayRock = paint3(
-              mix(vec3(0.54, 0.52, 0.50), vec3(0.60, 0.57, 0.53), strata),
-              mix(vec3(0.35, 0.37, 0.43), vec3(0.39, 0.40, 0.44), strata),
-              vec3(0.19, 0.22, 0.30),
-              sunVal, patches
-            );
-            vec3 nightRock = paint3(
-              mix(vec3(0.15, 0.20, 0.30), vec3(0.18, 0.22, 0.31), strata),
-              vec3(0.07, 0.10, 0.17),
-              vec3(0.03, 0.04, 0.08),
-              sunVal, patches
-            );
-            vec3 rockCol = mix(dayRock, nightRock, uNight);
-            float snowMask = smoothstep(26.0, 36.0, h) * smoothstep(0.48, 0.68, Nn.y);
-            if (snowMask > 0.001) {
-              vec3 daySnow = paint3(vec3(0.95, 0.96, 0.98), vec3(0.80, 0.85, 0.92), vec3(0.62, 0.71, 0.85), sunVal, patches);
-              vec3 nightSnow = paint3(vec3(0.36, 0.46, 0.62), vec3(0.18, 0.26, 0.40), vec3(0.09, 0.14, 0.26), sunVal, patches);
-              rockCol = mix(rockCol, mix(daySnow, nightSnow, uNight), snowMask);
-            }
-            c = mix(c, rockCol, rockMask * (1.0 - road));
-          }
+        // Asphalt surface with fine crushed tarmac grain, tar micro-cracks, tire polish tracks & realistic puddles
+        float tw = (min(dx, dz) - 1.75) / 0.65;
+        float tireWear = exp(-tw * tw) * flatCity;
+        float crack = smoothstep(0.14, 0.03, detCoarse.a);
+        vec3 asphaltCol = mix(vec3(0.022, 0.024, 0.029), vec3(0.038, 0.040, 0.046), detMicro.b) * (0.86 + 0.24 * nMacro.g);
+        asphaltCol *= 1.0 - crack * 0.32;
+        asphaltCol *= 1.0 - 0.18 * tireWear;
+        float gutter = smoothstep(uGrid.z - 0.44, uGrid.z - 0.06, gdist) * (1.0 - smoothstep(uGrid.z - 0.02, uGrid.z + 0.08, gdist));
+        asphaltCol *= 1.0 - 0.35 * gutter * flatCity;
 
-          float fig = figSunAt(vWorld);
-          c = mix(c * uGlazeMul + uGlazeAdd, c, fig);
-          outC = vec4(hazed(c, vWorld), 1.0);
-          return;
+        // Rainwater puddle mask (stronger & slicker at night and in gutters; subtle dampness by day)
+        float wetRaw = nMacro.r * 0.58 + nMed.b * 0.42 + gutter * 0.28;
+        float puddle = smoothstep(mix(0.72, 0.50, uNight), mix(0.88, 0.72, uNight), wetRaw) * flatCity;
+        float damp = smoothstep(mix(0.45, 0.22, uNight), mix(0.78, 0.58, uNight), wetRaw) * flatCity;
+        asphaltCol *= mix(1.0, 0.54, max(puddle * 0.9, damp * 0.45 * uNight));
+
+        float asphaltRough = mix(mix(0.84, 0.46, damp * (0.35 + 0.65 * uNight)), 0.045, puddle);
+        asphaltRough = mix(asphaltRough, asphaltRough * 0.78, tireWear * 0.5);
+        vec2 asphaltBump = (detMicro.rg * 2.0 - 1.0) * mix(0.14, 0.012, puddle) * detailFade;
+        if (puddle > 0.05 && uNight > 0.15 && distCam < 38.0) {
+          vec2 rip = rainRipple(vWorld.xz * 1.45, uTime) + rainRipple(vWorld.xz * 2.1 + 3.7, uTime * 1.15);
+          asphaltBump += rip * puddle * uNight * (1.0 - smoothstep(16.0, 38.0, distCam));
         }
-        // laid in broadly first: warm where the sun falls, plum where it doesn't
-        // asked square by ragged square, so that what shows between the dabs is itself in touches
-        vec2 sq = floor(vWorld.xz / 0.32 + (texture(tNoise, vWorld.xz / 2.3).rg - 0.5) * 1.8) * 0.32;
-        float lit = step(0.5, woodSunAt(vec3(sq.x, vWorld.y + 0.2, sq.y)));
-        vec3 c = mix(vec3(0.3, 0.16, 0.16), vec3(0.72, 0.44, 0.14), lit);
-        c = mix(c, mix(vec3(0.21, 0.17, 0.2), vec3(0.6, 0.47, 0.33), lit), m.r);
-        c *= 0.78 + 0.3 * texture(tNoise, vWorld.xz / 9.0).r;
-        outC = vec4(hazed(c, vWorld), 1.0);
+
+        // Crisp worn thermoplastic road markings (lane dashes, stop bars & crosswalks)
+        float lane = 0.0;
+        if (dx < uGrid.z && dz > uGrid.z + 5.1) {
+          lane = stripe(dx, 1.08, 1.22, aa.x) * stripe(fract(vWorld.z * 0.16), 0.55, 0.98, aa.y * 0.16);
+        } else if (dz < uGrid.z && dx > uGrid.z + 5.1) {
+          lane = stripe(dz, 1.08, 1.22, aa.y) * stripe(fract(vWorld.x * 0.16), 0.55, 0.98, aa.x * 0.16);
+        }
+        float crosswalk = 0.0, stopBar = 0.0;
+        float across = dx < dz ? dx : dz, along = max(dx, dz);
+        if (across < uGrid.z && along < uGrid.z + 5.3) {
+          float wa = dx < dz ? aa.x : aa.y, wb = dx < dz ? aa.y : aa.x;
+          float coord = dx < dz ? vWorld.x : vWorld.z;
+          float ends = 1.0 - smoothstep(uGrid.z - 0.43 - wa, uGrid.z - 0.43 + wa, across);
+          float bar = stripe(fract(coord * 1.05), 0.25, 0.75, wa * 1.05);
+          crosswalk = ends * bar * stripe(along, uGrid.z + 1.26, uGrid.z + 3.74, wb);
+          stopBar = ends * stripe(along, uGrid.z + 4.30, uGrid.z + 4.58, wb);
+        }
+        float paintMask = clamp(lane + crosswalk + stopBar, 0.0, 1.0) * flatCity * road;
+        float paintWear = smoothstep(0.18, 0.46, detFine.b) * (0.78 + 0.22 * nMed.r);
+        vec3 markAlbedo = vec3(0.66, 0.63, 0.56) * mix(0.65, 1.0, paintWear);
+        asphaltCol = mix(asphaltCol, markAlbedo, paintMask * (0.75 + 0.25 * paintWear));
+        asphaltRough = mix(asphaltRough, mix(0.62, 0.24, puddle), paintMask);
+
+        albedo = mix(albedo, asphaltCol, road);
+        rough = mix(rough, asphaltRough, road);
+        coat = mix(damp * 0.18 * uNight * slabMask, max(puddle * 0.95, damp * 0.35 * uNight), road) * (1.0 - paintMask * 0.6);
+        bumpXY = mix(bumpXY, asphaltBump, road);
+
+        // 3. Park Grass, Clover & Woodland Loam
+        float nature = smoothstep(0.16, 0.64, m.a) * (1.0 - smoothstep(0.2, 0.7, m.r));
+        if (nature > 0.001) {
+          vec3 grassDeep = vec3(0.055, 0.135, 0.036);
+          vec3 grassBright = vec3(0.115, 0.225, 0.052);
+          vec3 loam = vec3(0.095, 0.072, 0.048);
+          vec3 gAlb = mix(grassDeep, grassBright, smoothstep(0.22, 0.78, nMacro.r * 0.65 + detFine.b * 0.35));
+          gAlb = mix(gAlb, loam, smoothstep(0.64, 0.90, m.b) * 0.72);
+          gAlb *= 0.78 + 0.38 * detFine.b;
+          albedo = mix(albedo, gAlb, nature);
+          rough = mix(rough, 0.86, nature);
+          coat = mix(coat, 0.0, nature);
+          sss = mix(sss, 0.14, nature);
+          bumpXY = mix(bumpXY, (detFine.rg * 2.0 - 1.0) * 0.35 * detailFade, nature);
+        }
+
+        // 4. Photorealistic Stratified Alpine Mountains (Triplanar Rock + Windswept Snowpack)
+        vec3 N = normalize(vec3(baseN.x + bumpXY.x, baseN.y, baseN.z + bumpXY.y));
+        float rockMask = clamp(smoothstep(1.4, 6.5, h) * 0.90 + (1.0 - smoothstep(0.68, 0.88, baseN.y)), 0.0, 1.0) * (1.0 - road);
+        if (rockMask > 0.001) {
+          vec3 blend = pow(abs(baseN), vec3(4.0));
+          blend /= max(blend.x + blend.y + blend.z, 1e-4);
+          vec4 tx = texture(tDetail, vWorld.zy * 0.085);
+          vec4 ty = texture(tDetail, vWorld.xz * 0.085);
+          vec4 tz = texture(tDetail, vWorld.xy * 0.085);
+          vec4 tri = tx * blend.x + ty * blend.y + tz * blend.z;
+          vec4 triMacro = texture(tNoise, vWorld.xz * 0.025 + vec2(h * 0.012, 0.0));
+
+          float strata = 0.5 + 0.5 * sin(h * 0.42 + triMacro.r * 5.2 + tri.b * 1.4);
+          vec3 granite = mix(vec3(0.085, 0.092, 0.105), vec3(0.195, 0.185, 0.172), strata * 0.65 + tri.b * 0.35);
+          granite *= 0.68 + 0.48 * smoothstep(0.08, 0.45, tri.a);
+          // Subtle lichen/moss on lower damp slopes
+          float foothillMoss = (1.0 - smoothstep(4.0, 18.0, h)) * smoothstep(0.55, 0.82, baseN.y);
+          granite = mix(granite, vec3(0.075, 0.125, 0.055), foothillMoss * 0.55);
+
+          // Windswept alpine snowpack on upper ridges & ledges
+          float snowMask = smoothstep(22.0, 35.0, h + (triMacro.g - 0.5) * 9.0) * smoothstep(0.46, 0.72, baseN.y + (tri.b - 0.5) * 0.18);
+          vec3 snowAlb = mix(vec3(0.68, 0.74, 0.84), vec3(0.86, 0.89, 0.94), tri.b);
+          vec3 mtnAlb = mix(granite, snowAlb, snowMask);
+          float mtnRough = mix(0.82 - 0.12 * tri.b, 0.38 + 0.18 * tri.b, snowMask);
+          float mtnSSS = snowMask * 0.38;
+
+          // Triplanar rock normal perturbation
+          vec3 rockN = normalize(baseN + (vec3(tri.r, 0.5, tri.g) * 2.0 - 1.0) * mix(0.45, 0.14, snowMask));
+          albedo = mix(albedo, mtnAlb, rockMask);
+          rough = mix(rough, mtnRough, rockMask);
+          coat = mix(coat, snowMask * 0.12, rockMask);
+          sss = mix(sss, mtnSSS, rockMask);
+          N = normalize(mix(N, rockN, rockMask));
+        }
+
+        // Combined soft static + dynamic shadow
+        float shadow = min(woodSunAt(vWorld + vec3(0.0, 0.14, 0.0)), figSunAt(vWorld));
+        vec3 col = pbrShade(vWorld, N, V, albedo, rough, metal, coat, sss, 1.0, shadow, vec3(0.0));
+
+        // High-contrast wet asphalt reflections of streetlights, glowing storefronts & neon signs at night
+        if (uNight > 0.02 && flatCity > 0.0) {
+          vec3 toEye = cameraPosition - vWorld;
+          vec3 reflDir = reflect(-V, N);
+          float fres = 0.04 + 0.96 * pow(1.0 - max(dot(N, V), 0.0), 4.0);
+          float wetSpec = mix(slabMask * damp * 0.28, mix(0.16, 1.0, puddle), road) * (1.0 - paintMask * 0.72);
+          // Reflected fixture plane at y = 4.2m (streetlamps) + y = 11m (neon signs)
+          vec2 srcLamp = vWorld.xz + reflDir.xz * (4.2 / max(0.14, reflDir.y));
+          vec2 srcSign = vWorld.xz + reflDir.xz * (10.5 / max(0.22, reflDir.y));
+          vec3 rLamp = toLinear(streetLightAt(srcLamp + (detMicro.rg - 0.5) * mix(1.6, 0.16, puddle)));
+          vec3 rSign = toLinear(streetLightAt(srcSign + (detMicro.rg - 0.5) * mix(2.4, 0.28, puddle)));
+          float stretch = mix(0.35, 1.35, fres);
+          col += (rLamp * 1.40 + rSign * 0.62) * wetSpec * stretch * uNight;
+        }
+
+        outC = vec4(hazed(col, vWorld), 1.0);
       }`,
   });
   const mesh = new THREE.Mesh(geometry, material);

@@ -1,5 +1,5 @@
 // Captures 8 high-resolution (1600x900) Investor Showcase screenshots into shots/:
-//   CHROME=/usr/bin/google-chrome node tools/capture-investor-shots.mjs [http://127.0.0.1:5415]
+//   CHROME=/usr/bin/google-chrome node tools/capture-investor-shots.mjs [http://127.0.0.1:5415] [--prologue]
 import assert from 'node:assert/strict';
 import { createReadStream, existsSync, mkdirSync, statSync } from 'node:fs';
 import { createServer } from 'node:http';
@@ -14,6 +14,7 @@ const outDir = resolve(here, 'shots');
 mkdirSync(outDir, { recursive: true });
 
 const argUrl = process.argv.slice(2).find((a) => a.startsWith('http'));
+const prologueOnly = process.argv.includes('--prologue');
 let server = null;
 let baseURL = argUrl;
 
@@ -84,20 +85,20 @@ async function saveShot(page, filename) {
   });
   assert.equal(lost, false, `WebGL context lost before capturing ${filename}`);
   const targetPath = join(outDir, filename);
-  await page.screenshot({ path: targetPath });
+  await page.screenshot({ path: targetPath, timeout: 90_000 });
   const sizeKB = Math.round(statSync(targetPath).size / 1024);
   assert.ok(sizeKB > 180, `Screenshot ${filename} unexpectedly small (${sizeKB} KB)`);
   console.log(`captured ${filename} (${sizeKB} KB)`);
 }
 
-try {
+async function captureCity() {
   // --- 01: Kael with glowing Cyber-Katana & HUD + Sora Radio Comms in Sunleaf Row at night ---
   {
     const page = await openScene('?scene=autumn&phase=night&fresh&nopad');
     await page.waitForFunction(() => {
       const sword = window.lab?.figure?.man?.object?.getObjectByName('Traveler katana');
       return sword && sword.children.length === 1;
-    }, null, { timeout: 15000 }).catch(() => {});
+    }, null, { timeout: 15000 });
     await page.evaluate(() => {
       const L = window.lab, h = L.hunt;
       document.getElementById('hint')?.remove();
@@ -334,7 +335,7 @@ try {
       const rival = window.lab?.hunt?.enemies?.find((e) => e.duel && e.seg === 5);
       const rSword = rival?.mesh?.getObjectByName('Rival katana');
       return kSword?.children.length === 1 && rSword?.children.length === 1;
-    }, null, { timeout: 15000 }).catch(() => {});
+    }, null, { timeout: 15000 });
     await page.evaluate(() => {
       const L = window.lab, h = L.hunt;
       document.getElementById('hint')?.remove();
@@ -424,32 +425,37 @@ try {
     await saveShot(page, 'aa-07-story-codex-ui.png');
     await page.close();
   }
+}
 
+async function capturePrologue() {
   // --- 08: Snowbound ridge & cabin under the enhanced Aurora (?scene=aurora) ---
-  {
-    const page = await openScene('?scene=aurora&nopad&clean');
-    await page.evaluate(() => {
-      const L = window.lab;
-      L.dayNight.setPhase('night', 0);
-      if (L.hunt?.enemies) {
-        for (const e of L.hunt.enemies) { e.x = 240; e.z = 290; e.mesh.visible = false; }
-      }
-      L.trail(162, 142.4);
-      const kx = L.crestX(142), kz = 142;
-      L.teleport(kx, kz, L.crestX(110), 110);
-      L.wait(18.0);
-      const base = { move: { x: 0, y: 0 }, look: { x: 0, y: 0 }, walk: false, sprint: false, strafe: false, jump: false, jumpHeld: false, zoom: 0, device: 'keyboard' };
-      L.setInput(() => base);
-      L.follow.pitch = -0.11;
-      L.follow.want = L.follow.distance = 6.2;
-      L.step(1 / 60, 24, true);
-    });
-    await saveShot(page, 'aa-08-snowbound-prologue.png');
-    await page.close();
-  }
+  const page = await openScene('?scene=aurora&nopad&clean');
+  await page.waitForFunction(() => window.lab.lantern.object.getObjectByName('Spirit lantern'), null, { timeout: 15000 });
+  await page.evaluate(() => {
+    const L = window.lab;
+    L.dayNight.setPhase('night', 0);
+    if (L.hunt?.enemies) {
+      for (const e of L.hunt.enemies) { e.x = 240; e.z = 290; e.mesh.visible = false; }
+    }
+    L.trail(162, 142.4);
+    const kx = L.crestX(142), kz = 142;
+    L.teleport(kx, kz, L.crestX(110), 110);
+    L.wait(18.0);
+    const base = { move: { x: 0, y: 0 }, look: { x: 0, y: 0 }, walk: false, sprint: false, strafe: false, jump: false, jumpHeld: false, zoom: 0, device: 'keyboard' };
+    L.setInput(() => base);
+    L.follow.pitch = -0.11;
+    L.follow.want = L.follow.distance = 6.2;
+    L.step(1 / 60, 24, true);
+  });
+  await saveShot(page, 'aa-08-snowbound-prologue.png');
+  await page.close();
+}
 
+try {
+  if (!prologueOnly) await captureCity();
+  await capturePrologue();
   assert.deepEqual(errors, [], `Browser errors during screenshot capture:\n${errors.join('\n')}`);
-  console.log('ALL 8 INVESTOR SHOWCASE SCREENSHOTS CAPTURED CLEANLY!');
+  console.log(prologueOnly ? 'Captured the Snowbound prologue.' : 'Captured all eight Investor Showcase screenshots.');
 } finally {
   await context.close();
   await browser.close();

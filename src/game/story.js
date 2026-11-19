@@ -545,6 +545,20 @@ export const ECHO_SHARDS = [
   },
 ];
 
+export const LORE_KEY = 'oilpaint.lore.v1';
+const ECHO_IDS = new Set(ECHO_SHARDS.map(shard => shard.id));
+
+/** Reads the city's archive independently of the campaign checkpoint. */
+export function loadEchoIds() {
+  try {
+    const saved = JSON.parse(globalThis.localStorage?.getItem(LORE_KEY) ?? 'null');
+    const ids = Array.isArray(saved) ? saved : saved?.unlockedIds;
+    return new Set(Array.isArray(ids) ? ids.filter(id => ECHO_IDS.has(id)) : []);
+  } catch {
+    return new Set();
+  }
+}
+
 // Six field missions, strictly inside their sector's gates at SCALE = 3.0.
 export const SECTOR_MISSIONS = [
   {

@@ -155,15 +155,19 @@ addEventListener('pagehide', () => {
 });
 fitFrame = () => frame.resize();
 frame.uniforms.uCanvas.value = 0;
-// light ink round near silhouettes (figures, crews, towers); the haze takes it beyond ~90 m
-frame.uniforms.uInk.value = 0.7;
+// Realistic AAA mode: no comic ink outlines; use HDR bloom, SSAO & ACES filmic tone mapping.
+frame.uniforms.uInk.value = 0;
 frame.uniforms.uInkColor.value.setRGB(0.02, 0.02, 0.04);
 frame.uniforms.uInkFar.value = 90;
-if (q.has('ink')) frame.uniforms.uInk.value = +q.get('ink'); // ?ink=0 to compare
+if (q.has('ink')) frame.uniforms.uInk.value = +q.get('ink');
+shared.uAurora.value = 0;
+shared.uExposure.value = 1.08;
 graphics = createGraphics({ renderer, capture, apply(profile) {
   frame.setSamples(profile.samples);
   frame.resize();
-  frame.uniforms.uShafts.value = 0;
+  frame.uniforms.uShafts.value = profile.level === 'low' ? 0 : 0.28;
+  frame.uniforms.uAOStrength.value = profile.level === 'low' ? 0 : profile.level === 'medium' ? 0.36 : 0.50;
+  frame.uniforms.uBloomStrength.value = profile.level === 'low' ? 0.24 : 0.36;
   forest.setQuality(profile.decorations);
   street.setQuality(profile);
 } });
@@ -191,7 +195,9 @@ function settle() {
 }
 function respawn() {
   rides?.leave(true); // a fall takes him out of his seat; the vehicle stays where it was
+  hunt?.clearFocus();
   player.teleport(spawn.x, spawn.y, spawn.z);
+  follow.pivot.set(0, 0, 0);
   settle();
 }
 function syncDayNight(dt = 0) {
@@ -210,20 +216,30 @@ const LIMIT = EXTENT - 16;
 function tick(dt, draw = true) {
   dt = Math.min(dt, 1 / 20);
   const realDt = dt;
-  dt *= hunt?.timeScale ?? 1;
-  time += dt;
   // Online the street goes on under the menu (the host runs it for everyone): he just stands still.
   if (window.__paused || hunt?.downed) input.reset(); // down online, he waits for a hand
   const rawInp = input.read(realDt);
   if (showcase?.active && Math.hypot(rawInp.move.x, rawInp.move.y) > 0.15) {
     showcase.stop();
   }
-  const inp = showcase?.active
+  dt *= showcase?.active ? 1 : hunt?.timeScale ?? 1;
+  time += dt;
+  if (showcase?.active && !online) {
+    // A solo preview leaves the player, fights and objectives at the point where the tour started.
+    showcase.update(realDt);
+    syncDayNight(dt);
+    follow.update(realDt, player.feet, rawInp.look, rawInp.zoom);
+    if (draw) renderScene();
+    return;
+  }
+  let inp = showcase?.active
     ? { ...rawInp, move: { x: 0, y: 0 }, look: { x: 0, y: 0 }, zoom: 0, jump: false, jumpHeld: false, sprint: false, attack: false, heavy: false, power: false, dash: false, flare: false, whirl: false, ride: false }
     : rawInp;
   // At the wheel his legs are left alone: the vehicle carries him and his hands are busy.
   const driving = rides?.update(dt, inp, follow) ?? false;
-  if (!driving) player.update(dt, inp, follow.yaw);
+  if (driving || showcase?.active || window.__paused) hunt?.combatInput(dt, null, follow.yaw);
+  else inp = hunt?.combatInput(dt, inp, follow.yaw) ?? inp;
+  if (!driving) player.update(dt, inp, inp.combatYaw ?? follow.yaw);
   // Keep him cleanly inside the 720m city grid without killing exploration on side streets.
   if (!driving) {
     if (player.feet.y < heightAt(player.feet.x, player.feet.z) - 6) respawn();
@@ -240,7 +256,7 @@ function tick(dt, draw = true) {
   } else if (!driving && player.grounded) {
     stepDist = Math.min(stepDist, 1.5);
   }
-  hunt?.update(dt, driving ? { ...inp, attack: false, heavy: false, power: false, dash: false, flare: false, whirl: false } : inp, realDt);
+  hunt?.update(dt, driving ? {} : { ...inp, viewYaw: follow.yaw }, realDt);
   net?.update(realDt, { player, driving });
   showcase?.update(realDt);
   const focusZ = showcase?.active && follow.free ? follow.free.target.z : player.feet.z;
@@ -276,14 +292,17 @@ function tick(dt, draw = true) {
   figure.updateCloak(dt, air, heightAt);
 
   follow.shake = showcase?.active ? 0 : (hunt?.cameraKick ?? 0);
+  if (inp.combatYaw != null && !follow.free) follow.track(inp.combatYaw, realDt);
   // at the wheel the eye must not be pushed in by the very car it follows
-  follow.update(realDt, root, inp.look, inp.zoom, (o, d, max) => player.castRay(o, d, max, undefined, driving), heightAt);
+  follow.update(realDt, root, inp.combatYaw == null ? inp.look : { x: 0, y: inp.look.y }, inp.zoom, null, heightAt,
+    (origin, dir, distance, radius) => player.castCamera(origin, dir, distance, radius, driving));
   if (draw) renderScene();
 }
 
 function renderScene() {
   const focus = showcase?.active && follow.free ? follow.free.target : player.feet;
   camera.updateMatrixWorld(true);
+  hunt?.hud.focusMarker(showcase?.active ? null : hunt.visibleTarget);
   street.update(focus);
   showcase?.revealWorld();
   renderer.getDrawingBufferSize(size);
@@ -300,6 +319,7 @@ window.lab = {
   setInput(fn) { input.override = fn; },
   /** Puts him at (x, z) on the ground, facing (fx, fz), with the eye behind him. */
   teleport(x, z, fx, fz) {
+    hunt?.clearFocus();
     player.teleport(x, heightAt(x, z), z);
     player.yaw = player.lastYaw = Math.atan2(fx - x, fz - z);
     follow.yaw = player.yaw; follow.pivot.set(0, 0, 0);

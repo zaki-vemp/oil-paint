@@ -1,6 +1,5 @@
-// Where the sun reaches. The still world's shade is drawn once, from the sun, into a depth picture that every dab
-// asks about for itself; the wanderer's own shadow is a second, small picture that follows them and is redrawn
-// each frame.
+// Directional sun/moon shadows: static world baked once into a high-res depth map,
+// plus a 512x512 dynamic shadow frustum tracking the protagonist, nearby vehicles and combatants.
 import * as THREE from 'three';
 import { SUN } from './common.js';
 
@@ -14,13 +13,7 @@ function depthTarget(w, h) {
   return target;
 }
 
-/**
- * still: a scene of the things that never move. The rest says where the sun is and how much of the world the
- * picture of its shade has to hold: `box` is half its width and half its height as the sun sees it, round `centre`.
- * The defaults are the autumn wood's.
- */
 export function createShade(renderer, shared, still, { sun = SUN, size = [4096, 2560], box = [165, 104], centre: at = [0, 11, -8], back = 400, near = 10, far = 800 } = {}) {
-  // the still world, once: wide across the sun's direction, and only as tall as it needs
   const wood = depthTarget(size[0], size[1]);
   const sunCam = new THREE.OrthographicCamera(-box[0], box[0], box[1], -box[1], near, far);
   const centre = new THREE.Vector3(...at);
@@ -35,9 +28,9 @@ export function createShade(renderer, shared, still, { sun = SUN, size = [4096, 
   shared.tTreeShade.value = wood.depthTexture;
   shared.uTreeShadeMat.value.copy(BIAS).multiply(sunCam.projectionMatrix).multiply(sunCam.matrixWorldInverse);
 
-  // the wanderer: a few metres round them, drawn from the things on layer 1
-  const fig = depthTarget(256, 256);
-  const figCam = new THREE.OrthographicCamera(-3.2, 3.2, 3.2, -3.2, 1, 60);
+  // Higher-res dynamic shadow map (512x512, 5.5m half-extent) covering the player, foes and nearby rides.
+  const fig = depthTarget(512, 512);
+  const figCam = new THREE.OrthographicCamera(-5.5, 5.5, 5.5, -5.5, 1, 65);
   figCam.layers.set(1);
   shared.tFigShade.value = fig.depthTexture;
   const depthOnly = new THREE.MeshBasicMaterial({ side: THREE.DoubleSide });

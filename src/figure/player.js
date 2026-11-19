@@ -21,6 +21,7 @@ export const TUNING = {
   stepHeight: 0.3, maxSlopeDeg: 46,
   responsive: true, coyoteTime: 0.12, jumpBuffer: 0.14,
 };
+export const EVADE_TIME = 0.28;
 
 export class Player {
   constructor({ RAPIER, world, man, animator, spawn, yaw = 0, tuning = TUNING }) {
@@ -45,6 +46,8 @@ export class Player {
     this.prevFeet = this.feet.clone();
     this.visualY = spawn.y;
     this.ray = new RAPIER.Ray({ x: 0, y: 0, z: 0 }, { x: 0, y: -1, z: 0 });
+    this.cameraProbe = new RAPIER.Ball(0.25);
+    this.cameraRotation = new THREE.Quaternion();
     this.acc = 0;
     this.lastYaw = yaw;
     this.turnRate = 0;
@@ -56,6 +59,8 @@ export class Player {
     this.jumpBuffer = 0;
     this.dashTime = 0;
     this.dashDir = new THREE.Vector3();
+    this.evadeTime = 0;
+    this.evadeDir = new THREE.Vector3();
     this.push = new THREE.Vector3();
     this.airDashed = false;
   }
@@ -79,6 +84,14 @@ export class Player {
     return hit ? hit.timeOfImpact : null;
   }
 
+  castCamera(origin, dir, distance, radius, driving) {
+    this.cameraProbe.radius = radius;
+    const flags = driving ? this.R.QueryFilterFlags.EXCLUDE_KINEMATIC : undefined;
+    const hit = this.world.castShape(origin, this.cameraRotation, dir,
+      this.cameraProbe, 0.02, distance, false, flags, undefined, this.collider);
+    return hit?.time_of_impact ?? null;
+  }
+
   facing(yaw = this.yaw) { return new THREE.Vector3(Math.sin(yaw), 0, Math.cos(yaw)); }
 
   /** Reset simulation and visual history together, including on checkpoint respawns. */
@@ -87,7 +100,7 @@ export class Player {
     this.world.propagateModifiedBodyPositionsToColliders();
     this.feet.set(x, y, z); this.prevFeet.copy(this.feet); this.visualY = y;
     this.vel.set(0, 0, 0); this.speed = 0; this.mode = 'move'; this.grounded = true;
-    this.airTime = this.dashTime = this.jumpBuffer = 0;
+    this.airTime = this.dashTime = this.evadeTime = this.jumpBuffer = 0;
     this.push.set(0, 0, 0); this.airDashed = false;
     this.coyote = this.t.coyoteTime;
     this.turnRate = this.accelF = this.prevSpeed = 0;
@@ -95,12 +108,23 @@ export class Player {
   }
 
   startDash(dir = this.facing()) {
-    if (this.dashTime > 0 || (!this.grounded && this.airDashed)) return false;
+    if (this.dashTime > 0 || this.evadeTime > 0 || (!this.grounded && this.airDashed)) return false;
     if (!this.grounded) { this.airDashed = true; this.vel.y = Math.max(this.vel.y, 0); }
     this.dashDir.copy(dir).setY(0).normalize();
     this.dashTime = 0.24;
     this.mode = 'move';
     this.anim.enter(this.anim.locoState({ strafe: this.strafe }), 0.06);
+    return true;
+  }
+
+  startEvade(dir) {
+    if (!this.grounded || this.dashTime > 0 || this.evadeTime > 0) return false;
+    this.evadeDir.copy(dir);
+    this.evadeTime = EVADE_TIME;
+    this.mode = 'move';
+    this.strafe = true;
+    this.jumpBuffer = 0;
+    this.anim.enter(this.anim.locoState({ strafe: this.strafe }), 0.08);
     return true;
   }
 
@@ -127,6 +151,12 @@ export class Player {
     const want = this.intent(input, camYaw);
     this.coyote = this.grounded ? this.t.coyoteTime : Math.max(0, this.coyote - dt);
     this.jumpBuffer = input.jump ? this.t.jumpBuffer : Math.max(0, this.jumpBuffer - dt);
+    if (this.evadeTime > 0) {
+      this.evadeTime = this.grounded ? Math.max(0, this.evadeTime - dt) : 0;
+      this.speed = THREE.MathUtils.lerp(3, 12, this.evadeTime / EVADE_TIME);
+      this.moveAngle = angleWrap(Math.atan2(this.evadeDir.x, this.evadeDir.z) - this.yaw);
+      return this.step(dt, this.evadeDir.clone().multiplyScalar(this.speed));
+    }
     if (this.dashTime > 0) {
       this.dashTime = Math.max(0, this.dashTime - dt);
       this.speed = this.dashTime > 0 ? 17 : A.setup.speeds.run;
@@ -184,7 +214,7 @@ export class Player {
       // ordinary movement
       if (this.strafe) {
         // standing still he keeps his feet and turns his head; past his shoulder he steps round
-        if (want.mag > 0.05 || this.speed > 0.2) this.yaw = this.turnToward(this.yaw, camYaw, 12, dt);
+        if (want.mag > 0.05 || this.speed > 0.2 || input.combatYaw != null || input.guard) this.yaw = this.turnToward(this.yaw, camYaw, 16, dt);
         const local = want.dir.clone().applyAxisAngle(new THREE.Vector3(0, 1, 0), -this.yaw);
         const ang = Math.atan2(local.x, local.z); // + = his left
         // the fastest he goes this way: run forward, jog sideways, walk backwards

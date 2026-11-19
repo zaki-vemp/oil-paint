@@ -1,96 +1,83 @@
-// The night's palette, shared by everything painted in it: snow and rock under a low moon, the green of the aurora
-// falling on whatever faces the sky, and the sky itself. Needs COMMON before it and `uGlow` among the uniforms.
+// Unified photorealistic PBR lighting & atmospheric helpers for the Snowbound alpine prologue.
+// Smooth inverse-square lantern/cabin warmth (zero banded cel steps), linear-HDR snow & basalt,
+// ethereal aurora sky bounce, and starry polar night sky.
 export const NIGHT = /* glsl */ `
-uniform vec3 uGlow; // x: how strongly the aurora burns just now (about 0.6..1.3)
-uniform vec4 uWarm[3]; // the cabin's lit openings: where each is, and how strong (+ it looks south, - north)
-uniform vec4 uRoom; // the cabin's floor: its middle (x, z) and half its width and depth
+uniform vec3 uGlow; // x: aurora intensity (about 0.6..1.3)
+uniform vec4 uWarm[3]; // cabin lit openings: xyz position, w strength (+ south, - north)
+uniform vec4 uRoom; // cabin floor center (x, z) and half width/depth
 
-// Indoors: no snow lies there and none blows through.
 bool inRoom(vec2 xz) { return abs(xz.x - uRoom.x) < uRoom.z && abs(xz.y - uRoom.y) < uRoom.w; }
-// The light of the cabin's windows and door on what is outside them: a wedge that widens away from each opening.
+
 float warmAt(vec3 P, vec3 Nn) {
   float sum = 0.0;
   for (int i = 0; i < 3; i++) {
     vec3 to = uWarm[i].xyz - P;
     float front = sign(uWarm[i].w) * (P.z - uWarm[i].z);
     float d2 = dot(to, to);
-    float wedge = smoothstep(0.0, 0.8, front) * smoothstep(0.35, 1.3, front / (abs(to.x) + 0.4));
-    sum += abs(uWarm[i].w) * wedge * clamp(dot(Nn, to) * inversesqrt(d2 + 1e-4) * 0.6 + 0.5, 0.0, 1.0) / (1.0 + d2 * 0.3);
+    float wedge = smoothstep(0.0, 0.9, front) * smoothstep(0.32, 1.35, front / (abs(to.x) + 0.45));
+    sum += abs(uWarm[i].w) * wedge * clamp(dot(Nn, to) * inversesqrt(d2 + 1e-4) * 0.7 + 0.35, 0.0, 1.0) / (0.45 + d2 * 0.22);
   }
   return sum;
 }
 
-// How lit a spot is by the moon, for paint3: flat snow is in the light, ground turned from the moon in half-tone,
-// and whatever the horns' shadow covers in shade.
 float moonOn(vec3 P, vec3 Nn) {
-  return woodSunAt(P + Nn * 0.6 + vec3(0.0, 0.3, 0.0)) * clamp(dot(Nn, uSunDir) * 1.4 + 0.06, 0.0, 1.0);
+  return woodSunAt(P + Nn * 0.5 + vec3(0.0, 0.25, 0.0)) * clamp(dot(Nn, uSunDir) * 1.15 + 0.08, 0.0, 1.0);
 }
-// The aurora's light comes down in slow patches that wander over the land; only what faces the sky takes it.
+
 float auroraOn(vec2 xz, vec3 Nn) {
   float patch_ = texture(tNoise, xz / 900.0 + vec2(uTime * 0.009, -uTime * 0.0055)).r;
-  return clamp(uGlow.x * smoothstep(0.2, 0.75, patch_) * max(Nn.y, 0.0), 0.0, 0.85);
+  return clamp(uGlow.x * smoothstep(0.18, 0.76, patch_) * max(Nn.y, 0.0), 0.0, 0.9);
 }
-// Snow: a blue white under the moon, mint where the aurora is on it. kind drifts slowly over the ground:
-// packed snow, wind crust (greyer), and now and then blue ice.
+
+// Smooth linear-HDR snow shading (moonlight + aurora mint bounce + icy blue shadow bounce).
 vec3 snowPaint(float x, float r, float a, float kind) {
-  vec3 L = mix(vec3(0.27, 0.38, 0.55), vec3(0.2, 0.46, 0.5), a);
-  vec3 M = mix(vec3(0.085, 0.14, 0.28), vec3(0.06, 0.2, 0.27), a);
-  vec3 S = mix(vec3(0.02, 0.035, 0.1), vec3(0.015, 0.06, 0.1), a);
-  float crust = smoothstep(0.52, 0.66, kind), ice = smoothstep(0.8, 0.9, kind);
-  L = mix(L, L * vec3(0.84, 0.9, 0.9), crust); M = mix(M, M * vec3(0.9, 0.96, 0.92), crust);
-  L = mix(L, vec3(0.18, 0.4, 0.55), ice); M = mix(M, vec3(0.04, 0.17, 0.3), ice);
-  vec3 nightCol = paint3(L, M, S, x, r);
-  vec3 dayL = mix(vec3(0.92, 0.95, 0.98), vec3(0.76, 0.88, 0.96), ice);
-  vec3 dayM = mix(vec3(0.68, 0.77, 0.89), vec3(0.54, 0.71, 0.88), ice);
-  vec3 dayS = vec3(0.42, 0.54, 0.74);
-  return mix(paint3(dayL, dayM, dayS, x, r), nightCol, uNight);
-}
-// Rock: nearly black, blue in the shade, a grey green where the moon finds it; kind moves it between a cold
-// slate and a warmer, browner stone.
-vec3 rockPaint(float x, float r, float kind) {
-  vec3 L = mix(vec3(0.12, 0.2, 0.28), vec3(0.16, 0.17, 0.27), smoothstep(0.45, 0.7, kind));
-  vec3 M = mix(vec3(0.04, 0.07, 0.12), vec3(0.06, 0.06, 0.115), smoothstep(0.45, 0.7, kind));
-  vec3 S = vec3(0.012, 0.024, 0.055);
-  vec3 nightCol = paint3(L, M, S, x, r);
-  vec3 dayCol = paint3(vec3(0.46, 0.49, 0.55), vec3(0.28, 0.32, 0.39), vec3(0.15, 0.19, 0.27), x, r);
+  vec3 nightL = mix(vec3(0.18, 0.28, 0.46), vec3(0.12, 0.38, 0.36), a * 0.65);
+  vec3 nightS = mix(vec3(0.015, 0.032, 0.075), vec3(0.012, 0.058, 0.072), a * 0.65);
+  vec3 nightCol = mix(nightS, nightL, smoothstep(0.0, 1.0, x));
+  vec3 dayCol = mix(vec3(0.28, 0.40, 0.62), vec3(0.92, 0.95, 1.0), smoothstep(0.0, 1.0, x));
   return mix(dayCol, nightCol, uNight);
 }
 
-// Paint in the lantern's light is a warm colour of its own, not the night's colour with orange added (that only
-// greys it): the nearer the lamp, the more wholly a thing is its own colour in that light.
-vec3 lampOn(vec3 c, vec3 own, vec3 P, vec3 Nn) {
-  float k = clamp((lampAt(P, Nn) + warmAt(P, Nn)) * 1.55, 0.0, 1.0);
-  // drawn, the pool of light falls in a few hard-edged bands instead of a soft wash
-  if (uAnime > 0.5) k = (floor(k * 4.0) + smoothstep(0.42, 0.58, fract(k * 4.0))) / 4.0;
-  float whole = pow(k, 1.1);
-  vec3 warm = own * vec3(1.0, 0.72, 0.38);
-  // (the second part keeps the edge of the pool a warm light on the snow, where a plain mix of blue shade and
-  // orange would go to mud)
-  return mix(c, warm, whole) + warm * 0.4 * k * (1.0 - whole);
+// Smooth linear-HDR alpine basalt / dark slate rock shading.
+vec3 rockPaint(float x, float r, float kind) {
+  vec3 nightCol = mix(vec3(0.008, 0.015, 0.034), vec3(0.075, 0.11, 0.17), smoothstep(0.0, 1.0, x));
+  vec3 dayCol = mix(vec3(0.05, 0.065, 0.095), vec3(0.28, 0.30, 0.34), smoothstep(0.0, 1.0, x));
+  return mix(dayCol, nightCol, uNight);
 }
 
-// The sky with nothing in it: deep above, a green teal low down where the aurora's light hangs in the air, and a
-// pale ring round the moon.
+// Smooth physically-based warm firelight / lantern falloff (no cartoon bands!).
+vec3 lampOn(vec3 c, vec3 own, vec3 P, vec3 Nn) {
+  float k = (lampAt(P, Nn) + warmAt(P, Nn)) * 1.45;
+  vec3 warm = toLinear(own) * vec3(2.85, 1.48, 0.55);
+  return c + warm * k;
+}
+
 vec3 nightSky(vec3 v) {
   if (v.y < 0.0) return airColour(v);
-  float up = pow(clamp(v.y, 0.0, 1.0), 0.5);
-  vec3 c = mix(vec3(0.03, 0.07, 0.12), vec3(0.006, 0.012, 0.04), up);
+  float up = pow(max(clamp(v.y, 0.0, 1.0), 1e-4), 0.52);
+  vec3 c = mix(vec3(0.012, 0.028, 0.056), vec3(0.003, 0.007, 0.020), up);
   float north = max(-v.z, 0.0) / max(length(v.xz), 1e-4);
-  c += vec3(0.015, 0.11, 0.08) * north * north * exp(-pow((v.y - 0.24) / 0.3, 2.0)) * uGlow.x;
-  float moon = max(dot(v, uSunDir), 0.0);
-  c += vec3(0.1, 0.14, 0.18) * pow(moon, 30.0) + vec3(0.25, 0.3, 0.32) * pow(moon, 600.0);
+  float ng = (v.y - 0.24) / 0.32;
+  c += vec3(0.008, 0.068, 0.052) * north * north * exp(-ng * ng) * uGlow.x;
+  float moon = max(dot(v, uSunDir), 1e-4);
+  c += vec3(0.08, 0.12, 0.18) * pow(moon, 24.0) + vec3(0.32, 0.42, 0.55) * pow(moon, 220.0);
   vec3 nightCol = mix(airColour(v), c, smoothstep(0.0, 0.06, v.y));
-  vec3 dayCol = mix(vec3(0.74, 0.86, 0.96), vec3(0.26, 0.56, 0.86), up);
-  dayCol += vec3(1.0, 0.94, 0.76) * pow(moon, 18.0) * 0.25 + vec3(1.0, 0.98, 0.9) * smoothstep(0.9975, 0.999, moon);
-  dayCol += vec3(1.0, 0.52, 0.26) * uTwilight * pow(moon, 3.0) * (1.0 - smoothstep(0.0, 0.45, v.y)) * 0.5;
+  vec3 dayCol = mix(vec3(0.56, 0.72, 0.90), vec3(0.12, 0.34, 0.76), up);
+  dayCol += vec3(1.1, 0.95, 0.74) * pow(moon, 16.0) * 0.28 + vec3(4.5, 4.2, 3.6) * smoothstep(0.9982, 0.9993, moon);
+  dayCol += vec3(1.1, 0.48, 0.20) * uTwilight * pow(moon, 3.0) * (1.0 - smoothstep(0.0, 0.45, v.y)) * 0.65;
   dayCol = mix(airColour(v), dayCol, smoothstep(0.0, 0.06, v.y));
   return mix(dayCol, nightCol, uNight);
 }
-// Where the aurora is, roughly, for things that only catch its glow (water).
+
 vec3 auroraSoft(vec3 v) {
   float az = atan(v.x, -v.z);
-  float band = exp(-pow((v.y - 0.3 - 0.05 * sin(az * 3.0 + uTime * 0.02)) / 0.13, 2.0));
-  float low = 0.55 * exp(-pow((v.y - 0.17) / 0.06, 2.0));
-  return vec3(0.08, 0.6, 0.38) * (band + low) * smoothstep(1.7, 0.4, abs(az)) * uGlow.x;
+  float bt = (v.y - 0.30 - 0.05 * sin(az * 3.0 + uTime * 0.04)) / 0.14;
+  float lt = (v.y - 0.17) / 0.06;
+  float band = exp(-bt * bt);
+  float low = 0.65 * exp(-lt * lt);
+  vec3 emerald = vec3(0.04, 0.68, 0.44);
+  vec3 violet = vec3(0.42, 0.14, 0.78);
+  vec3 col = mix(emerald, violet, smoothstep(0.26, 0.52, v.y));
+  return col * (band + low) * smoothstep(1.75, 0.35, abs(az)) * uGlow.x * smoothstep(0.08, 0.52, uNight);
 }
 `;

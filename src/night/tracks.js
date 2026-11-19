@@ -20,19 +20,19 @@ export function createTracks(shared, count = 900) {
         vec3 ahead = vec3(sin(aData.x), 0.0, cos(aData.x));
         vec3 c;
         if (aData.w < 0.5) {
-          c = mix(vec3(0.05, 0.1, 0.27), vec3(0.13, 0.26, 0.47), x * 0.7 + (r.x - 0.5) * 0.2);
+          c = mix(vec3(0.028, 0.055, 0.115), vec3(0.075, 0.135, 0.235), x * 0.75);
           d.dir = ahead;
-          d.size = vec2(0.17, 0.37) * (0.9 + 0.2 * r.y);
-          d.height = 0.2;
+          d.size = vec2(0.11, 0.23) * (0.9 + 0.16 * r.y);
+          d.height = 0.025;
         } else {
           vec3 away = normalize(vec3(-uSunDir.x, 0.0, -uSunDir.z));
-          P += away * 0.1;
-          c = snowPaint(x + 0.25, r.x, auroraOn(P.xz, Nn), 0.2) * 1.08;
+          P += away * 0.08;
+          c = snowPaint(x + 0.18, r.x, auroraOn(P.xz, Nn), 0.2) * 0.95;
           d.dir = cross(vec3(0.0, 1.0, 0.0), away) + ahead * 0.4;
-          d.size = vec2(0.06, 0.3);
-          d.height = 0.23;
+          d.size = vec2(0.04, 0.19);
+          d.height = 0.032;
         }
-        c = lampOn(c, aData.w < 0.5 ? vec3(0.5, 0.42, 0.5) : vec3(0.95), P, Nn);
+        c = lampOn(c, aData.w < 0.5 ? vec3(0.08, 0.09, 0.14) : vec3(0.55, 0.52, 0.50), P, Nn);
         d.pos = P;
         d.c1 = hazed(c, P);
         d.c2 = hazed(c * 1.15, P);

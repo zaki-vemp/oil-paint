@@ -3,8 +3,8 @@
 // vertex-painted materials; wheels keep their own steering and spin pivots. The handling is a small tyre model, not a rigid body: the engine pulls
 // hardest from rest and has nothing left at top speed, the front wheels turn the heading (a bicycle model, less
 // lock at speed), and the tyres scrub sideways speed off at their grip, until past the slip limit or on the
-// handbrake they let go and it slides. It follows the land's heightAt on both axles, leaves the ground over a
-// crest and comes down under gravity. Chassis sweeps stop walls, oriented boxes exchange momentum between
+// handbrake they let go and it slides. Each wheel samples heightAt and works through suspension travel. The
+// sprung chassis can leave the ground over a crest. Chassis sweeps stop walls, oriented boxes exchange momentum between
 // vehicles, and a sideways impact can tip the chassis onto its side or roof. G beside a stopped wreck rights it.
 // Whatever stands in its way is rammed (hunt.ram): crews, the mech, and the street's own people, at his risk.
 import * as THREE from 'three';
@@ -16,18 +16,19 @@ import { AVENUES, STREETS, GRID_MIN, GRID_MAX } from '../world/grid.js';
 // len/wid/base in metres; top and rev in m/s; grip and drift are how fast sideways speed is scrubbed (1/s), gripping
 // and sliding; slip is the sideways speed where the tyres let go; calm is the speed at which steering lock has halved.
 // heft is the share of speed kept after hitting someone (a heavy truck keeps more). hull is hit points.
-// throw: a hard lean at speed, or a rollover, puts the rider on the pavement. `car` is the sedan — the street checks look it up by that key.
+// travel is suspension stroke on either side of rest in metres. `car` is the sedan used in the street checks.
 export const RIDES = {
-  car: { name: 'Kestrel', len: 4.2, wid: 1.9, base: 2.6, wheel: 0.36, top: 25, rev: 8, accel: 12, brake: 24, grip: 7.4, drift: 1.3, slip: 6, steer: 0.58, calm: 9, lean: 0, heft: 0.65, mass: 1200, eye: 10.5, hull: 140, throw: 0 },
-  sports: { name: 'Kestrel GT', len: 4.3, wid: 1.85, base: 2.45, wheel: 0.34, top: 34, rev: 9, accel: 18, brake: 30, grip: 8.6, drift: 0.95, slip: 7.2, steer: 0.72, calm: 11, lean: 0, heft: 0.58, mass: 1000, eye: 11.5, hull: 90, throw: 0 },
-  pickup: { name: 'Parcel van', len: 5.3, wid: 2.05, base: 3.25, wheel: 0.44, top: 18, rev: 6, accel: 8, brake: 16, grip: 6.4, drift: 1.5, slip: 5.5, steer: 0.46, calm: 7, lean: 0, heft: 0.84, mass: 2400, eye: 12.2, hull: 240, throw: 0 },
-  bike: { name: 'Razor bike', len: 2.2, wid: 0.7, base: 1.45, wheel: 0.36, top: 31, rev: 4, accel: 17, brake: 22, grip: 9, drift: 1.7, slip: 7.5, steer: 0.5, calm: 8, lean: 1, heft: 0.45, mass: 240, eye: 8.5, hull: 70, throw: 1 },
-  bicycle: { name: 'Courier scooter', len: 1.7, wid: 0.5, base: 1.05, wheel: 0.32, top: 12, rev: 3, accel: 5, brake: 10, grip: 8, drift: 2.2, slip: 4, steer: 0.7, calm: 5, lean: 1, heft: 0.28, mass: 80, eye: 7.6, hull: 28, throw: 1 },
+  car: { name: 'Kestrel', len: 4.2, wid: 1.9, base: 2.6, wheel: 0.36, travel: 0.17, top: 25, rev: 8, accel: 12, brake: 24, grip: 7.4, drift: 1.3, slip: 6, steer: 0.58, calm: 9, lean: 0, heft: 0.65, mass: 1200, eye: 10.5, hull: 140, throw: 0 },
+  sports: { name: 'Kestrel GT', len: 4.3, wid: 1.85, base: 2.45, wheel: 0.34, travel: 0.12, top: 34, rev: 9, accel: 18, brake: 30, grip: 8.6, drift: 0.95, slip: 7.2, steer: 0.72, calm: 11, lean: 0, heft: 0.58, mass: 1000, eye: 11.5, hull: 90, throw: 0 },
+  pickup: { name: 'Parcel van', len: 5.3, wid: 2.05, base: 3.25, wheel: 0.44, travel: 0.24, top: 18, rev: 6, accel: 8, brake: 16, grip: 6.4, drift: 1.5, slip: 5.5, steer: 0.46, calm: 7, lean: 0, heft: 0.84, mass: 2400, eye: 12.2, hull: 240, throw: 0 },
+  bike: { name: 'Razor bike', len: 2.2, wid: 0.7, base: 1.45, wheel: 0.36, travel: 0.19, top: 31, rev: 4, accel: 17, brake: 22, grip: 9, drift: 1.7, slip: 7.5, steer: 0.5, calm: 8, lean: 1, heft: 0.45, mass: 240, eye: 8.5, hull: 70, throw: 1 },
+  bicycle: { name: 'Courier scooter', len: 1.7, wid: 0.5, base: 1.05, wheel: 0.32, travel: 0.14, top: 12, rev: 3, accel: 5, brake: 10, grip: 8, drift: 2.2, slip: 4, steer: 0.7, calm: 5, lean: 1, heft: 0.28, mass: 80, eye: 7.6, hull: 28, throw: 1 },
 };
 const GRAVITY = 20;
 const BAIL = 9; // m/s: faster than this he stays in his seat
 const wrap = (a) => Math.atan2(Math.sin(a), Math.cos(a));
 const toward = (v, by) => Math.sign(v) * Math.max(0, Math.abs(v) - by);
+const { clamp, lerp, smoothstep } = THREE.MathUtils;
 
 /** A sideways impulse rocks the suspension; enough energy crosses its balance point and rolls the chassis. */
 export function rock(v, dt, stabilized = false) {
@@ -95,15 +96,62 @@ export function drive(v, s, { throttle = 0, steer = 0, hand = false } = {}, dt, 
     v.yawRate = -(vf / s.base) * Math.tan(v.steer) * (hand ? 1.35 : 1); // a locked rear swings round
     v.yaw += v.yawRate * dt;
     const grip = s.grip * gripMul, slip = s.slip * (0.35 + 0.65 * gripMul);
-    const before = Math.hypot(vf, vs), slide = hand || Math.abs(vs) > slip;
-    vs *= Math.exp(-(slide ? s.drift * (gripMul < 1 ? 0.7 : 1) : grip) * dt);
-    // gripping tyres turn the car's speed with it rather than burn it: three quarters of the scrub comes back
+    const before = Math.hypot(vf, vs);
+    const slide = hand ? 1 : smoothstep(Math.abs(vs), slip * 0.85, slip * 1.15);
+    vs *= Math.exp(-lerp(grip, s.drift * lerp(0.5, 1, gripMul), slide) * dt);
+    // Gripping tyres point the velocity into the turn. A sliding tyre stops returning that energy.
     const after = Math.hypot(vf, vs);
-    if (!slide && after > 1e-3) { const k = (after + (before - after) * 0.75) / after; vf *= k; vs *= k; }
-    v.sliding = slide && Math.abs(vs) > 2;
+    if (slide < 1 && after > 1e-3) { const k = 1 + (before / after - 1) * 0.75 * (1 - slide); vf *= k; vs *= k; }
+    v.sliding = slide > 0.5 && Math.abs(vs) > 2;
   }
   v.vx = fx * vf + fz * vs; v.vz = fz * vf - fx * vs; v.vf = vf;
   return v;
+}
+
+/** The wheel patches provide the rest plane and the height of each wheel above that plane. */
+function wheelTerrain(v, heightAt) {
+  const fx = Math.sin(v.yaw), fz = Math.cos(v.yaw), n = v.wheels.length;
+  let front = 0, rear = 0, left = 0, right = 0;
+  for (const w of v.wheels) {
+    const { x, z } = w.pivot.position;
+    w.ground = heightAt(v.x + fx * z + fz * x, v.z + fz * z - fx * x);
+    if (w.front) front += w.ground;
+    else rear += w.ground;
+    if (x > 0) left += w.ground;
+    else right += w.ground;
+  }
+  v.floor = (front + rear) / n;
+  v.floorPitch = -Math.atan2(2 * (front - rear) / n, v.spec.base);
+  v.floorRoll = n === 4 ? Math.atan2((left - right) * 0.5, v.spec.wid - 0.24) : 0;
+}
+
+function settleSuspension(v, heightAt) {
+  wheelTerrain(v, heightAt);
+  v.y = v.floor; v.pitch = v.floorPitch; v.roll = v.floorRoll;
+  v.vy = v.air = v.squat = 0;
+}
+
+/** Spring and damper act only within tyre reach. When the wheels lose contact they carry no load. */
+function suspend(v, heightAt, dt) {
+  wheelTerrain(v, heightAt);
+  const { travel } = v.spec, rate = Math.sqrt(GRAVITY / travel);
+  const flight = v.y + v.vy * dt - GRAVITY * dt * dt / 2;
+  let landing = 0;
+  if (flight > v.floor + travel) {
+    v.y = flight; v.vy -= GRAVITY * dt; v.air += dt;
+    v.pitch = lerp(v.pitch, 0.12, 1 - Math.exp(-1.2 * dt));
+  } else {
+    if (v.air > 0.2) landing = Math.max(0, -v.vy);
+    v.air = 0;
+    // Gravity is already balanced at static ride height. The spring can push, never pull on the road.
+    const acceleration = Math.max(-GRAVITY, (v.floor - v.y) * rate * rate - v.vy * 1.5 * rate);
+    v.y += (v.vy += acceleration * dt) * dt;
+    if (v.y < v.floor - travel) { v.y = v.floor - travel; v.vy = Math.max(0, v.vy); }
+    const ease = 1 - Math.exp(-rate * dt);
+    v.pitch = lerp(v.pitch, v.floorPitch, ease);
+    v.roll = lerp(v.roll, v.floorRoll, ease);
+  }
+  return landing;
 }
 
 // Existing vehicle keys keep their handling and story unlocks; the reviewed art supplies their bodies.
@@ -158,6 +206,43 @@ export async function createRides({ scene, shared, player, heightAt, hunt, route
     const smoke = add(shell, new THREE.SphereGeometry(0.28, 6, 5), new THREE.MeshBasicMaterial({ color: 0x9aa3ad, transparent: true, opacity: 0.45, depthWrite: false }), 0, 1.3, -s.len * 0.35);
     const fire = add(shell, new THREE.SphereGeometry(0.34, 6, 5), new THREE.MeshBasicMaterial({ color: 0xff5a1f, transparent: true, opacity: 0.85, depthWrite: false }), 0, 1.15, -s.len * 0.15);
     smoke.visible = fire.visible = false;
+    // Soft volumetric LED headlight cones at night (shared uniform uNight fades them out cleanly in daytime)
+    if (!build.beamMat) {
+      build.beamGeo = new THREE.ConeGeometry(1.15, 7.2, 16, 1, true);
+      build.beamGeo.translate(0, -3.6, 0);
+      build.beamGeo.rotateX(-Math.PI / 2);
+      build.beamMat = new THREE.ShaderMaterial({
+        glslVersion: THREE.GLSL3,
+        uniforms: { uNight: shared.uNight },
+        transparent: true, depthWrite: false, side: THREE.DoubleSide, blending: THREE.AdditiveBlending,
+        vertexShader: /* glsl */ `
+          out vec2 vUv; out vec3 vN; out vec3 vV;
+          void main() {
+            vUv = uv;
+            vec4 w = modelMatrix * vec4(position, 1.0);
+            vN = normalize(mat3(modelMatrix) * normal);
+            vV = normalize(cameraPosition - w.xyz);
+            gl_Position = projectionMatrix * viewMatrix * w;
+          }`,
+        fragmentShader: /* glsl */ `
+          precision highp float;
+          uniform float uNight;
+          in vec2 vUv; in vec3 vN; in vec3 vV;
+          layout(location = 0) out vec4 outC;
+          void main() {
+            float along = pow(clamp(vUv.y, 0.0, 1.0), 1.65);
+            float edge = pow(abs(dot(normalize(vN), normalize(vV))), 1.5);
+            float a = along * edge * 0.16 * smoothstep(0.25, 0.80, uNight);
+            outC = vec4(vec3(0.88, 0.94, 1.15) * a * 2.2, a);
+          }`,
+      });
+    }
+    const lampOffsets = s.lean ? [[0, 0.72, s.len * 0.44]] : [[-s.wid * 0.34, 0.62, s.len * 0.46], [s.wid * 0.34, 0.62, s.len * 0.46]];
+    for (const [lx, ly, lz] of lampOffsets) {
+      const cone = add(shell, build.beamGeo, build.beamMat, lx, ly, lz);
+      cone.rotation.x = 0.09;
+      cone.layers.disable(1);
+    }
     root.userData.asset = art.file;
     scene.add(root);
     return { root, shell, wheels, rider, smoke, fire, shadeMeshes, inShade: false };
@@ -174,6 +259,7 @@ export async function createRides({ scene, shared, player, heightAt, hunt, route
       tilt: 0, rollRate: 0, spinRate: 0, tipped: false, liable: 0, traffic: null, driver: false,
       hp: s.hull, wrecked: false, boom: 0, dirty: true,
       shape: new R.Cuboid(s.wid / 2, 0.4, s.len / 2), home: { x, z, yaw }, body, collider, ...build(kind) };
+    settleSuspension(v, heightAt);
     rides.push(v); place(v, 0);
     return v;
   }
@@ -248,7 +334,7 @@ export async function createRides({ scene, shared, player, heightAt, hunt, route
     return { throttle: want === 0 && sp < 0.7 ? 0 : want > sp + 0.3 ? 0.55 : want < sp - 0.1 ? -1 : 0.15, steer: Math.max(-1, Math.min(1, -angle * 2.4)), hand: want === 0 && sp < 0.7 };
   }
 
-  /** Puts the solids where the numbers say: heading, the land's tilt, a bike's lean, the body's squat, the wheels. */
+  /** Place the sprung chassis and let each wheel move within its stroke to meet the road. */
   function place(v, dt) {
     const s = v.spec;
     const d = Math.hypot(v.x - player.feet.x, v.z - player.feet.z);
@@ -262,15 +348,27 @@ export async function createRides({ scene, shared, player, heightAt, hunt, route
     const moving = dt === 0 || v.dirty || v === driven || !!v.traffic || !!v.net || Math.hypot(v.vx, v.vz) > 0.01 || v.air > 0 || Math.abs(v.rollRate) > 0.002;
     v.dirty = false;
     if (!vis && !moving) return;
-    // Rotate round the chassis centre, lifting the roof/side clear of the ground after a rollover.
-    const roll = v.roll + v.tilt + v.lean * s.lean;
+    const pitch = v.pitch + v.squat;
+    const roll = v.roll + v.tilt + v.lean * (s.lean ? 1 : -s.travel);
+    // Lift the roof/side clear of the ground after a rollover.
     const lift = Math.abs(Math.sin(v.tilt)) * s.wid / 2 + Math.abs(Math.cos(v.tilt)) * 0.7 - 0.7;
-    v.root.rotation.set(v.pitch, v.yaw, roll);
-    const offset = offsetTmp.set(0, -0.7, 0).applyEuler(v.root.rotation);
-    v.root.position.set(v.x + offset.x, v.y + 0.7 + lift + offset.y, v.z + offset.z);
-    v.shell.rotation.set(v.squat, 0, s.lean ? 0 : -v.lean * 0.16); // a car's body rolls out of the turn its tyres hold
+    v.root.rotation.set(pitch, v.yaw, roll);
+    // A bike leans about its tyres during a turn and about the chassis as it rolls over.
+    const pivotY = s.lean ? 0.7 * smoothstep(Math.abs(v.tilt), 0, 1) : 0.7;
+    const offset = offsetTmp.set(0, -pivotY, 0).applyEuler(v.root.rotation);
+    v.root.position.set(v.x + offset.x, v.y + pivotY + lift + offset.y, v.z + offset.z);
+    const upX = Math.cos(pitch) * Math.sin(roll), upY = Math.cos(pitch) * Math.cos(roll), upZ = -Math.sin(pitch);
+    const rollingRadius = s.wheel * Math.hypot(upY, upZ);
     v.spin += v.vf * dt / s.wheel;
-    for (const w of v.wheels) { w.spin.rotation.x = v.spin; if (w.front) w.pivot.rotation.y = -v.steer; }
+    for (const w of v.wheels) {
+      const p = w.pivot.position;
+      const contactHeight = v.air <= 0 && !v.tipped && upY > 0.1
+        ? (w.ground + rollingRadius - v.root.position.y - p.x * upX - p.z * upZ) / upY
+        : s.wheel - s.travel;
+      p.y = clamp(contactHeight, s.wheel - s.travel, s.wheel + s.travel);
+      w.spin.rotation.x = v.spin;
+      if (w.front) w.pivot.rotation.y = -v.steer;
+    }
     if (v.rider) v.rider.visible = v === driven || v.driver;
     const hurt = v.spec.hull;
     v.smoke.visible = v.hp < hurt * 0.66;
@@ -281,7 +379,8 @@ export async function createRides({ scene, shared, player, heightAt, hunt, route
       if (v.boom > 0) { v.boom = Math.max(0, v.boom - dt); v.fire.scale.setScalar(1 + (0.45 - v.boom) * 6); }
       else v.fire.scale.setScalar(1);
     }
-    v.body.setTranslation({ x: v.x, y: v.y + 0.7 + lift, z: v.z }, true);
+    const centre = offsetTmp.set(0, 0.7, 0).applyEuler(v.root.rotation).add(v.root.position);
+    v.body.setTranslation(centre, true);
     v.body.setRotation(v.root.quaternion, true);
   }
 
@@ -297,6 +396,7 @@ export async function createRides({ scene, shared, player, heightAt, hunt, route
     v.x = x; v.z = z;
     const hit = sweep(v, dx / dist, dz / dist, dist), go = hit ? Math.max(0, hit.time_of_impact - 0.02) : dist;
     v.x += dx / dist * Math.min(dist, go); v.z += dz / dist * Math.min(dist, go);
+    wheelTerrain(v, heightAt);
   }
 
   function scar(v, otherMass, closing) {
@@ -326,9 +426,10 @@ export async function createRides({ scene, shared, player, heightAt, hunt, route
     v.liable = Math.max(0, v.liable - dt);
     if (v === driven) v.liable = 5;
     if (v.wrecked) input = { throttle: 0, steer: 0, hand: true };
-    // Dirt (off the asphalt mask) gives the tyres less to push against.
-    const paved = wayDist(v.x, v.z) < ROAD + 0.8;
-    drive(v, s, input, dt, v.air <= 0 && !v.tipped, paved ? 1 : 0.4);
+    // Grip fades across the shoulder and as the suspension unloads over a crest.
+    const dirt = smoothstep(wayDist(v.x, v.z), ROAD, ROAD + 2);
+    const unloaded = smoothstep(v.y - v.floor, 0, s.travel);
+    drive(v, s, input, dt, v.air <= 0 && !v.tipped, (1 - 0.6 * dirt) * (1 - 0.45 * unloaded));
     if (v.tipped) { const drag = Math.exp(-2.5 * dt); v.vx *= drag; v.vz *= drag; }
     v.yaw += v.spinRate * dt; v.spinRate *= Math.exp(-3 * dt);
     rock(v, dt, v === driven);
@@ -371,24 +472,13 @@ export async function createRides({ scene, shared, player, heightAt, hunt, route
         }
       }
     }
-    // the ground under both axles; in free flight until it comes back up to meet the wheels
-    const hb = s.base / 2, hw = s.wid / 2;
-    const front = heightAt(v.x + fx * hb, v.z + fz * hb), rear = heightAt(v.x - fx * hb, v.z - fz * hb);
-    const ground = (front + rear) / 2, flight = v.y + v.vy * dt - GRAVITY * dt * dt / 2;
-    const ease = 1 - Math.exp(-12 * dt);
-    if (flight > ground + 0.04) {
-      v.y = flight; v.vy -= GRAVITY * dt; v.air += dt;
-      v.pitch += (0.12 - v.pitch) * (1 - Math.exp(-1.2 * dt)); // the nose drops a little in the air
-    } else {
-      if (v === driven && v.air > 0.2 && v.vy < -5) hunt.jolt(Math.min(0.2, -v.vy * 0.014));
-      v.vy = dt > 0 ? Math.max(-30, Math.min(12, (ground - v.y) / dt)) : 0;
-      v.y = ground; v.air = 0;
-      v.pitch += (-Math.atan2(front - rear, s.base) - v.pitch) * ease;
-      v.roll += (Math.atan2(heightAt(v.x + fz * hw, v.z - fx * hw) - heightAt(v.x - fz * hw, v.z + fx * hw), s.wid) - v.roll) * ease;
-    }
-    v.lean += (Math.max(-0.6, Math.min(0.6, -v.yawRate * v.vf / 9.8)) - v.lean) * (1 - Math.exp(-8 * dt));
-    v.squat += (Math.max(-0.06, Math.min(0.06, dt > 0 ? (before - v.vf) / dt * 0.004 : 0)) - v.squat) * ease;
+    const landing = suspend(v, heightAt, dt);
+    if (v === driven && landing > 5) hunt.jolt(Math.min(0.2, landing * 0.014));
     v.vf = v.vx * Math.sin(v.yaw) + v.vz * Math.cos(v.yaw);
+    v.lean = lerp(v.lean, clamp(-v.yawRate * v.vf / 9.8, -0.6, 0.6), 1 - Math.exp(-8 * dt));
+    const strokeAngle = 1.25 * s.travel / s.base;
+    const brakeDive = dt > 0 && v.air <= 0 ? clamp((before - v.vf) / dt * 0.004, -strokeAngle, strokeAngle) : 0;
+    v.squat = lerp(v.squat, brakeDive, 1 - Math.exp(-12 * dt));
     // Only an actual rollover throws the rider; leaning smoothly through corners never ejects.
     if (v === driven && v.tipped) bail(v, 'Thrown');
   }
@@ -447,7 +537,8 @@ export async function createRides({ scene, shared, player, heightAt, hunt, route
       else if (near?.net) hunt.hud.flashText('Someone is driving it');
       else if (near?.wrecked) hunt.hud.flashText('It is finished');
       else if (near?.tipped) {
-        Object.assign(near, { tilt: 0, rollRate: 0, spinRate: 0, tipped: false, vx: 0, vz: 0, vy: 0, air: 0, dirty: true });
+        Object.assign(near, { tilt: 0, rollRate: 0, spinRate: 0, tipped: false, vx: 0, vz: 0, dirty: true });
+        settleSuspension(near, heightAt);
         hunt.hud.toast('Back on its wheels · G to drive');
       }
       else if (near && hunt.hp > 0) { enter(near); near = null; }
@@ -456,8 +547,9 @@ export async function createRides({ scene, shared, player, heightAt, hunt, route
       if (v === driven || v.net) continue;
       // left far from home and out of sight, it is brought back: every relay keeps its wheels
       if (!v.traffic && Math.hypot(v.x - v.home.x, v.z - v.home.z) > 60 && Math.hypot(v.x - player.feet.x, v.z - player.feet.z) > 110) {
-        Object.assign(v, { x: v.home.x, z: v.home.z, yaw: v.home.yaw, y: heightAt(v.home.x, v.home.z), pitch: 0, roll: 0, lean: 0,
-          tilt: 0, tipped: false, rollRate: 0, spinRate: 0, vx: 0, vz: 0, vf: 0, vy: 0, air: 0, liable: 0, hp: v.spec.hull, wrecked: false, boom: 0, dirty: true });
+        Object.assign(v, { x: v.home.x, z: v.home.z, yaw: v.home.yaw, lean: 0, tilt: 0, tipped: false, rollRate: 0,
+          spinRate: 0, vx: 0, vz: 0, vf: 0, liable: 0, hp: v.spec.hull, wrecked: false, boom: 0, dirty: true });
+        settleSuspension(v, heightAt);
       }
     }
     // Physics gets small steps even on a long frame: no jumping through another bike or a pedestrian.
@@ -467,7 +559,7 @@ export async function createRides({ scene, shared, player, heightAt, hunt, route
         if (v.net && v !== driven) continue;
         if (v === driven) step(v, h, { throttle: inp.move.y, steer: inp.move.x, hand: !!inp.jumpHeld });
         else if (v.traffic && Math.hypot(v.x - player.feet.x, v.z - player.feet.z) < 110) step(v, h, trafficInput(v, h));
-        else if (Math.hypot(v.vx, v.vz) > 0.05 || v.air > 0 || Math.abs(v.rollRate) > 0.005) step(v, h, { hand: true });
+        else if (Math.hypot(v.vx, v.vz) > 0.05 || v.air > 0 || Math.abs(v.rollRate) > 0.005 || Math.abs(v.y - v.floor) > 0.003 || Math.abs(v.vy) > 0.015) step(v, h, { hand: true });
       }
       for (let a = 0; a < rides.length; a++) for (let b = a + 1; b < rides.length; b++) {
         const va = rides[a], vb = rides[b], ax = va.x, az = va.z, bx = vb.x, bz = vb.z, impact = collide(va, vb);
@@ -490,8 +582,9 @@ export async function createRides({ scene, shared, player, heightAt, hunt, route
       const n = v.net;
       if (!n || v === driven) continue;
       const k = Math.min(1, dt * 8), age = (performance.now() - n.at) / 1000;
-      v.x += (n.x + n.vx * age - v.x) * k; v.z += (n.z + n.vz * age - v.z) * k; v.y = heightAt(v.x, v.z);
-      v.yaw += wrap(n.yaw - v.yaw) * k; v.vx = n.vx; v.vz = n.vz; v.air = 0;
+      v.x += (n.x + n.vx * age - v.x) * k; v.z += (n.z + n.vz * age - v.z) * k;
+      v.yaw += wrap(n.yaw - v.yaw) * k; v.vx = n.vx; v.vz = n.vz;
+      settleSuspension(v, heightAt);
     }
     for (const v of rides) { v.vf = v.vx * Math.sin(v.yaw) + v.vz * Math.cos(v.yaw); place(v, dt); }
     world.propagateModifiedBodyPositionsToColliders();
@@ -560,6 +653,24 @@ export function demoRide() {
   };
   if (!(slipOf(0.4) > slipOf(1) * 1.15)) throw new Error('dirt lets the tail out');
   const chassis = (spec, x, z, vx = 0, vz = 0) => ({ spec, x, z, y: 0, yaw: 0, vx, vz, tilt: 0, rollRate: 0, spinRate: 0 });
+  const sprung = chassis(RIDES.car, 0, 0);
+  sprung.wheels = [1, -1].flatMap(z => [1, -1].map(x => ({ front: z > 0, pivot: { position: {
+    x: x * (sprung.spec.wid / 2 - 0.12), z: z * sprung.spec.base / 2,
+  } } })));
+  const banked = (x, z) => z * 0.2 + x * 0.1;
+  settleSuspension(sprung, banked);
+  if (Math.abs(sprung.pitch + Math.atan(0.2)) > 1e-6 || Math.abs(sprung.roll - Math.atan(0.1)) > 1e-6) throw new Error('four wheel contacts align the car with a slope');
+  const flat = () => 0, dt = 1 / 120;
+  settleSuspension(sprung, flat);
+  sprung.y = 1.4;
+  let bottom = 0, landing = 0;
+  suspend(sprung, flat, dt);
+  if (!sprung.air || Math.abs(sprung.vy + GRAVITY * dt) > 1e-6) throw new Error('a car beyond tyre reach is in free flight');
+  for (let i = 0; i < 360; i++) {
+    landing = Math.max(landing, suspend(sprung, flat, dt));
+    bottom = Math.min(bottom, sprung.y);
+  }
+  if (landing < 5 || bottom > -0.02 || bottom < -sprung.spec.travel || Math.abs(sprung.y) > 0.001 || sprung.air) throw new Error('the chassis compresses on touchdown and settles at static ride height');
   const a = chassis(RIDES.car, 0, 0, 0, 20), b = chassis(RIDES.car, 0, 4);
   const energy = (v) => v.spec.mass * (v.vx ** 2 + v.vz ** 2) / 2;
   const before = energy(a) + energy(b), momentum = a.spec.mass * a.vz;

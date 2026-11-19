@@ -54,6 +54,7 @@ export function createDayNight({ startPhase = 'day', online = false, q = null, o
   const startNight = initial === 'night';
   let offset = 0;
   let manualBase = null;
+  let preview = null;
   let lastSlot = 0;
   let initialized = false;
   let state = dayNightAt(0, startNight);
@@ -64,7 +65,8 @@ export function createDayNight({ startPhase = 'day', online = false, q = null, o
   }
 
   function update(worldTime = 0) {
-    state = dayNightAt(clock(worldTime), startNight);
+    const live = dayNightAt(clock(worldTime), startNight);
+    state = preview ? { ...live, phase: preview, night: Number(preview === 'night'), twilight: 0 } : live;
     if (globalThis.document?.documentElement) {
       globalThis.document.documentElement.setAttribute('data-daytime', state.phase);
     }
@@ -73,7 +75,7 @@ export function createDayNight({ startPhase = 'day', online = false, q = null, o
       lastSlot = state.slot;
     } else if (state.slot !== lastSlot) {
       lastSlot = state.slot;
-      onShift?.(state.phase, state);
+      if (!preview) onShift?.(state.phase, state);
     }
     return state;
   }
@@ -96,6 +98,10 @@ export function createDayNight({ startPhase = 'day', online = false, q = null, o
     cycleSeconds: PHASE_SECONDS,
     update,
     setPhase,
+    previewPhase(phase, worldTime = 0) {
+      preview = phase;
+      return update(worldTime);
+    },
     advance,
     get state() { return state; },
     get phase() { return state.phase; },

@@ -21,8 +21,8 @@
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-    <meta name="description" content="Komorebi: an anime-inspired sword run through six neon districts. Explore, battle and find your way to the sanctuary." />
-    <title>Komorebi — A spirit trail</title>
+    <meta name="description" content="Carry the Komorebi Seed through Neo-Kyoto, recover twelve Memory Echo Shards and face Ren’s six Neural Specters." />
+    <title>Komorebi: Protocol Zero-Seven</title>
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <link rel="icon" type="image/png" sizes="512x512" href="/icon-512.png" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
@@ -31,7 +31,7 @@
     <meta property="og:type" content="website" />
     <meta property="og:site_name" content="Komorebi" />
     <meta property="og:url" content="https://ai-game-e184b.web.app/" />
-    <meta property="og:title" content="Komorebi — neon sword fights, play online with friends" />
+    <meta property="og:title" content="Komorebi: Protocol Zero-Seven" />
     <meta property="og:description" content="An anime sword run through a neon city, painted like oil on canvas. Free in your browser: street races, duels and siege-mech raids with up to 8 players." />
     <meta property="og:image" content="https://ai-game-e184b.web.app/og-image.jpg" />
     <meta property="og:image:type" content="image/jpeg" />
@@ -39,7 +39,7 @@
     <meta property="og:image:height" content="630" />
     <meta property="og:image:alt" content="Komorebi: a sword-wielding wanderer facing a street crew between neon towers" />
     <meta name="twitter:card" content="summary_large_image" />
-    <meta name="twitter:title" content="Komorebi — neon sword fights, play online with friends" />
+    <meta name="twitter:title" content="Komorebi: Protocol Zero-Seven" />
     <meta name="twitter:description" content="Free in your browser: street races, duels and siege-mech raids with up to 8 players." />
     <meta name="twitter:image" content="https://ai-game-e184b.web.app/og-image.jpg" />
     <link rel="stylesheet" href="/src/ui.css" />
@@ -60,11 +60,17 @@
       <symbol id="i-mute" viewBox="0 0 24 24"><path d="M4 9v6h4l5 4V5L8 9H4Zm12 1 5 5m0-5-5 5"/></symbol>
     </defs></svg>
     <main id="view" aria-label="Komorebi game world"></main>
-    <div id="loading"><div class="loading-mark"><svg viewBox="0 0 24 24"><use href="#i-leaf"/></svg></div><h1>Komorebi</h1><p>Syncing trail data</p><span class="loading-track"><i></i></span></div>
-    <header id="game-header"><div class="wordmark"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-leaf"/></svg><div>Komorebi<small>// spirit trail</small></div></div><div class="header-actions"><button id="tour-button" type="button" aria-label="Toggle cinematic showcase tour" aria-pressed="false"><b class="tour-gem" aria-hidden="true">◈</b><span>Tour</span></button><button id="mute-button" type="button" aria-label="Toggle sound" aria-pressed="false"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-sound"/></svg><span>Audio</span></button><button id="pause-button" aria-label="Pause and open game menu"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-menu"/></svg><span>Menu</span><kbd>Esc</kbd></button></div><output id="net-pill" hidden></output></header>
+    <div id="loading"><div class="loading-mark"><svg viewBox="0 0 24 24"><use href="#i-leaf"/></svg></div><h1>Komorebi</h1><p>Loading Protocol Zero-Seven</p><span class="loading-track"><i></i></span></div>
+    <header id="game-header"><div class="wordmark"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-leaf"/></svg><div>Komorebi<small>Protocol Zero-Seven</small></div></div><div class="header-actions"><button id="tour-button" type="button" aria-label="Toggle cinematic showcase tour" aria-pressed="false"><b class="tour-gem" aria-hidden="true">◈</b><span>Tour</span></button><button id="mute-button" type="button" aria-label="Toggle sound" aria-pressed="false"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-sound"/></svg><span>Audio</span></button><button id="pause-button" aria-label="Pause and open game menu"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-menu"/></svg><span>Menu</span><kbd>Esc</kbd></button></div><output id="net-pill" hidden></output></header>
     <div id="hint"><span><kbd>W A S D</kbd> Move</span><span><kbd>Space</kbd> Jump / Brake</span><span><kbd>Shift</kbd> Sprint</span><span><kbd>G</kbd> Drive</span><span>Click / <kbd>J</kbd> Fight</span></div>
     <div id="touch-controls">
       <div id="stick" role="application" aria-label="Drag to move. Push to the edge to sprint"><i></i></div>
+      <div class="touch-combat" aria-label="Targeting and defense">
+        <button type="button" data-touch="KeyT" id="touch-lock" aria-pressed="false" aria-label="Toggle target lock">Lock</button>
+        <button type="button" data-touch="KeyY" id="touch-next" aria-label="Lock the next enemy" hidden>Next</button>
+        <button type="button" data-touch="KeyZ" data-hold="1" aria-label="Hold to guard">Guard</button>
+        <button type="button" data-touch="KeyX" id="touch-evade" aria-label="Quickstep">Evade</button>
+      </div>
       <div class="touch-pad">
         <button type="button" data-touch="KeyJ" class="touch-attack" aria-label="Attack"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-sword"/></svg><span>Attack</span></button>
         <button type="button" data-touch="Space" data-hold="1" id="touch-jump" aria-label="Jump"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-jump"/></svg><span>Jump</span></button>
@@ -112,7 +118,7 @@
       <div class="menu-options"><section id="showcase-panel"><h3>Showcase &amp; Atmosphere</h3><div class="showcase-quick"><button id="menu-tour-button" type="button">◈ Launch Investor Tour</button><button id="daynight-toggle" type="button">☀ / ☾ Shift Day / Night</button></div></section>
       <section><h3>Mode</h3><div id="mode"><button data-mode="level">Story sectors</button><button data-mode="roam">Free roam</button><button data-mode="online">Online city</button></div></section>
       <section id="online-panel" hidden><h3>Online city</h3><label class="net-name" for="net-name">Your name</label><input id="net-name" maxlength="16" autocomplete="nickname" spellcheck="false" /><div class="net-dress"><label>Title <select id="net-title"></select></label><label>Colour <select id="net-color"></select></label></div><output id="net-status" aria-live="polite">Connecting…</output><div><button id="net-match" type="button">Quick match</button><button id="net-invite" type="button">Copy invite link</button><button id="net-private" type="button">New private room</button></div></section>
-      <section><h3>Travel to</h3><div id="scenes"><button data-scene="autumn">The spirit trail</button><button data-scene="aurora">Snowbound</button></div></section>
+      <section><h3>Travel to</h3><div id="scenes"><button data-scene="autumn">Neo-Kyoto</button><button data-scene="aurora">Snowbound</button></div></section>
       <section class="audio-panel"><h3>Audio</h3><div class="audio-head"><button id="audio-mute" type="button">Sound on</button></div><div class="vol-grid"><label for="vol-master">Master <output id="out-master">80%</output></label><input id="vol-master" type="range" min="0" max="100" value="80" /><label for="vol-music">Music <output id="out-music">55%</output></label><input id="vol-music" type="range" min="0" max="100" value="55" /><label for="vol-voice">Voice <output id="out-voice">85%</output></label><input id="vol-voice" type="range" min="0" max="100" value="85" /><label for="vol-sfx">Effects <output id="out-sfx">75%</output></label><input id="vol-sfx" type="range" min="0" max="100" value="75" /></div></section>
       <section class="quality-row"><label for="quality">Graphics</label><select id="quality" aria-describedby="quality-status"><option value="auto">Auto (recommended)</option><option value="high">High</option><option value="medium">Balanced</option><option value="low">Low</option></select><output id="quality-status" class="quality-status" aria-live="polite">Auto · Adjusting detail</output><p class="quality-note">Auto adjusts detail to keep play smooth.</p></section></div>
       <section id="codex-panel" class="codex-panel" aria-labelledby="codex-toggle">
@@ -132,8 +138,8 @@
         </div>
       </section>
       <details><summary>Controls & mission guide</summary>
-        <p class="touch-help">Use the left stick to move; push to its edge to sprint. Drag the world to look. Tap Attack to strike and hold Jump for a higher leap. Follow the ◈ diamond waypoint to complete each sector's field mission, clear hostiles and face Ren. Green diamonds mark repeatable street contracts.</p>
-        <div class="controls-grid"><span>Move / sprint</span><b>WASD / Shift</b><span>Jump / short hop</span><b>Hold / tap Space</b><span>Strike / heavy strike</span><b>J or click / F</b><span>Spark / dash / flare / whirl</span><b>Q / E / R / C</b><span>Plunge</span><b>Strike in the air</b><span>Vehicle in / out · handbrake</span><b>G · Space · G beside a wreck to right it</b><span>Look / zoom</span><b>Mouse / wheel</b><span>Controller</span><b>Sticks · A jump · X strike</b></div><p>Follow the on-screen ◈ Waypoint and top-left Mission Checklist in each sector: overload jammers, intercept couriers, smash beacons or drive through cyan Relay Rings, clear the street crew, then defeat Ren's Specter to open the next sector gate. Green diamonds on side avenues offer repeatable $150 street contracts. Red rings warn of an incoming blow: evade, dash just before impact for a perfect dodge, or strike to parry. A car and a bike wait past every Mission Relay.</p></details>
+        <p class="touch-help">Use the left stick to move and drag the world to look. Tap Lock to target a hostile, Next to switch, or Evade to quickstep. Hold Guard just before a hit, then release it and tap Attack to counter.</p>
+        <div class="controls-grid"><span>Move / sprint</span><b>WASD / Shift</b><span>Jump / short hop</span><b>Hold / tap Space</b><span>Strike / heavy strike</span><b>J or click / F</b><span>Spark / dash / flare / whirl</span><b>Q / E / R / C</b><span>Lock / next target</span><b>T / Y · D-pad left / right</b><span>Quickstep / guard</span><b>X / hold Z · RT / hold LT</b><span>Counter</span><b>Guard at impact, release, then strike</b><span>Plunge</span><b>Strike in the air</b><span>Vehicle in / out · handbrake</span><b>G · Space · G beside a wreck to right it</b><span>Look / zoom</span><b>Mouse / wheel</b><span>Controller</span><b>Sticks · A jump · X strike</b></div><p>Follow the on-screen ◈ Waypoint and top-left Mission Checklist in each sector: overload jammers, intercept couriers, smash beacons or drive through cyan Relay Rings, clear the street crew, then defeat Ren's Specter to open the next sector gate. Green diamonds on side avenues offer repeatable $150 street contracts. Red rings warn of an incoming blow: evade, dash just before impact for a perfect dodge, or strike to parry. A car and a bike wait past every Mission Relay.</p></details>
       <p class="menu-footnote">Six sectors. One way forward.</p>
       <p class="asset-credits">Seed-san model by VirtualCast, Inc. · Enemy models by Quaternius (CC0) · <a href="/CREDITS.md" target="_blank" rel="noreferrer">Art credits</a></p>
     </dialog>

@@ -36,6 +36,82 @@ FORWARD_Y = -1.0
 BACK_Y = 1.0
 UP_Z = 1.0
 
+# PBR Material-Class alpha channels encoded into COLOR_0.a (decoded by src/figure/figure.js)
+MAT_CLOTH = 0.06      # matte woven cloth / fabric
+MAT_SKIN = 0.18       # realistic human skin + SSS
+MAT_HAIR = 0.30       # anisotropic layered hair
+MAT_LEATHER = 0.42    # leather / tire rubber / weathered wood
+MAT_POLYMER = 0.54    # tactical matte polymer / painted armor / stone / concrete
+MAT_METAL = 0.68      # brushed steel / titanium / alloy / chrome / brass
+MAT_CARPAINT = 0.82   # glossy clearcoat automotive paint / ceramic glaze
+MAT_GLASS = 0.94      # smoked mirror reflective glass / visor / optics
+
+PALETTE_MAT_CLASS = {
+    'obsidian': MAT_POLYMER,
+    'asphalt_dark': MAT_POLYMER,
+    'rubber_tire': MAT_LEATHER,
+    'carbon': MAT_POLYMER,
+    'gunmetal': MAT_METAL,
+    'slate': MAT_POLYMER,
+    'steel': MAT_METAL,
+    'silver': MAT_METAL,
+    'chrome': MAT_METAL,
+    'warm_white': MAT_POLYMER,
+    'glass_dark': MAT_GLASS,
+    'navy_coat': MAT_CLOTH,
+    'teal_tech': MAT_CARPAINT,
+    'cobalt': MAT_CARPAINT,
+    'crimson_coat': MAT_CLOTH,
+    'rust_orange': MAT_CARPAINT,
+    'hazard_yellow': MAT_POLYMER,
+    'olive_tech': MAT_CLOTH,
+    'leather_dark': MAT_LEATHER,
+    'leather_tan': MAT_LEATHER,
+    'denim': MAT_CLOTH,
+    'copper': MAT_METAL,
+    'brass': MAT_METAL,
+    'skin_light': MAT_SKIN,
+    'skin_warm': MAT_SKIN,
+    'skin_tan': MAT_SKIN,
+    'skin_deep': MAT_SKIN,
+}
+
+
+def infer_mat_class(color, name: str = '', rgb: tuple[float, float, float] | None = None) -> float:
+    """Infer realistic PBR material-class alpha from palette key, object name, or linear RGB."""
+    if isinstance(color, str) and color.strip() in PALETTE_MAT_CLASS:
+        return PALETTE_MAT_CLASS[color.strip()]
+    nm = (name or '').lower()
+    if any(k in nm for k in ('glass', 'windshield', 'canopy', 'window', 'visor', 'lens', 'screen', 'mirror', 'eye')):
+        return MAT_GLASS
+    if any(k in nm for k in ('tire', 'tyre', 'rubber', 'saddle', 'seat', 'leather', 'boot', 'shoe', 'sole', 'wood', 'cedar', 'plank', 'beam', 'stool', 'grip', 'handle', 'strap', 'belt')):
+        return MAT_LEATHER
+    if any(k in nm for k in ('hair', 'mohawk', 'brow', 'topknot', 'ponytail')):
+        return MAT_HAIR
+    if any(k in nm for k in ('skin', 'face', 'head', 'neck', 'hand', 'arm', 'forearm')):
+        if not any(m in nm for m in ('helmet', 'mask', 'armor', 'cyber', 'visor', 'metal', 'plate', 'hood', 'bracer', 'sleeve', 'gauntlet')):
+            return MAT_SKIN
+    if any(k in nm for k in ('rim', 'spoke', 'rotor', 'disc', 'exhaust', 'pipe', 'fork', 'chrome', 'steel', 'metal', 'blade', 'tsuba', 'brass', 'gold', 'alloy', 'piston', 'ram', 'strut', 'barrel', 'rail', 'antenna', 'mast', 'lantern', 'cage', 'ring', 'buckle', 'spike', 'hilt', 'guard', 'cleaver', 'katana')):
+        return MAT_METAL
+    if any(k in nm for k in ('coat', 'jacket', 'shirt', 'pant', 'trouser', 'jean', 'apron', 'noren', 'curtain', 'cloth', 'hood', 'scarf', 'hakama', 'jinbaori', 'vest', 'suit', 'sleeve', 'fabric')):
+        return MAT_CLOTH
+    if any(k in nm for k in ('hood_', 'fender', 'bumper', 'door', 'roof', 'fairing', 'body', 'shell', 'nose', 'tail', 'wing', 'spoiler', 'caliper', 'tank', 'car', 'coupe', 'sports', 'van', 'bike', 'scooter')):
+        return MAT_CARPAINT
+    if rgb is not None:
+        r, g, b = rgb
+        luma = 0.299 * r + 0.587 * g + 0.114 * b
+        mx, mn = max(r, g, b), min(r, g, b)
+        sat = (mx - mn) / max(mx, 1e-4)
+        if luma < 0.04 and b > r * 1.25:
+            return MAT_GLASS
+        if luma < 0.06:
+            return MAT_LEATHER
+        if sat < 0.18 and luma > 0.25:
+            return MAT_METAL
+        if sat > 0.42:
+            return MAT_CARPAINT
+    return MAT_POLYMER
+
 # Curated linear-RGB palette for stylized cyberpunk street props, vehicles & crews.
 CYBER_PALETTE = {
     'obsidian': (0.030, 0.036, 0.052),
@@ -302,8 +378,9 @@ def paint_mesh(
     ridge_boost: float = 0.08,
     ground_ao: float = 0.18,
     gradient_z=None,
+    mat_class: float | None = None,
 ) -> bpy.types.Object:
-    """Populate 'Color' FLOAT_COLOR corner attribute with rich vertical + cavity/ridge shading."""
+    """Populate 'Color' FLOAT_COLOR corner attribute with baked AO & PBR material-class alpha."""
     if obj is None or obj.type != 'MESH':
         return obj
     mesh = obj.data
@@ -322,6 +399,7 @@ def paint_mesh(
             break
 
     base_r, base_g, base_b = resolve_color(color)
+    alpha_cls = 1.0 if signal else float(mat_class if mat_class is not None else infer_mat_class(color, obj.name, (base_r, base_g, base_b)))
     grad_pair = None
     if gradient_z is not None:
         grad_pair = (resolve_color(gradient_z[0]), resolve_color(gradient_z[1]))
@@ -357,34 +435,27 @@ def paint_mesh(
                 cr, cg, cb = base_r, base_g, base_b
 
             if signal:
-                # Keep self-lit neon saturated and luminous with slight vertical/core vitality
                 glow = 0.92 + 0.08 * t_local + 0.05 * max(0.0, nz)
                 r = _clamp01(cr * glow)
                 g = _clamp01(cg * glow)
                 b = _clamp01(cb * glow)
             else:
-                # 1. Local vertical gradient (darker base, lighter crown)
-                v_ao = (1.0 - ao_strength * 0.72) + (ao_strength * 0.92) * (t_local ** 0.8)
-                # 2. World ground contact AO near z = 0 (0 .. 0.38m)
+                v_ao = (1.0 - ao_strength * 0.65) + (ao_strength * 0.80) * (t_local ** 0.8)
                 if wz < 0.38 and z_min < 0.25:
                     g_t = max(0.0, min(1.0, max(0.0, wz) / 0.38))
                     g_ao = (1.0 - ground_ao) + ground_ao * (g_t * g_t * (3.0 - 2.0 * g_t))
                 else:
                     g_ao = 1.0
-                # 3. Normal sky/underside directional modulation
-                n_mod = 1.0 + (top_highlight * nz if nz >= 0.0 else 0.16 * nz)
-                # 4. Convex bevel highlight / concave seam cavity AO
+                n_mod = 1.0 + (top_highlight * 0.65 * nz if nz >= 0.0 else 0.14 * nz)
                 rf = ridges[vi] if vi < len(ridges) else 0.0
                 c_mod = 1.0 + (ridge_boost * rf if rf >= 0.0 else ridge_boost * 1.45 * rf)
 
                 shade = v_ao * g_ao * n_mod * c_mod
-                # Subtle cool slate shift in deep occlusion so dark creases look painterly
-                occ = max(0.0, 1.0 - shade)
-                r = _clamp01(cr * shade * (1.0 - 0.08 * occ))
-                g = _clamp01(cg * shade * (1.0 - 0.02 * occ))
-                b = _clamp01(cb * shade * (1.0 + 0.08 * occ))
+                r = _clamp01(cr * shade)
+                g = _clamp01(cg * shade)
+                b = _clamp01(cb * shade)
 
-            col_data[li].color = (r, g, b, 1.0)
+            col_data[li].color = (r, g, b, alpha_cls)
 
     mat = get_vertex_material(signal)
     mesh.materials.clear()
@@ -402,15 +473,17 @@ def paint_faces(
     color,
     ao_strength: float = 0.20,
     top_highlight: float = 0.08,
+    mat_class: float | None = None,
 ) -> bpy.types.Object:
     """Repaint polygons matching predicate(poly, world_center, normal) on an already painted mesh."""
     mesh = obj.data
     layer = mesh.color_attributes.get('Color')
     if layer is None:
-        paint_mesh(obj, color=color, ao_strength=ao_strength, top_highlight=top_highlight)
+        paint_mesh(obj, color=color, ao_strength=ao_strength, top_highlight=top_highlight, mat_class=mat_class)
         layer = mesh.color_attributes['Color']
 
     cr, cg, cb = resolve_color(color)
+    alpha_cls = float(mat_class if mat_class is not None else infer_mat_class(color, obj.name, (cr, cg, cb)))
     verts = mesh.vertices
     loops = mesh.loops
     world_mat = obj.matrix_world
@@ -428,7 +501,7 @@ def paint_faces(
             wz = world_pts[loops[li].vertex_index].z
             t = max(0.0, min(1.0, (wz - z_min) / z_span))
             shade = ((1.0 - ao_strength * 0.65) + ao_strength * 0.85 * t) * (1.0 + top_highlight * nz)
-            layer.data[li].color = (_clamp01(cr * shade), _clamp01(cg * shade), _clamp01(cb * shade), 1.0)
+            layer.data[li].color = (_clamp01(cr * shade), _clamp01(cg * shade), _clamp01(cb * shade), alpha_cls)
     mesh.update()
     return obj
 
@@ -1072,74 +1145,104 @@ def build_wheel_assembly(
     tire_color='rubber_tire',
     rim_color='silver',
     rotor_color='gunmetal',
-    spokes: int = 5,
+    caliper_color=(0.78, 0.09, 0.12),
+    spokes: int = 10,
 ) -> list[bpy.types.Object]:
-    """Build a detailed multi-part wheel (tire, rim lips, spokes, brake rotor, axle cap) at center."""
+    """Build a realistic AAA wheel (rounded-shoulder tire, forged multi-spoke alloy rim, brake rotor & caliper)."""
     cx, cy, cz = _vec3(center)
     side_sign = -1.0 if cx < 0.0 else 1.0
-    rot_wheel = (0.0, math.pi * 0.5, 0.0)  # Align cylinder Z axis along X axle
+    rot_wheel = (0.0, math.pi * 0.5, 0.0)
     parts = []
 
-    # Outer beveled tire tread
-    parts.append(add_cylinder(
+    # Curved-shoulder rubber tire (24 segments, smooth rounded bevel)
+    tire = add_cylinder(
         name='Road_Tire',
         radius=radius,
         depth=width,
         vertices=24,
         location=(cx, cy, cz),
         rotation=rot_wheel,
-        bevel=min(0.025, width * 0.14),
+        bevel=min(0.042, width * 0.22),
         bevel_segments=2,
         color=tire_color,
-    ))
-    # Alloy rim barrel / lip
-    rim_r = radius * 0.66
-    parts.append(add_cylinder(
+    )
+    paint_mesh(tire, color=tire_color, mat_class=MAT_LEATHER, ao_strength=0.22)
+    parts.append(tire)
+
+    # Outer forged alloy rim lip & deep inner barrel
+    rim_r = radius * 0.68
+    barrel = add_cylinder(
         name='Rim_Barrel',
         radius=rim_r,
         depth=width * 1.03,
-        vertices=20,
+        vertices=24,
         location=(cx, cy, cz),
         rotation=rot_wheel,
-        bevel=0.012,
+        bevel=0.014,
+        bevel_segments=1,
         color=rim_color,
-    ))
-    # Recessed brake rotor
-    parts.append(add_cylinder(
+    )
+    paint_mesh(barrel, color=rim_color, mat_class=MAT_METAL, ao_strength=0.20)
+    parts.append(barrel)
+
+    # Recessed dark wheel well interior & brushed steel brake rotor
+    rotor = add_cylinder(
         name='Brake_Rotor',
-        radius=radius * 0.50,
-        depth=width * 1.06,
-        vertices=16,
+        radius=radius * 0.54,
+        depth=width * 1.05,
+        vertices=18,
         location=(cx, cy, cz),
         rotation=rot_wheel,
         color=rotor_color,
-    ))
-    # Spokes on outward face
-    spoke_x = cx + side_sign * (width * 0.44)
-    for i in range(max(3, int(spokes))):
-        ang = (i / max(3, int(spokes))) * math.tau
-        sy = cy + math.cos(ang) * (rim_r * 0.48)
-        sz = cz + math.sin(ang) * (rim_r * 0.48)
-        parts.append(add_bevel_box(
+    )
+    paint_mesh(rotor, color=rotor_color, mat_class=MAT_METAL, ao_strength=0.28)
+    parts.append(rotor)
+
+    # Painted performance brake caliper tucked behind upper-rear spokes
+    caliper = add_bevel_box(
+        name='Brake_Caliper',
+        size=(width * 0.24, radius * 0.28, radius * 0.16),
+        location=(cx + side_sign * width * 0.30, cy + radius * 0.34, cz + radius * 0.16),
+        bevel=0.010,
+        segments=1,
+        color=caliper_color,
+    )
+    paint_mesh(caliper, color=caliper_color, mat_class=MAT_CARPAINT, ao_strength=0.18)
+    parts.append(caliper)
+
+    # Forged split-spoke alloy wheel face
+    spoke_x = cx + side_sign * (width * 0.45)
+    n_spokes = max(5, min(8, int(spokes)))
+    for i in range(n_spokes):
+        ang = (i / n_spokes) * math.tau
+        sy = cy + math.cos(ang) * (rim_r * 0.50)
+        sz = cz + math.sin(ang) * (rim_r * 0.50)
+        sp = add_bevel_box(
             name=f'Spoke_{i}',
-            size=(width * 0.18, rim_r * 0.86, radius * 0.11),
+            size=(width * 0.15, rim_r * 0.88, radius * 0.068),
             location=(spoke_x, sy, sz),
             rotation=(ang, 0.0, 0.0),
-            bevel=0.008,
+            bevel=0.006,
             segments=1,
             color=rim_color,
-        ))
-    # Center hub cap
-    parts.append(add_cylinder(
+        )
+        paint_mesh(sp, color=rim_color, mat_class=MAT_METAL, ao_strength=0.18)
+        parts.append(sp)
+
+    # Center machined hub cap
+    cap = add_cylinder(
         name='Axle_Cap',
-        radius=radius * 0.18,
-        depth=width * 1.14,
+        radius=radius * 0.19,
+        depth=width * 1.13,
         vertices=14,
         location=(cx, cy, cz),
         rotation=rot_wheel,
-        bevel=0.01,
-        color='obsidian',
-    ))
+        bevel=0.010,
+        bevel_segments=2,
+        color='chrome',
+    )
+    paint_mesh(cap, color='chrome', mat_class=MAT_METAL, ao_strength=0.18)
+    parts.append(cap)
     return parts
 
 

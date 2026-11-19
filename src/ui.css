@@ -128,6 +128,11 @@ kbd { display: inline-flex; align-items: center; justify-content: center; min-wi
 .target p { font: 9px var(--mono); letter-spacing: .06em; text-transform: uppercase; color: var(--muted); margin: 7px 0 0; }
 .target.warning { border-color: var(--yellow); }
 .target.warning p { color: var(--yellow); animation: blink .3s steps(2) infinite; }
+.focus-marker { position: absolute; top: 0; left: 0; pointer-events: none; }
+.focus-marker::before { content: ''; display: block; width: 17px; height: 17px; border: 2px solid var(--cyan); background: #07141c66; box-shadow: 0 0 7px #00f0ff80; transform: translate(-50%, -50%) rotate(45deg); }
+.combat-status { position: absolute; left: 50%; bottom: 114px; transform: translateX(-50%); min-width: 134px; padding: 7px 10px; background: var(--panel); border: 1px solid var(--edge); font: 700 10px var(--mono); text-align: center; text-transform: uppercase; color: var(--cyan); }
+.combat-status[hidden], .focus-marker[hidden] { display: none; }
+.combat-status i { display: block; height: 3px; margin-top: 5px; background: linear-gradient(90deg, var(--cyan) calc(var(--guard) * 100%), var(--edge) 0); }
 
 .toast { position: absolute; bottom: 132px; left: 50%; max-width: min(520px, 90vw); transform: translate(-50%, 8px); padding: 10px 22px 10px 16px; border-left: 3px solid var(--hot); text-align: left; font: 12px var(--mono); letter-spacing: .04em; opacity: 0; transition: opacity .15s, transform .15s; }
 .toast::before { content: '// '; color: var(--hot); }
@@ -220,6 +225,11 @@ html[data-showcase] #hud, html[data-showcase] #hint, html[data-showcase] #touch-
   .touch-pad { position: absolute; right: max(12px, env(safe-area-inset-right)); bottom: max(12px, env(safe-area-inset-bottom)); width: 180px; height: 166px; pointer-events: none; }
   .touch-pad button { position: absolute; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; width: 64px; height: 64px; padding: 6px; border: 1px solid #566570; border-radius: 50%; background: #0c131bea; color: var(--ink); font-size: 14px; font-weight: 700; letter-spacing: 0; pointer-events: auto; touch-action: none; -webkit-tap-highlight-color: transparent; }
   .touch-pad button[hidden] { display: none; }
+  .touch-combat { position: absolute; right: max(12px, env(safe-area-inset-right)); bottom: calc(max(12px, env(safe-area-inset-bottom)) + 174px); display: flex; gap: 5px; }
+  .touch-combat button { min-width: 44px; min-height: 44px; padding: 4px 7px; border: 1px solid var(--edge); border-radius: 6px; background: var(--panel); font: 700 12px var(--display); pointer-events: auto; touch-action: none; }
+  .touch-combat button:active, .touch-combat button[aria-pressed='true'] { border-color: var(--cyan); color: var(--cyan); }
+  .touch-combat button:disabled { color: var(--muted); }
+  .touch-combat button[hidden], #touch-controls[data-driving='true'] .touch-combat { display: none; }
   .touch-pad button:active, #touch-powers[aria-expanded='true'] { background: #273641; border-color: var(--cyan); transform: scale(.96); }
   .touch-pad button:disabled { opacity: 1; color: #9baab5; border-color: #3d4a53; background: #101820ea; }
   .touch-pad button:disabled svg { opacity: .45; }

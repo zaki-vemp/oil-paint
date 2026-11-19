@@ -21,7 +21,12 @@ export class Follow {
     this.reducedMotion = globalThis.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false;
   }
 
-  update(dt, target, look, zoom, castRay, groundAt) {
+  track(yaw, dt) {
+    const delta = yaw - this.yaw;
+    this.yaw += Math.atan2(Math.sin(delta), Math.cos(delta)) * (1 - Math.exp(-11 * dt));
+  }
+
+  update(dt, target, look, zoom, castRay, groundAt, sweep) {
     const cam = this.camera;
     if (this.free) { cam.position.copy(this.free.position); cam.lookAt(this.free.target); return; }
     this.yaw -= look.x;
@@ -37,15 +42,28 @@ export class Follow {
     const back = new THREE.Vector3(-Math.sin(this.yaw) * cp, sp, -Math.cos(this.yaw) * cp);
     const right = new THREE.Vector3(-Math.cos(this.yaw), 0, Math.sin(this.yaw));
     const k = Math.min(1, reach / 6.4);
-    const from = this.pivot.clone().addScaledVector(right, this.side * k);
-    // Sweep three rays across the camera's near plane so its edges cannot clip a trunk.
-    let hit = null;
-    for (const offset of [-0.22, 0, 0.22]) {
-      const d = castRay(from.clone().addScaledVector(right, offset), back, reach + 0.4);
-      if (d != null) hit = hit == null ? d : Math.min(hit, d);
+    const shoulder = this.side * k;
+    const from = this.pivot.clone();
+    let free = reach;
+    if (sweep) {
+      // Cover the entire near plane and sweep from the pivot so the shoulder offset also clears corners.
+      const nearHeight = cam.near * Math.tan(THREE.MathUtils.degToRad(cam.fov) / 2);
+      const radius = Math.hypot(cam.near, nearHeight, nearHeight * cam.aspect) + 0.04;
+      const length = Math.hypot(reach, shoulder);
+      const dir = back.clone().multiplyScalar(reach).addScaledVector(right, shoulder).divideScalar(length);
+      const hit = sweep(this.pivot, dir, length, radius);
+      if (hit != null) free = Math.max(0.06, hit * reach / length);
+    } else {
+      // Snowbound also checks painted trunks that have no physics body.
+      from.addScaledVector(right, shoulder);
+      for (const offset of [-0.22, 0, 0.22]) {
+        const hit = castRay(from.clone().addScaledVector(right, offset), back, reach + 0.4);
+        if (hit != null) free = Math.min(free, Math.max(0.06, hit - 0.3));
+      }
     }
-    const free = hit == null ? reach : Math.max(0.8, hit - 0.3);
-    this.distance = free < this.distance ? damp(this.distance, free, 18, dt) : damp(this.distance, free, 2.5, dt);
+    // A new wall must stop the eye on this frame. Only the recovery eases out.
+    this.distance = Math.min(free, damp(this.distance, free, 2.5, dt));
+    if (sweep) from.addScaledVector(right, shoulder * this.distance / reach);
     cam.position.copy(from).addScaledVector(back, this.distance);
     const floor = groundAt(cam.position.x, cam.position.z) + 0.45;
     let raised = 0;
@@ -53,8 +71,9 @@ export class Follow {
     cam.lookAt(from.x - back.x * 6, from.y - back.y * 6 + this.lift * k - raised * this.sink, from.z - back.z * 6);
     this.shakeTime += dt;
     if (!this.reducedMotion && this.shake > 0) {
-      cam.position.x += Math.sin(this.shakeTime * 85) * this.shake * 0.3;
-      cam.position.y += Math.cos(this.shakeTime * 71) * this.shake * 0.2;
+      const shake = free === reach ? this.shake : 0;
+      cam.position.x += Math.sin(this.shakeTime * 85) * shake * 0.3;
+      cam.position.y += Math.cos(this.shakeTime * 71) * shake * 0.2;
     }
   }
 }

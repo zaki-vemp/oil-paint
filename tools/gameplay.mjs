@@ -12,21 +12,30 @@ const browser = await chromium.launch({ executablePath: process.env.CHROME, head
   args: ['--mute-audio', '--ignore-gpu-blocklist', ...(process.platform === 'win32' ? ['--use-angle=d3d11'] : process.platform === 'darwin' ? ['--use-angle=metal'] : []), '--enable-gpu'] });
 const errors = [];
 try {
-  const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+  const page = await browser.newPage({ viewport: { width: 1024, height: 640 } });
   page.on('pageerror', e => errors.push(e.message));
   page.on('console', m => { if (m.type() === 'error') errors.push(m.text()); });
-  await page.goto(`${baseURL}/?scene=autumn&fresh&nopad`);
+  await page.goto(`${baseURL}/?scene=autumn&fresh&quality=low&nopad`);
   await page.waitForFunction(() => window.lab?.ready, null, { timeout: 120000 });
+  await page.waitForFunction(() => {
+    const L = window.lab;
+    const blades = [L.figure.man.object.getObjectByName('Traveler katana'), ...L.hunt.enemies.filter(e => e.duel).map(e => e.mesh.getObjectByName('Rival katana'))];
+    return blades.every(blade => blade?.children.length === 1 && blade.children[0].isGroup);
+  }, null, { timeout: 15000 });
   const result = await page.evaluate((plan) => {
     window.__paused = true;
     const L = window.lab, P = L.player, h = L.hunt;
+    // Rendering was warmed up at startup. The teleports below still update the camera and world
+    // but do not pile hundreds of redundant frames onto software WebGL during this synchronous run.
+    const render = L.frame.render;
+    L.frame.render = () => {};
     const base = { move: { x: 0, y: 0 }, look: { x: 0, y: 0 }, walk: false, sprint: false, strafe: false, jump: false, jumpHeld: true, zoom: 0, device: 'keyboard' };
     const input = state => L.setInput(() => ({ ...base, ...state }));
     const check = (condition, message) => { if (!condition) throw Error(message); };
     const results = {};
     const Z0 = plan[0].checkpoint.z; // the start: every fixed place below is measured from it, whatever the map's scale
     // This run measures combat and progression. The street's people are moved out of it; tools/street.mjs is theirs.
-    for (const e of h.enemies) if (e.civ) { e.x = e.homeX = e.tx = 240; e.wait = 1e4; }
+    for (const e of h.enemies) if (e.civ) { if (!e.mark) e.x = e.homeX = e.tx = 240; e.wait = 1e4; }
     // A second crew member must not hit during the single-attacker dodge check. Traffic is tested in street.mjs.
     for (const e of h.enemies) if (!e.duel) { e.aggro = 0; e.mode = 'roam'; e.wait = 1e4; e.windup = 0; }
     for (const [i, v] of L.rides.rides.entries()) if (v.traffic) {
@@ -80,6 +89,7 @@ try {
     check(h.hp === hp, 'moving out dodges the committed attack');
     first.windup = first.cool = 0;
     const chapterStyles = [];
+    results.fieldOps = [];
     let checkedRetry = false;
     for (let segment = 0; segment < plan.length; segment++) {
       const pack = h.enemies.filter(e => !e.duel && e.seg === segment);
@@ -103,16 +113,43 @@ try {
       }
       input({}); L.step(1 / 60, 2);
       check(h.seg === segment, 'creatures alone cannot clear chapter');
-      // Exercise sector 0 destructible target hit detection, then complete field mission to unlock rival.
-      if (segment === 0) {
-        const jammer = L.missions.sectorOps[0].targets[0];
-        L.missions.hitAt(jammer.x, jammer.z, 2, 120, 'sword', null, 0);
-        check(jammer.done, 'sword hit destroys mission jammer');
-      }
-      L.missions.completeSector(segment);
-      L.step(1 / 60, 2);
       const rival = h.enemies.find(e => e.duel && e.seg === segment);
+      check(!rival.ready, 'field operation gates Ren in sector ' + segment);
+      const op = L.missions.sectorOps[segment];
+      for (const t of op.targets) {
+        if (t.kind === 'destructible') {
+          L.teleport(t.x, t.z + 2.1, t.x, t.z);
+          for (let attempt = 0; attempt < 3 && !t.done; attempt++) {
+            let frame = 0;
+            L.setInput(() => ({ ...base, attack: frame++ === 0 }));
+            L.step(1 / 60, 65, false);
+          }
+        } else if (t.kind === 'courier') {
+          const courier = h.enemies.find(e => e.mark);
+          check(courier && !courier.dead, 'marked courier is live');
+          for (let attempt = 0; attempt < 3 && !courier.dead; attempt++) {
+            L.teleport(courier.x, courier.z + 1.9, courier.x, courier.z);
+            let frame = 0;
+            L.setInput(() => ({ ...base, attack: frame++ === 0 }));
+            L.step(1 / 60, 65, false);
+          }
+        } else {
+          input({});
+          L.teleport(t.x, t.z + (t.kind === 'terminal' ? 2.1 : 0), t.x, t.z - 1);
+          L.step(1 / 60, t.kind === 'terminal' ? 130 : 1, false);
+        }
+        check(t.done, 'field target complete: ' + t.label);
+      }
+      input({}); L.step(1 / 60, 2, false);
+      check(op.done && rival.ready, 'completed operation activates Ren');
+      check(JSON.parse(localStorage.getItem('oilpaint.levels.v1')).missions.includes(segment), 'operation saves before the duel');
+      results.fieldOps.push(op.type);
+      for (const shrine of L.missions.echoShrines.filter(s => s.seg === segment)) {
+        L.teleport(shrine.x, shrine.z + 1.7, shrine.x, shrine.z);
+        check(shrine.collected && !shrine.root.visible, 'recovered shrine ' + shrine.id);
+      }
       L.teleport(rival.x, rival.z + 4.5, rival.x, rival.z); L.step(1 / 60, 60, false);
+      check(rival.aura.visible, 'Ren shows his arena aura in a live duel');
       if (!checkedRetry) { L.respawn(); check(Math.hypot(P.feet.x - rival.homeX, P.feet.z - rival.homeZ - 6) < 0.1, 'nearby duel retry point'); checkedRetry = true; }
       for (let frame = 0; frame < 1800 && !rival.dead; frame++) {
         if (rival.phase === 'recovery') {
@@ -137,7 +174,8 @@ try {
     results.chapterStyles = chapterStyles;
     results.rivalLessons = h.enemies.filter(e => e.duel).map(e => ({ chapter: e.seg + 1, evaded: e.evaded, punishes: e.punishes }));
     results.save = JSON.parse(localStorage.getItem('oilpaint.levels.v1'));
-    check(results.save.cleared === plan.length, 'victory persists');
+    check(results.save.cleared === plan.length && results.save.won === true, 'victory persists');
+    check(L.missions.echoes.collected === 12 && JSON.parse(localStorage.getItem('oilpaint.lore.v1')).length === 12, 'all twelve Echo Shards persist');
     // After winning, create a temporary wall in open space to test the actual capsule sweep.
     L.teleport(0, Z0, 0, Z0 - 18); input({}); const y = P.feet.y;
     const wall = P.world.createCollider(P.R.ColliderDesc.cuboid(3, 2, 0.2).setTranslation(0, y + 1, Z0 - 2.5));
@@ -146,27 +184,63 @@ try {
     check(P.feet.z > Z0 - 2.1 && P.feet.z < Z0 - 1, 'dash stops at the wall');
     check(Math.abs(P.visualY - P.feet.y) < 0.2, 'dash visual history');
     P.world.removeCollider(wall, true); L.setInput(null);
+    L.frame.render = render;
     return results;
   }, PLAN.map(p => ({...p, goal: GOAL})));
   // Pause freezes the real animation loop, and its controls remain keyboard accessible.
   await page.click('#pause-button');
   assert.equal(await page.locator('#menu').evaluate(el => el.open), true);
+  await page.click('#codex-toggle');
+  assert.equal(await page.locator('#codex-acts .codex-status.done').count(), PLAN.length);
+  await page.click('[data-codex-tab="cast"]');
+  assert.equal(await page.locator('#codex-cast .dossier-portrait').count(), 5);
+  await page.click('[data-codex-tab="echoes"]');
+  assert.equal(await page.locator('#codex-echoes .echo-voice-btn').count(), 12);
   const before = await page.evaluate(() => window.lab.shared.uTime.value);
+  const firstPhase = await page.evaluate(() => window.lab.dayNight.phase);
+  await page.click('#daynight-toggle');
+  assert.notEqual(await page.evaluate(() => window.lab.dayNight.phase), firstPhase, 'menu instantly changes lighting while paused');
+  assert.equal(await page.evaluate(() => window.lab.shared.uNight.value), firstPhase === 'day' ? 1 : 0);
   await page.waitForTimeout(150);
   assert.equal(await page.evaluate(() => window.lab.shared.uTime.value), before);
   await page.keyboard.press('Escape');
   assert.equal(await page.locator('#menu').evaluate(el => el.open), false);
   // Restore an existing checkpoint without using ?fresh. Keep the same storage context.
-  await page.goto(`${baseURL}/?scene=autumn&nopad`);
+  await page.goto(`${baseURL}/?scene=autumn&quality=low&nopad`);
   await page.waitForFunction(() => window.lab?.ready, null, { timeout: 120000 });
   assert.equal(await page.evaluate(() => window.lab.hunt.seg), PLAN.length);
+  assert.equal(await page.evaluate(() => window.lab.hunt.won), true, 'restored game keeps its sanctuary victory');
+  assert.equal(await page.evaluate(() => window.lab.missions.echoes.collected), 12, 'restored archive contains every recovered shard');
   const saved = await page.evaluate(() => localStorage.getItem('oilpaint.levels.v1'));
-  await page.goto(`${baseURL}/?scene=autumn&mode=roam&nopad`);
+  await page.goto(`${baseURL}/?scene=autumn&mode=roam&phase=day&tour=1&quality=low&nopad`);
   await page.waitForFunction(() => window.lab?.ready, null, { timeout: 120000 });
   assert.equal(await page.evaluate(() => Object.values(window.lab.hunt.powers).every(Boolean)), true);
+  assert.equal(await page.evaluate(() => window.lab.missions.sectorOps[1].targets[1].col), null, 'roam has no hidden terminal collision');
   assert.equal(await page.evaluate(() => localStorage.getItem('oilpaint.levels.v1')), saved, 'roam preserves story save');
-  await page.goto(`${baseURL}/?scene=autumn&fresh&nopad`);
+  assert.equal(await page.locator('#showcase-overlay').isVisible(), true);
+  assert.equal(await page.locator('.showcase-dot').count(), 6);
+  const glides = await page.evaluate(() => {
+    const L = window.lab;
+    L.renderer.setAnimationLoop(null);
+    const start = L.follow.free.position.clone(), playerStart = L.player.feet.clone();
+    const health = L.hunt.hp, remaining = L.dayNight.remaining;
+    L.step(1 / 60, 32, false);
+    return L.follow.free.position.distanceTo(start) > 0.3 && L.player.feet.equals(playerStart)
+      && L.hunt.hp === health && L.dayNight.remaining < remaining;
+  });
+  assert.equal(glides, true, 'tour moves the camera while holding the solo run');
+  await page.locator('.showcase-next').click();
+  assert.equal(await page.evaluate(() => window.lab.showcase.index), 1);
+  assert.equal(await page.evaluate(() => window.lab.shared.uNight.value), 0);
+  await page.locator('.showcase-dot').last().click();
+  assert.equal(await page.evaluate(() => window.lab.showcase.index), 5);
+  assert.equal(await page.evaluate(() => window.lab.shared.uNight.value), 1);
+  await page.keyboard.press('Escape');
+  assert.equal(await page.locator('#showcase-overlay').isHidden(), true);
+  assert.equal(await page.evaluate(() => window.lab.dayNight.phase), 'day', 'exit releases the lighting preview');
+  await page.goto(`${baseURL}/?scene=autumn&fresh&quality=low&nopad`);
   await page.waitForFunction(() => window.lab?.ready, null, { timeout: 120000 });
+  assert.equal(await page.evaluate(() => window.lab.missions.echoes.collected), 12, 'fresh checkpoints preserve the archive');
   const warning = await page.evaluate(() => {
     window.__paused = true;
     Storage.prototype.setItem = () => { throw new Error('storage denied'); };
@@ -176,9 +250,18 @@ try {
     return document.querySelector('.toast').textContent;
   });
   assert.match(warning, /Progress is not saving/, 'save failure remains visible after unlock');
+  await page.goto(`${baseURL}/?scene=aurora&quality=low&nopad`);
+  await page.waitForFunction(() => window.lab?.ready && window.lab.lantern.object.getObjectByName('Spirit lantern'), null, { timeout: 120000 });
+  assert.match(await page.locator('.chapter-label').textContent(), /Memory 00/);
+  assert.match(await page.locator('.story p').textContent(), /ridge above Old Kyoto/i);
+  await page.evaluate(() => {
+    const L = window.lab, z = 212, x = L.crestX(z);
+    L.teleport(x, z, x, z - 1);
+  });
+  assert.match(await page.locator('.story p').textContent(), /first stones at the timberline/);
   assert.deepEqual(errors, [], 'browser errors');
   console.log(JSON.stringify(result, null, 2));
-  console.log(`PASS: anime rigs, physics, combat, ${PLAN.length} rival lessons, chapters, save/restore, pause and free roam`);
+  console.log(`PASS: Blender weapons and lantern, physics, combat, ${PLAN.length} field operations and duels, 12 Echoes, codex, lighting preview, showcase tour, save/restore, roam and Snowbound`);
 } finally {
   await browser.close();
 }

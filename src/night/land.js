@@ -157,20 +157,63 @@ export function createLand(shared) {
       void main() {
         if (vWorld.y < -3.0) discard;
         vec4 m = texture(tLand, landUv(vWorld.xz));
-        vec3 Nn = normalAt(vWorld.xz);
-        // near the eye it is asked square by ragged square, so that it is in touches; far off, point by point.
-        // Drawn (anime) it is clean everywhere: flat cel snow, no touches.
-        float near = (1.0 - uAnime) * (1.0 - smoothstep(25.0, 110.0, distance(vWorld, cameraPosition)));
-        vec4 n = texture(tNoise, vWorld.xz / 3.1);
-        vec2 sq = mix(vWorld.xz, floor(vWorld.xz / 0.7 + (n.rg - 0.5) * 1.8) * 0.7, near);
-        vec3 P = vec3(sq.x, vWorld.y, sq.y);
-        float x = moonOn(P, Nn);
-        float wide = texture(tNoise, vWorld.xz / 37.0).b;
-        vec3 snow = snowPaint(x, wide, auroraOn(vWorld.xz, Nn), wide) * 0.9;
-        vec3 rock = rockPaint(x, n.b, wide) * 0.85;
-        vec3 c = mix(snow, rock, step(0.5, m.r + (n.a - 0.5) * 0.3));
-        c = lampOn(c, mix(vec3(0.8), vec3(0.4), m.r), vWorld, Nn);
-        outC = vec4(hazed(c, vWorld), 1.0);
+        vec3 baseN = normalAt(vWorld.xz);
+        vec3 V = normalize(cameraPosition - vWorld);
+        float distCam = length(cameraPosition - vWorld);
+        float detailFade = 1.0 - smoothstep(25.0, 120.0, distCam);
+
+        // Wind-carved snow sastrugi + micro-sparkle crystals vs. triplanar alpine basalt cliffs
+        vec4 nMed = texture(tNoise, vWorld.xz / 14.0);
+        vec4 det = texture(tDetail, vWorld.xz * 0.42);
+        vec4 fine = texture(tDetail, vWorld.xz * 2.1);
+
+        // Triplanar rock detail so sheer alpine horn walls never stretch
+        vec3 triW = pow(abs(baseN), vec3(4.0));
+        triW /= max(triW.x + triW.y + triW.z, 1e-4);
+        vec4 rX = texture(tDetail, vWorld.zy * 0.11);
+        vec4 rY = texture(tDetail, vWorld.xz * 0.11);
+        vec4 rZ = texture(tDetail, vWorld.xy * 0.11);
+        vec4 rockTri = rX * triW.x + rY * triW.y + rZ * triW.z;
+
+        float rockMask = smoothstep(0.36, 0.64, m.r + (nMed.a - 0.5) * 0.24 - smoothstep(0.62, 0.85, baseN.y) * 0.18);
+        // Windswept snow albedo (slightly icy blue on exposed wind crusts)
+        float ice = smoothstep(0.66, 0.88, nMed.r);
+        vec3 snowAlb = mix(vec3(0.76, 0.81, 0.88), vec3(0.56, 0.72, 0.86), ice) * (0.90 + 0.16 * det.b);
+        vec3 rockAlb = mix(vec3(0.036, 0.044, 0.062), vec3(0.095, 0.105, 0.125), rockTri.b) * (0.68 + 0.45 * rockTri.a);
+        // Ledges on dark horns catch wind-blown snow streaks
+        float ledgeSnow = smoothstep(0.50, 0.76, baseN.y) * smoothstep(0.35, 0.72, rockTri.b) * rockMask * 0.65;
+        vec3 albedo = mix(snowAlb, mix(rockAlb, snowAlb * 0.82, ledgeSnow), rockMask);
+
+        vec3 snowN = normalize(baseN + vec3((det.r - 0.5) * 0.28 + (nMed.g - 0.5) * 0.14, 0.0, (det.g - 0.5) * 0.28) * detailFade);
+        vec3 rockN = normalize(baseN + (vec3(rockTri.r, 0.5, rockTri.g) * 2.0 - 1.0) * 0.55);
+        vec3 N = normalize(mix(snowN, rockN, rockMask));
+
+        float rough = mix(mix(0.46, 0.22, ice), 0.80, rockMask);
+        float coat = mix(0.16 + 0.24 * ice, 0.0, rockMask);
+        float sss = mix(0.62, 0.0, rockMask);
+
+        float shadow = min(woodSunAt(vWorld + N * 0.45), figSunAt(vWorld));
+        vec3 col = pbrShade(vWorld, N, V, albedo, rough, 0.0, coat, sss, 1.0, shadow, vec3(0.0));
+
+        // Ethereal green-teal aurora bounce light washing across the open snow slopes
+        float aur = auroraOn(vWorld.xz, N) * uNight;
+        col += albedo * vec3(0.04, 0.26, 0.20) * aur * (1.0 - rockMask * 0.65) * 0.65;
+
+        // Warm firelight spilling from the cabin windows & open doorway onto the snow outside
+        float wLight = warmAt(vWorld, N);
+        if (wLight > 0.001) {
+          col += albedo * vec3(2.8, 1.35, 0.42) * wLight;
+        }
+
+        // Photographic micro-crystal snow glints catching moonlight & lantern firelight
+        if (rockMask < 0.75 && distCam < 38.0) {
+          float glintHash = hash4(floor(vWorld.xz * 14.0), 7.1).x;
+          float spark = step(0.968, glintHash) * smoothstep(0.65, 0.96, fine.a) * (1.0 - rockMask);
+          float viewAng = pow(max(dot(reflect(-V, snowN), uSunDir), 0.0), 12.0) + lampAt(vWorld, snowN) * 0.85;
+          col += mix(vec3(0.65, 0.85, 1.0), vec3(1.4, 0.95, 0.55), clamp(lampAt(vWorld, snowN), 0.0, 1.0)) * spark * viewAng * 2.4 * (1.0 - smoothstep(14.0, 38.0, distCam));
+        }
+
+        outC = vec4(hazed(col, vWorld), 1.0);
       }`,
   });
   const mesh = new THREE.Mesh(geometry, material);

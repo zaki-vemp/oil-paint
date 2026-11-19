@@ -1,5 +1,5 @@
 // Exercises the street in the real browser game: taking a car, its speed, a wall, ramming a crew member,
-// traffic yielding, chassis impacts/rollovers, the seat rule, and what hurting the street's own people costs.
+// traffic yielding, suspension, chassis impacts/rollovers, the seat rule, and what hurting the street's own people costs.
 // Build/serve first, then:
 //   CHROME=/path/to/chrome node tools/street.mjs [http://127.0.0.1:5405] [--shots dir]
 import assert from 'node:assert/strict';
@@ -181,6 +181,19 @@ try {
     L.teleport(car.x + Math.cos(yaw) * 1.7, car.z - Math.sin(yaw) * 1.7, car.x, car.z); once({ ride: true });
     check(R.driven === car, 'taking the collision-test car');
     check(!document.querySelector('.ride-prompt').hidden, 'the exit button stays available while driving, including on touch');
+    const restY = car.y;
+    car.y += 1.4;
+    L.step(1 / 60, 1, false);
+    const droop = car.spec.wheel - car.spec.travel;
+    check(car.air > 0 && car.wheels.every(w => Math.abs(w.pivot.position.y - droop) < 0.001), 'the wheels extend in free flight');
+    let compression = 0;
+    for (let i = 0; i < 100; i++) {
+      L.step(1 / 60, 1, false);
+      compression = Math.max(compression, ...car.wheels.map(w => w.pivot.position.y - car.spec.wheel));
+    }
+    out.suspension = { compression, settled: Math.abs(car.y - restY) };
+    check(!car.air && compression > 0.035 && compression <= car.spec.travel + 0.001 && out.suspension.settled < 0.005,
+      'touchdown compresses the wheels and the chassis settles: ' + JSON.stringify(out.suspension));
     car.vx = ux * 22; car.vz = uz * 22;
     input(); L.step(1 / 20, 12);
     out.collision = { pushed: (other.x - ax) * ux + (other.z - az) * uz - 7, gap: Math.hypot(other.x - car.x, other.z - car.z) };
@@ -222,7 +235,7 @@ try {
 
   assert.deepEqual(errors, [], 'browser errors');
   console.log(JSON.stringify({ drive, street, physics, ram: RAM }, null, 2));
-  console.log('PASS: handling, traffic/yielding, collisions, rollover/recovery, ramming, citizens, mob, thief and jogger');
+  console.log('PASS: handling, traffic/yielding, suspension, collisions, rollover/recovery, ramming, citizens, mob, thief and jogger');
 } finally {
   await browser.close();
 }
