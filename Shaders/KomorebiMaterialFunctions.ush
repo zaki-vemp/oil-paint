@@ -1,0 +1,1217 @@
+// Copyright Komorebi Project.
+// Komorebi: Protocol Zero-Seven — Cross-Platform Unreal Engine 5 HLSL Material Function Library.
+// Compatible with Vulkan SM5 (Linux), Metal SM5 (macOS), and DX12/Vulkan SM5 (Windows).
+//
+// Virtual shader include path registered by FKomorebiGameModule::StartupModule():
+//   #include "/Project/KomorebiMaterialFunctions.ush"
+//
+// Ported 1:1 from legacy-web/src/ shaders:
+//   - figure/figure.js       -> DecodeStreetMaterialClass, EvaluateSignalEmissive, EvaluateCharacterPBR
+//   - world/anime.js         -> EvaluateBuildingParallaxWindow, EvaluateBuildingFacade, EvaluateNeonSignboard
+//   - game/combat.js         -> EvaluateBladeTrailCore, EvaluateBladeTrailGlow
+//   - night/sky.js           -> EvaluateAuroraRibbon, EvaluateAuroraSkyDome
+//   - oilpaint/finish.js     -> EvaluateKomorebiInkEdge, ApplyKomorebiFinishPostProcess
+//   - world/land.js          -> EvaluateNeoKyotoTerrain
+//   - night/land.js          -> EvaluateSnowboundTerrain
+
+#ifndef KOMOREBI_MATERIAL_FUNCTIONS_USH
+#define KOMOREBI_MATERIAL_FUNCTIONS_USH
+
+#ifndef KOMOREBI_PI
+#define KOMOREBI_PI 3.14159265359f
+#endif
+#ifndef KOMOREBI_TAU
+#define KOMOREBI_TAU 6.28318530718f
+#endif
+
+// -----------------------------------------------------------------------------
+// Deterministic Procedural Hash & Value Noise Helpers (Zero Texture Samplers)
+// -----------------------------------------------------------------------------
+
+float4 KomorebiHash4(float2 p, float seed)
+{
+	float4 p4 = frac(float4(p.xyxy) * float4(0.1031f, 0.1030f, 0.0973f, 0.1099f) + seed * 0.0137f);
+	p4 += dot(p4, p4.wzxy + 33.33f);
+	return frac((p4.xxyz + p4.yzzw) * p4.zywx);
+}
+
+float KomorebiHash12(float2 p)
+{
+	return KomorebiHash4(p, 0.0f).x;
+}
+
+float KomorebiValueNoise(float2 p, float seed)
+{
+	float2 i = floor(p);
+	float2 f = frac(p);
+	float2 u = f * f * (3.0f - 2.0f * f);
+
+	float a = KomorebiHash4(i + float2(0.0f, 0.0f), seed).x;
+	float b = KomorebiHash4(i + float2(1.0f, 0.0f), seed).x;
+	float c = KomorebiHash4(i + float2(0.0f, 1.0f), seed).x;
+	float d = KomorebiHash4(i + float2(1.0f, 1.0f), seed).x;
+
+	return lerp(lerp(a, b, u.x), lerp(c, d, u.x), u.y);
+}
+
+float KomorebiFbm(float2 p, float seed)
+{
+	float sum = 0.0f;
+	float amp = 0.5f;
+	for (int i = 0; i < 4; ++i)
+	{
+		sum += amp * KomorebiValueNoise(p, seed + (float)i * 7.13f);
+		p = p * 2.03f + float2(13.7f, 29.3f);
+		amp *= 0.5f;
+	}
+	return sum;
+}
+
+float KomorebiStripe(float p, float lo, float hi, float width)
+{
+	return smoothstep(lo - width, lo + width, p) * (1.0f - smoothstep(hi - width, hi + width, p));
+}
+
+// -----------------------------------------------------------------------------
+// 1. Street / Vehicle / Enemy / Civilian Vertex-Alpha PBR Material Class Decoder
+//    Exact 1:1 port of decodeMaterialClass() from legacy-web/src/figure/figure.js
+//    Decodes Blender COLOR_0.a (0..1) across all 26 authored street GLBs.
+//    DetailMode:
+//      0 = cloth, 1 = skin, 2 = hair, 3 = leather/rubber,
+//      4 = polymer/stone, 5 = brushed-metal, 6 = carpaint, 7 = glass
+// -----------------------------------------------------------------------------
+
+void DecodeStreetMaterialClass(
+	float Cls,
+	float3 LinCol,
+	out float Rough,
+	out float Metal,
+	out float Coat,
+	out float SSS,
+	out int DetailMode)
+{
+	DetailMode = 0;
+	if (Cls < 0.12f)
+	{
+		// Matte woven cloth / fabric (MAT_CLOTH = 0.06)
+		Rough = 0.84f;
+		Metal = 0.0f;
+		Coat = 0.0f;
+		SSS = 0.06f;
+		DetailMode = 0;
+	}
+	else if (Cls < 0.24f)
+	{
+		// Realistic human skin (MAT_SKIN = 0.18)
+		Rough = 0.44f;
+		Metal = 0.0f;
+		Coat = 0.08f;
+		SSS = 0.62f;
+		DetailMode = 1;
+	}
+	else if (Cls < 0.36f)
+	{
+		// Hair / fur (MAT_HAIR = 0.30)
+		Rough = 0.36f;
+		Metal = 0.0f;
+		Coat = 0.14f;
+		SSS = 0.08f;
+		DetailMode = 2;
+	}
+	else if (Cls < 0.48f)
+	{
+		// Worn leather / tire rubber / timber (MAT_LEATHER = 0.42)
+		Rough = 0.62f;
+		Metal = 0.0f;
+		Coat = 0.05f;
+		SSS = 0.0f;
+		DetailMode = 3;
+	}
+	else if (Cls < 0.60f)
+	{
+		// Tactical matte polymer / painted armor / concrete / stone (MAT_POLYMER = 0.54)
+		Rough = 0.42f;
+		Metal = 0.22f;
+		Coat = 0.08f;
+		SSS = 0.0f;
+		DetailMode = 4;
+	}
+	else if (Cls < 0.74f)
+	{
+		// Brushed steel / titanium / alloy rims / gunmetal (MAT_METAL = 0.68)
+		Rough = 0.22f;
+		Metal = 0.90f;
+		Coat = 0.15f;
+		SSS = 0.0f;
+		DetailMode = 5;
+	}
+	else if (Cls < 0.88f)
+	{
+		// Glossy clearcoat automotive paint / lacquered shell (MAT_CARPAINT = 0.82)
+		Rough = 0.17f;
+		Metal = 0.48f;
+		Coat = 1.0f;
+		SSS = 0.0f;
+		DetailMode = 6;
+	}
+	else if (Cls < 0.985f)
+	{
+		// Dark smoked reflective glass / visor / optic lens (MAT_GLASS = 0.94)
+		Rough = 0.045f;
+		Metal = 0.14f;
+		Coat = 1.0f;
+		SSS = 0.0f;
+		DetailMode = 7;
+	}
+	else
+	{
+		// Fallback heuristic for unclassed legacy vertex colors (alpha == 1.0)
+		float Luma = dot(LinCol, float3(0.299f, 0.587f, 0.114f));
+		float Mx = max(max(LinCol.r, LinCol.g), LinCol.b);
+		float Mn = min(min(LinCol.r, LinCol.g), LinCol.b);
+		float Sat = (Mx - Mn) / max(Mx, 1e-4f);
+
+		if (Luma < 0.025f && LinCol.b > LinCol.r * 1.35f)
+		{
+			Rough = 0.05f; Metal = 0.15f; Coat = 1.0f; SSS = 0.0f; DetailMode = 7; // glass
+		}
+		else if (Luma < 0.045f)
+		{
+			Rough = 0.64f; Metal = 0.08f; Coat = 0.06f; SSS = 0.0f; DetailMode = 3; // rubber/carbon
+		}
+		else if (Sat > 0.38f && LinCol.r > LinCol.g && LinCol.g > LinCol.b && Luma > 0.14f && Luma < 0.58f)
+		{
+			Rough = 0.45f; Metal = 0.0f; Coat = 0.06f; SSS = 0.48f; DetailMode = 1; // skin-like warm tone
+		}
+		else if (Sat < 0.22f && Luma > 0.14f)
+		{
+			Rough = 0.26f; Metal = 0.82f; Coat = 0.15f; SSS = 0.0f; DetailMode = 5; // metallic
+		}
+		else if (Sat > 0.45f)
+		{
+			Rough = 0.24f; Metal = 0.32f; Coat = 0.65f; SSS = 0.0f; DetailMode = 6; // lacquered/painted
+		}
+		else
+		{
+			Rough = 0.52f; Metal = 0.18f; Coat = 0.08f; SSS = 0.0f; DetailMode = 4; // tactical matte
+		}
+	}
+}
+
+// HDR Emissive Signal role helper (headlights, taillights, neon armor strips, katana plasma edge)
+// Ported from figure.js SURFACE_KIND == 6
+float3 EvaluateSignalEmissive(
+	float3 SignalLinearColor,
+	float3 Tint,
+	float3 WorldNormal,
+	float3 ViewDir,
+	float NightFactor,
+	float AuroraFactor)
+{
+	float3 Sig = max(SignalLinearColor * Tint, float3(0.0f, 0.0f, 0.0f));
+	float Boost = lerp(2.35f, 3.65f, saturate(max(NightFactor, AuroraFactor)));
+	float NdotV = max(dot(normalize(WorldNormal), normalize(ViewDir)), 1e-4f);
+	float Core = 0.78f + 0.35f * pow(NdotV, 1.5f);
+	return Sig * Boost * Core;
+}
+
+// Bespoke protagonist / rival character surface shading (Kael & Ren)
+// SurfaceKind: 0=generic, 1=skin+sleeves+gloves, 2=eyes, 3=hair, 4=techsuit, 5=boots
+// BindPosMeters is object-space bind pose position in meters with Z-up (UE local pos * 0.01)
+void EvaluateCharacterPBR(
+	float SurfaceKind,
+	float3 BindPosMeters,
+	float2 UV,
+	float3 UpperColor,
+	float3 LowerColor,
+	float3 AccentColor,
+	float3 Tint,
+	float NightFactor,
+	out float3 OutBaseColor,
+	out float OutRoughness,
+	out float OutMetallic,
+	out float3 OutEmissive,
+	out float OutAO)
+{
+	float Flash = saturate((max(max(Tint.r, Tint.g), Tint.b) - 1.5f) * 0.45f);
+	float3 CleanTint = min(Tint, float3(1.25f, 1.25f, 1.25f));
+
+	OutBaseColor = UpperColor * CleanTint;
+	OutRoughness = 0.48f;
+	OutMetallic = 0.15f;
+	OutEmissive = float3(0.0f, 0.0f, 0.0f);
+	OutAO = 1.0f;
+
+	// Map UE Z-up bind meters to figure.js bind coordinates: Height = Z, Front = -Y (Blender forward)
+	float BindX = BindPosMeters.x;
+	float BindHeight = BindPosMeters.z;
+	float BindFront = -BindPosMeters.y;
+
+	float SurfNoise = KomorebiValueNoise(UV * 22.0f, 11.3f);
+	float DetNoise = KomorebiValueNoise(UV * 14.0f, 27.9f);
+	int Kind = (int)(SurfaceKind + 0.5f);
+
+	if (Kind == 1)
+	{
+		// Realistic skin + fitted tactical compression sleeves + fingerless leather gloves
+		float ArmX = abs(BindX);
+		bool bIsSleeve = (ArmX >= 0.315f && ArmX < 0.67f && BindHeight > 1.30f && BindHeight < 1.64f);
+		bool bIsGlove = (ArmX >= 0.67f && ArmX < 0.80f && BindHeight > 1.30f && BindHeight < 1.64f);
+		if (bIsSleeve)
+		{
+			float3 SleeveCol = LowerColor * CleanTint * (0.86f + 0.26f * SurfNoise);
+			float CuffBand = smoothstep(0.012f, 0.002f, abs(ArmX - 0.655f));
+			OutBaseColor = lerp(SleeveCol, float3(0.024f, 0.028f, 0.036f), CuffBand * 0.7f);
+			OutRoughness = 0.74f + (DetNoise - 0.5f) * 0.12f;
+			OutMetallic = CuffBand * 0.35f;
+			OutEmissive = AccentColor * smoothstep(0.005f, 0.001f, abs(ArmX - 0.648f)) * lerp(0.25f, 0.85f, NightFactor);
+		}
+		else if (bIsGlove)
+		{
+			OutBaseColor = float3(0.028f, 0.026f, 0.030f) * (0.82f + 0.32f * DetNoise);
+			OutRoughness = 0.48f + 0.18f * DetNoise;
+			OutMetallic = 0.08f;
+		}
+		else
+		{
+			float3 BaseSkin = UpperColor * CleanTint;
+			float IsFace = smoothstep(1.58f, 1.66f, BindHeight) * smoothstep(0.0f, 0.05f, BindFront);
+			float2 cD = float2((abs(BindX) - 0.042f) / 0.028f, (BindHeight - 1.705f) / 0.024f);
+			float2 nD = float2(BindX / 0.015f, (BindHeight - 1.712f) / 0.022f);
+			float2 lD = float2(BindX / 0.023f, (BindHeight - 1.674f) / 0.0085f);
+			float2 eD = float2((abs(BindX) - 0.032f) / 0.019f, (BindHeight - 1.737f) / 0.014f);
+			float Cheeks = exp(-dot(cD, cD));
+			float Nose = exp(-dot(nD, nD));
+			float Lips = exp(-dot(lD, lD)) * smoothstep(0.06f, 0.085f, BindFront);
+			float EyeSocket = exp(-dot(eD, eD));
+			float JawShade = smoothstep(1.705f, 1.655f, BindHeight) * smoothstep(0.03f, 0.08f, BindFront) * (1.0f - Lips);
+			float Micro = KomorebiValueNoise(UV * 26.0f, 3.7f);
+
+			OutBaseColor = BaseSkin * (0.94f + 0.12f * Micro);
+			OutBaseColor = lerp(OutBaseColor, OutBaseColor * float3(1.12f, 0.84f, 0.78f), (Cheeks * 0.28f + Nose * 0.18f) * IsFace);
+			OutBaseColor = lerp(OutBaseColor, OutBaseColor * float3(0.95f, 0.55f, 0.52f), Lips * 0.55f * IsFace);
+			OutBaseColor *= 1.0f - EyeSocket * 0.22f * IsFace;
+			OutBaseColor *= 1.0f - JawShade * 0.08f * IsFace;
+			OutRoughness = lerp(0.48f, 0.36f, (Nose + Cheeks * 0.5f) * IsFace) + (Micro - 0.5f) * 0.08f;
+			OutMetallic = 0.0f;
+			OutAO = lerp(0.84f, 1.0f, smoothstep(1.54f, 1.64f, BindHeight));
+		}
+	}
+	else if (Kind == 2)
+	{
+		// Realistic human eyes (sclera + fibrous iris + dark pupil + limbal ring)
+		float2 EyeLocal = float2(abs(BindX) - 0.0315f, BindHeight - 1.7355f);
+		float rEye = length(EyeLocal);
+		float Front = smoothstep(0.065f, 0.082f, BindFront);
+		float IrisMask = (1.0f - smoothstep(0.0056f, 0.0066f, rEye)) * Front;
+		float PupilMask = (1.0f - smoothstep(0.0022f, 0.0029f, rEye)) * Front;
+		float Limbal = smoothstep(0.0048f, 0.0061f, rEye) * IrisMask;
+		float Ang = atan2(EyeLocal.y, EyeLocal.x);
+		float Fibers = 0.78f + 0.22f * sin(Ang * 24.0f + rEye * 300.0f) * cos(Ang * 11.0f);
+		float3 Sclera = float3(0.66f, 0.62f, 0.60f) * lerp(0.75f, 1.0f, Front);
+		float3 IrisCol = AccentColor * Fibers * (1.0f - 0.52f * Limbal);
+		OutBaseColor = lerp(Sclera, IrisCol, IrisMask);
+		OutBaseColor = lerp(OutBaseColor, float3(0.004f, 0.004f, 0.006f), PupilMask);
+		OutRoughness = 0.04f;
+		OutMetallic = 0.0f;
+	}
+	else if (Kind == 3)
+	{
+		// Natural layered hair
+		float Strand = KomorebiValueNoise(float2(UV.x * 28.0f, UV.y * 5.0f), 19.1f);
+		float RootAO = smoothstep(1.62f, 1.80f, BindHeight);
+		OutBaseColor = UpperColor * CleanTint * (0.70f + 0.42f * Strand);
+		OutRoughness = 0.48f + 0.12f * (1.0f - Strand);
+		OutMetallic = 0.0f;
+		OutAO = 0.62f + 0.38f * RootAO;
+	}
+	else if (Kind == 4)
+	{
+		// Tailored tactical cyberpunk field jacket & cargo trousers
+		bool bJacket = BindHeight >= 0.965f;
+		bool bBelt = (BindHeight >= 0.925f && BindHeight < 0.975f);
+		float SeamX = smoothstep(0.010f, 0.002f, abs(abs(BindX) - 0.135f));
+		float CenterZip = smoothstep(0.012f, 0.003f, abs(BindX)) * step(0.02f, BindFront);
+		float Collar = smoothstep(1.48f, 1.54f, BindHeight);
+		float KneePad = smoothstep(0.41f, 0.45f, BindHeight) * (1.0f - smoothstep(0.55f, 0.59f, BindHeight)) * step(0.01f, BindFront);
+		float ShoulderPanel = smoothstep(1.38f, 1.46f, BindHeight) * smoothstep(0.09f, 0.16f, abs(BindX));
+		float ChestYoke = smoothstep(1.34f, 1.38f, BindHeight) * (1.0f - smoothstep(1.46f, 1.50f, BindHeight));
+
+		if (bBelt)
+		{
+			bool bBuckle = (abs(BindX) < 0.042f && BindFront > 0.06f);
+			OutBaseColor = bBuckle ? float3(0.32f, 0.35f, 0.40f) : float3(0.022f, 0.020f, 0.022f);
+			OutRoughness = bBuckle ? 0.22f : 0.48f;
+			OutMetallic = bBuckle ? 0.92f : 0.0f;
+		}
+		else if (bJacket)
+		{
+			float3 JacketCol = UpperColor * CleanTint * (0.86f + 0.24f * SurfNoise);
+			JacketCol = lerp(JacketCol, UpperColor * CleanTint * 0.58f, max(ShoulderPanel * 0.72f, max(Collar * 0.50f, ChestYoke * 0.35f)));
+			OutBaseColor = lerp(JacketCol, float3(0.26f, 0.29f, 0.34f), CenterZip * 0.78f);
+			OutRoughness = lerp(0.78f, 0.44f, max(ShoulderPanel, Collar * 0.6f)) + (DetNoise - 0.5f) * 0.12f;
+			OutMetallic = lerp(0.02f, 0.38f, max(ShoulderPanel * 0.55f, CenterZip * 0.85f));
+			float Badge = smoothstep(0.008f, 0.002f, abs(BindHeight - 1.40f)) * smoothstep(0.032f, 0.010f, abs(BindX + 0.095f)) * step(0.06f, BindFront);
+			OutEmissive = AccentColor * Badge * lerp(0.45f, 1.4f, NightFactor);
+			OutAO = 0.76f + 0.24f * smoothstep(0.96f, 1.34f, BindHeight) * (1.0f - SeamX * 0.22f);
+		}
+		else
+		{
+			float3 PantsCol = LowerColor * CleanTint * (0.88f + 0.24f * SurfNoise);
+			OutBaseColor = lerp(PantsCol, float3(0.030f, 0.034f, 0.042f), KneePad * 0.78f);
+			OutRoughness = lerp(0.84f, 0.42f, KneePad) + (DetNoise - 0.5f) * 0.10f;
+			OutMetallic = KneePad * 0.20f;
+			OutAO = 0.72f + 0.28f * smoothstep(0.10f, 0.45f, BindHeight);
+		}
+	}
+	else if (Kind == 5)
+	{
+		// Scuffed tactical leather combat boots
+		bool bSole = BindHeight < 0.032f;
+		OutBaseColor = bSole ? float3(0.018f, 0.020f, 0.024f) : UpperColor * CleanTint * (0.82f + 0.34f * DetNoise);
+		OutRoughness = bSole ? 0.88f : (0.44f + 0.22f * DetNoise);
+		OutMetallic = 0.04f;
+		OutAO = 0.68f + 0.32f * smoothstep(0.0f, 0.18f, BindHeight);
+	}
+
+	if (Flash > 0.001f)
+	{
+		OutEmissive += float3(3.2f, 2.8f, 2.4f) * Flash;
+	}
+}
+
+// -----------------------------------------------------------------------------
+// 2. Neo-Kyoto Architectural 3D Parallax Interior Windows, Glass & Neon Signage
+//    Ported from legacy-web/src/world/anime.js (CITY_ROLE == 0 & CITY_ROLE == 1)
+//    UE5 WorldPos is in cm (converted internally to meters) with +Z UP.
+// -----------------------------------------------------------------------------
+
+float3 KomorebiParallaxRoom(
+	float2 CellF,
+	float3 ViewDir,
+	float3 WallT,
+	float3 WallB,
+	float3 WallN,
+	float RoomSeed,
+	float LitChance,
+	float3 NeonA,
+	float3 NeonB)
+{
+	float2 UV = CellF * 2.0f - 1.0f; // -1..1 on window pane
+	// Ray going from camera into room in pane-local frame (u along wall, v up, w inward along -WallN)
+	float3 IntoRay = -normalize(ViewDir);
+	float3 Ray = float3(
+		dot(IntoRay, WallT),
+		dot(IntoRay, WallB),
+		dot(IntoRay, WallN)
+	);
+	Ray = normalize(Ray + float3(1e-4f, 1e-4f, -1e-4f));
+
+	const float Depth = 1.25f;
+	float3 Ro = float3(UV.x, UV.y, 0.0f);
+	float3 SafeSign = float3(
+		Ray.x >= 0.0f ? 1.0f : -1.0f,
+		Ray.y >= 0.0f ? 1.0f : -1.0f,
+		Ray.z >= 0.0f ? 1.0f : -1.0f
+	);
+	float3 InvR = 1.0f / (Ray + SafeSign * 1e-4f);
+	float3 TMin = (float3(-1.0f, -1.0f, -Depth) - Ro) * InvR;
+	float3 TMax = (float3( 1.0f,  1.0f,  0.0f) - Ro) * InvR;
+	float Tx = max(TMin.x, TMax.x);
+	float Ty = max(TMin.y, TMax.y);
+	float Tz = max(TMin.z, TMax.z);
+	float THit = min(min(Tx, Ty), Tz);
+	float3 Hit = Ro + Ray * THit;
+
+	// Warm office/apartment palette + occasional cool cyan/magenta Neo-Kyoto accent room
+	float3 WarmWall = lerp(float3(0.95f, 0.72f, 0.42f), float3(0.85f, 0.80f, 0.72f), frac(RoomSeed * 7.3f));
+	float3 RoomTint = lerp(WarmWall, lerp(NeonB, NeonA, step(0.5f, frac(RoomSeed * 3.1f))), step(0.84f, RoomSeed));
+
+	float3 Col;
+	if (abs(THit - Tz) < 0.002f)
+	{
+		// Back wall with subtle furniture/shelf silhouette band
+		float Shelf = smoothstep(-0.35f, -0.25f, Hit.y) * (1.0f - smoothstep(0.15f, 0.25f, Hit.y));
+		Col = RoomTint * (0.55f + 0.30f * (Hit.y * 0.5f + 0.5f)) * lerp(1.0f, 0.68f, Shelf * step(0.45f, frac(RoomSeed * 5.7f)));
+	}
+	else if (abs(THit - Ty) < 0.002f)
+	{
+		if (Hit.y > 0.0f)
+		{
+			// Ceiling with luminous recessed LED panel
+			float Fixture = step(abs(Hit.x), 0.55f) * step(abs(Hit.z + Depth * 0.5f), 0.35f);
+			Col = lerp(RoomTint * 0.72f, RoomTint * 2.1f + float3(0.5f, 0.5f, 0.5f), Fixture);
+		}
+		else
+		{
+			// Dark timber / slate floor
+			Col = RoomTint * 0.26f;
+		}
+	}
+	else
+	{
+		// Side walls catching warm bounce
+		Col = RoomTint * (0.42f + 0.25f * (Hit.y * 0.5f + 0.5f));
+	}
+
+	float DepthAO = clamp(1.0f + Hit.z * 0.32f, 0.48f, 1.0f);
+	return Col * DepthAO * LitChance;
+}
+
+// Primary required entry point: computes 3D interior room parallax emissive,
+// Fresnel mirror glass roughness modulation, mechanical neon bands, and ground-floor retail signage.
+void EvaluateBuildingParallaxWindow(
+	float3 WorldPos,
+	float3 WorldNormal,
+	float3 ViewDir,
+	float NightFactor,
+	float3 NeonA,
+	float3 NeonB,
+	out float3 OutEmissive,
+	out float OutRoughness)
+{
+	float3 PosM = WorldPos * 0.01f; // UE centimeters -> architectural meters
+	float3 N = normalize(WorldNormal);
+	float3 V = normalize(ViewDir);
+
+	// Vertical wall mask (Z-up in Unreal)
+	float Side = step(abs(N.z), 0.5f);
+	float3 SafeAxis = abs(N.z) > 0.95f ? float3(1.0f, 0.0f, 0.0f) : float3(0.0f, 0.0f, 1.0f);
+	float3 WallT = normalize(cross(SafeAxis, N));
+	float3 WallB = cross(N, WallT);
+
+	// Stable per-building seed from coarse horizontal footprint grid
+	float2 BldgCell = floor(PosM.xy / 12.0f);
+	float Seed = KomorebiHash12(BldgCell + float2(17.3f, 31.7f));
+	bool bGlassTower = frac(Seed * 5.1f) > 0.52f;
+
+	// Horizontal coordinate along facade & height above street pavement
+	float U = abs(N.x) > 0.5f ? PosM.y : PosM.x;
+	float Ag = max(PosM.z, 0.0f);
+	float BayW = lerp(1.12f, 1.48f, step(0.5f, frac(Seed * 7.3f)));
+
+	float2 Cell = float2(U / BayW, Ag / 1.76f);
+	float2 F = frac(Cell);
+	float2 AA = min(fwidth(Cell) * 0.5f + 0.005f, float2(0.25f, 0.25f));
+	float Detail = 1.0f - smoothstep(0.12f, 0.25f, max(AA.x, AA.y));
+
+	float NightOn = smoothstep(0.20f, 0.76f, NightFactor);
+	float NeonOn = smoothstep(0.20f, 0.68f, NightFactor);
+
+	// Cladding base roughness
+	float WallDet = KomorebiValueNoise(float2(U, Ag) * 1.4f, 4.2f);
+	float Rough = bGlassTower ? (0.36f + 0.16f * WallDet) : (0.76f + 0.14f * WallDet);
+	float3 Emissive = float3(0.0f, 0.0f, 0.0f);
+
+	// Structural bands: mechanical floors at 10.6 m & 21.2 m, retail podium < 3.35 m, structural piers
+	float Mech1 = step(abs(Ag - 10.6f), 0.82f);
+	float Mech2 = step(abs(Ag - 21.2f), 0.82f);
+	float Mech = saturate(Mech1 + Mech2) * Side;
+	float Podium = step(Ag, 3.35f) * Side;
+	float Pier = step(0.84f, abs(frac(U / (BayW * 3.0f)) - 0.5f) * 2.0f) * Side;
+	float Mullion = smoothstep(0.41f - AA.x, 0.41f + AA.x, abs(F.x - 0.5f)) * (1.0f - Pier) * Side;
+	float Spandrel = smoothstep(0.80f - AA.y, 0.80f + AA.y, F.y) * Side;
+	Rough = lerp(Rough, 0.26f, max(Mullion, Spandrel) * (1.0f - Podium) * 0.6f);
+
+	// Upper-floor glazed window panes with 3D ray-traced parallax interiors & Fresnel sky reflection
+	float2 Inset = float2(0.37f, 0.31f);
+	float2 GlassMask = 1.0f - smoothstep(Inset - AA, Inset + AA, abs(F - 0.5f));
+	float Pane = GlassMask.x * GlassMask.y * Side * Detail * (1.0f - Mech) * (1.0f - Podium) * (1.0f - Pier * 0.85f);
+
+	float NdotV = saturate(dot(N, V));
+	float Fresnel = pow(max(1.0f - NdotV, 1e-4f), 4.0f);
+
+	if (Pane > 0.01f)
+	{
+		float2 Cid = floor(Cell);
+		float H = KomorebiHash12(Cid + Seed * 91.7f);
+		float H2 = KomorebiHash12(Cid * 1.73f + Seed * 37.1f);
+		float Blind = 1.0f;
+		if (H2 < 0.32f)
+		{
+			Blind = lerp(1.0f, 0.28f, step(0.38f + 0.34f * H, F.y));
+		}
+		else if (H2 > 0.72f)
+		{
+			Blind = lerp(0.24f, 1.0f, step(abs(F.x - 0.5f), 0.18f + 0.14f * H));
+		}
+
+		float LitOn = step(0.48f, H) * NightOn;
+		float3 Room = KomorebiParallaxRoom(F, V, WallT, WallB, N, H, LitOn * Blind, NeonA, NeonB);
+		// Grazing Fresnel glass reflection dampens interior visibility slightly and polishes specular
+		float GlassRough = lerp(lerp(0.07f, 0.045f, NightOn), 0.025f, Fresnel);
+		Rough = lerp(Rough, GlassRough, Pane);
+		Emissive += Room * Pane * (1.0f - 0.35f * Fresnel) * lerp(0.04f, 1.75f, NightOn);
+		// Subtle neon sky/street Fresnel reflection tint on dark tower glass at night
+		Emissive += lerp(NeonA, NeonB, step(0.5f, Seed)) * Fresnel * Pane * NightOn * 0.18f;
+	}
+
+	// Mechanical louvered floor band + thin HDR neon trim (dusk/night)
+	if (Mech > 0.5f)
+	{
+		Rough = 0.38f;
+		float MechPip = step(0.72f, abs(Ag - (Mech1 > 0.5f ? 10.6f : 21.2f)));
+		Emissive += NeonA * MechPip * NeonOn * 2.1f;
+	}
+
+	// Ground-floor Neo-Kyoto retail arcade windows & glowing neon fascia sign strip
+	if (Podium > 0.5f)
+	{
+		float BayU = frac(U / 2.35f);
+		float BayId = KomorebiHash12(float2(floor(U / 2.35f), floor(Seed * 43.0f)));
+		float ShopWin = step(0.22f, Ag) * step(Ag, 2.66f) * step(0.10f, BayU) * step(BayU, 0.90f);
+		float ShopMul = max(step(0.46f, abs(frac(BayU * 3.0f) - 0.5f)), step(abs(Ag - 2.08f), 0.04f));
+		float Fascia = step(2.80f, Ag) * step(Ag, 3.16f) * step(0.05f, BayU) * step(BayU, 0.95f);
+
+		if (ShopWin > 0.5f)
+		{
+			if (ShopMul > 0.5f)
+			{
+				Rough = 0.32f;
+			}
+			else
+			{
+				float3 ShopRoom = KomorebiParallaxRoom(
+					float2(BayU, (Ag - 0.22f) / 2.44f), V, WallT, WallB, N, BayId, 1.0f, NeonA, NeonB);
+				Rough = lerp(0.06f, 0.03f, Fresnel);
+				Emissive += ShopRoom * lerp(0.14f, 1.55f, NightOn);
+			}
+		}
+		if (Fascia > 0.5f)
+		{
+			float3 FCol = lerp(NeonA, NeonB, step(0.45f, BayId));
+			Emissive += FCol * lerp(0.04f, 2.25f, NeonOn);
+		}
+	}
+
+	OutEmissive = Emissive;
+	OutRoughness = saturate(Rough);
+}
+
+// Extended facade helper returning full PBR channels for M_BuildingParallax
+void EvaluateBuildingFacade(
+	float3 WorldPos,
+	float3 WorldNormal,
+	float3 ViewDir,
+	float NightFactor,
+	float3 NeonA,
+	float3 NeonB,
+	out float3 OutBaseColor,
+	out float OutMetallic,
+	out float OutRoughness,
+	out float OutClearCoat,
+	out float3 OutEmissive)
+{
+	EvaluateBuildingParallaxWindow(WorldPos, WorldNormal, ViewDir, NightFactor, NeonA, NeonB, OutEmissive, OutRoughness);
+
+	float3 PosM = WorldPos * 0.01f;
+	float3 N = normalize(WorldNormal);
+	float Side = step(abs(N.z), 0.5f);
+	float2 BldgCell = floor(PosM.xy / 12.0f);
+	float Seed = KomorebiHash12(BldgCell + float2(17.3f, 31.7f));
+	bool bGlassTower = frac(Seed * 5.1f) > 0.52f;
+
+	float U = abs(N.x) > 0.5f ? PosM.y : PosM.x;
+	float Ag = max(PosM.z, 0.0f);
+	float BayW = lerp(1.12f, 1.48f, step(0.5f, frac(Seed * 7.3f)));
+	float2 Cell = float2(U / BayW, Ag / 1.76f);
+	float2 F = frac(Cell);
+	float2 AA = min(fwidth(Cell) * 0.5f + 0.005f, float2(0.25f, 0.25f));
+	float NightOn = smoothstep(0.20f, 0.76f, NightFactor);
+
+	float WallDet = KomorebiValueNoise(float2(U, Ag) * 1.4f, 4.2f);
+	float3 Concrete = lerp(float3(0.14f, 0.15f, 0.17f), float3(0.32f, 0.30f, 0.28f), Seed);
+	float3 DarkSteel = lerp(float3(0.06f, 0.07f, 0.09f), float3(0.14f, 0.16f, 0.20f), frac(Seed * 3.7f));
+	float3 Albedo = (bGlassTower ? DarkSteel : Concrete) * (0.86f + 0.24f * WallDet);
+	float Metal = bGlassTower ? 0.65f : 0.06f;
+	float Coat = 0.0f;
+
+	float Mech = saturate(step(abs(Ag - 10.6f), 0.82f) + step(abs(Ag - 21.2f), 0.82f)) * Side;
+	float Podium = step(Ag, 3.35f) * Side;
+	float Pier = step(0.84f, abs(frac(U / (BayW * 3.0f)) - 0.5f) * 2.0f) * Side;
+	float Mullion = smoothstep(0.41f - AA.x, 0.41f + AA.x, abs(F.x - 0.5f)) * (1.0f - Pier) * Side;
+	float Spandrel = smoothstep(0.80f - AA.y, 0.80f + AA.y, F.y) * Side;
+
+	Albedo *= lerp(1.0f, 0.74f, Pier);
+	Albedo = lerp(Albedo, float3(0.08f, 0.09f, 0.11f), max(Mullion, Spandrel) * (1.0f - Podium) * 0.65f);
+	Metal = lerp(Metal, 0.82f, max(Mullion, Spandrel) * (1.0f - Podium) * 0.6f);
+
+	float2 Inset = float2(0.37f, 0.31f);
+	float2 GlassMask = 1.0f - smoothstep(Inset - AA, Inset + AA, abs(F - 0.5f));
+	float Pane = GlassMask.x * GlassMask.y * Side * (1.0f - Mech) * (1.0f - Podium) * (1.0f - Pier * 0.85f);
+	float3 GlassTint = lerp(float3(0.08f, 0.13f, 0.19f), float3(0.016f, 0.024f, 0.036f), NightOn);
+	Albedo = lerp(Albedo, GlassTint, Pane);
+	Metal = lerp(Metal, lerp(0.36f, 0.14f, NightOn), Pane);
+	Coat = lerp(Coat, 1.0f, Pane);
+
+	// Roof gravel membrane when facing upward
+	if (N.z > 0.5f)
+	{
+		Albedo = float3(0.11f, 0.115f, 0.125f) * (0.85f + 0.30f * WallDet);
+		Metal = 0.05f;
+		OutRoughness = 0.85f;
+		Coat = 0.0f;
+	}
+
+	OutBaseColor = Albedo;
+	OutMetallic = saturate(Metal);
+	OutClearCoat = saturate(Coat);
+}
+
+// HDR Neon Glass-Tube Signboards with procedural Katakana-inspired glyph strokes
+// Ported from legacy-web/src/world/anime.js (CITY_ROLE == 1)
+void EvaluateNeonSignboard(
+	float3 LocalPosMeters,
+	float3 LocalNormal,
+	float3 BoxSizeMeters,
+	float Time,
+	float NightFactor,
+	float Seed,
+	float3 NeonA,
+	float3 NeonB,
+	out float3 OutBaseColor,
+	out float3 OutEmissive,
+	out float OutRoughness)
+{
+	float NightOn = smoothstep(0.20f, 0.76f, NightFactor);
+	float Accent = step(0.5f, frac(Seed * 3.7f));
+	float3 ColA = lerp(NeonB, NeonA, Accent);
+	float3 ColB = lerp(NeonA, NeonB, Accent);
+
+	OutBaseColor = float3(0.04f, 0.045f, 0.058f);
+	OutRoughness = 0.30f;
+	OutEmissive = float3(0.0f, 0.0f, 0.0f);
+
+	if (abs(LocalNormal.x) > 0.5f)
+	{
+		float Dx = BoxSizeMeters.y * 0.5f - abs(LocalPosMeters.y);
+		float Dy = BoxSizeMeters.z * 0.5f - abs(LocalPosMeters.z);
+		float DEdge = min(Dx, Dy);
+		float Border = step(0.032f, DEdge) * step(DEdge, 0.092f);
+		float Inner = step(0.14f, Dx) * step(0.15f, Dy);
+
+		bool bVert = BoxSizeMeters.z >= BoxSizeMeters.y;
+		float CellSpan = bVert ? max(0.52f, BoxSizeMeters.y - 0.30f) : max(0.52f, BoxSizeMeters.z - 0.32f);
+		float2 GCoord = bVert
+			? float2((LocalPosMeters.y / max(BoxSizeMeters.y - 0.28f, 0.2f)) + 0.5f, (LocalPosMeters.z + BoxSizeMeters.z * 0.5f - 0.15f) / (CellSpan * 0.92f))
+			: float2((LocalPosMeters.y + BoxSizeMeters.y * 0.5f - 0.15f) / (CellSpan * 0.95f), (LocalPosMeters.z / max(BoxSizeMeters.z - 0.30f, 0.2f)) + 0.5f);
+
+		float Cid = floor(bVert ? GCoord.y : GCoord.x);
+		float2 Cf = float2(bVert ? GCoord.x : frac(GCoord.x), bVert ? frac(GCoord.y) : GCoord.y);
+		float InBox = Inner * step(0.12f, Cf.x) * step(Cf.x, 0.88f) * step(0.14f, Cf.y) * step(Cf.y, 0.86f);
+		float2 Guv = saturate((Cf - float2(0.12f, 0.14f)) / float2(0.76f, 0.72f));
+
+		float Gh = KomorebiHash12(float2(Cid, floor(Seed * 67.0f)));
+		float Gh2 = frac(Gh * 13.7f + 0.19f);
+		float STop = step(0.78f, Guv.y) * step(0.06f, Guv.x) * step(Guv.x, 0.94f);
+		float SMid = step(abs(Guv.y - 0.50f), 0.095f) * step(0.12f, Guv.x) * step(Guv.x, 0.88f) * step(0.25f, Gh);
+		float SBot = step(Guv.y, 0.20f) * step(0.10f, Guv.x) * step(Guv.x, 0.90f) * step(Gh, 0.72f);
+		float SStem = step(abs(Guv.x - lerp(0.50f, 0.34f, step(0.65f, Gh2))), 0.10f) * step(0.06f, Guv.y) * step(Guv.y, 0.92f);
+		float SSide = step(abs(abs(Guv.x - 0.50f) - 0.33f), 0.085f) * step(0.22f, Guv.y) * step(Guv.y, 0.82f) * step(0.38f, Gh2);
+		float SDiag = step(abs((Guv.x - 0.18f) - (Guv.y - 0.14f) * 0.82f), 0.09f) * step(0.14f, Guv.y) * step(Guv.y, 0.76f) * step(Gh2, 0.48f);
+
+		float Glyph = InBox * saturate(STop + SMid + SBot + SStem + SSide + SDiag);
+		float Flick = 0.92f + 0.08f * step(0.06f, frac(sin(floor(Time * 8.0f) + Seed * 40.0f) * 91.3f));
+		float3 GlyphCol = lerp(ColA, ColB, step(0.75f, frac(Gh * 5.3f)) * InBox * step(0.72f, Guv.y));
+		float LitMask = saturate(Border + Glyph);
+
+		OutBaseColor = lerp(float3(0.03f, 0.035f, 0.048f), GlyphCol * 0.45f, LitMask);
+		OutRoughness = 0.12f;
+		OutEmissive = lerp(ColA * 0.06f, lerp(GlyphCol, ColB, Border) * lerp(0.65f, 3.6f, NightOn), LitMask) * Flick;
+	}
+	else
+	{
+		OutEmissive = ColB * step(abs(LocalPosMeters.x), 0.025f) * lerp(0.2f, 2.2f, NightOn);
+	}
+}
+
+// -----------------------------------------------------------------------------
+// 3. Dual-Layer HDR Plasma Blade Crescent Trails
+//    Exact 1:1 port of TRAIL_FRAG & TRAIL_GLOW_FRAG from legacy-web/src/game/combat.js
+// -----------------------------------------------------------------------------
+
+void EvaluateBladeTrailCore(
+	float2 UV,
+	float3 VertexColor,
+	float Fade,
+	out float3 OutColor,
+	out float OutAlpha)
+{
+	float Age = saturate(UV.x);
+	float Rad = saturate(UV.y);
+	float Lead = exp(-Age * 8.5f);
+	float OuterArc = smoothstep(0.66f, 0.94f, Rad);
+	float InnerWake = smoothstep(0.0f, 0.24f, Rad) * (1.0f - 0.28f * smoothstep(0.44f, 0.68f, Rad));
+	float Streak = 0.9f + 0.1f * sin(Rad * 26.0f - Age * 7.0f);
+
+	OutColor = lerp(
+		VertexColor * 1.15f,
+		float3(1.75f, 1.95f, 2.25f),
+		saturate(Lead * 0.85f + OuterArc * (1.0f - Age * 0.65f) * 0.52f)
+	);
+	float Tail = pow(max(1.0f - Age, 1e-4f), 1.55f);
+	float RimCut = smoothstep(1.0f, 0.96f, Rad);
+	OutAlpha = Fade * Tail * Streak * RimCut * clamp(InnerWake * 0.30f + OuterArc * 0.72f + Lead * 0.38f, 0.0f, 0.88f);
+}
+
+void EvaluateBladeTrailGlow(
+	float2 UV,
+	float3 VertexColor,
+	float Fade,
+	out float3 OutColor,
+	out float OutAlpha)
+{
+	float Age = saturate(UV.x);
+	float Rad = saturate(UV.y);
+	OutColor = VertexColor;
+	OutAlpha = Fade * pow(max(1.0f - Age, 1e-4f), 1.85f) * smoothstep(0.0f, 0.38f, Rad)
+		* (0.12f + 0.18f * smoothstep(0.62f, 0.98f, Rad));
+}
+
+// -----------------------------------------------------------------------------
+// 4. Volumetric Aurora Borealis Curtains & Polar Night Sky Dome (Snowbound)
+//    Ported from legacy-web/src/night/sky.js & night/paint.js
+//    UE5 Z-up: WorldDir.z is altitude above horizon, WorldDir.xy is azimuth plane.
+// -----------------------------------------------------------------------------
+
+void EvaluateAuroraRibbon(
+	float3 WorldDir,
+	float Time,
+	out float3 OutColor)
+{
+	float3 Dir = normalize(WorldDir);
+	OutColor = float3(0.0f, 0.0f, 0.0f);
+
+	// Curtains only appear above the alpine horizon
+	if (Dir.z <= 0.015f)
+	{
+		return;
+	}
+
+	float Az = atan2(Dir.x, -Dir.y);
+	float Elev = Dir.z;
+
+	// Physical atmospheric emission spectrum (exact night/sky.js colors):
+	// Low 100 km oxygen (557.7 nm emerald-mint) -> cyan-teal -> high 250 km violet-magenta
+	const float3 PinkFringe = float3(1.15f, 0.22f, 0.48f);
+	const float3 Emerald    = float3(0.06f, 1.15f, 0.66f);
+	const float3 CyanTeal   = float3(0.05f, 0.72f, 0.92f);
+	const float3 Violet     = float3(0.46f, 0.16f, 1.05f);
+	const float3 Magenta    = float3(0.78f, 0.14f, 0.66f);
+
+	float3 Accum = float3(0.0f, 0.0f, 0.0f);
+
+	// 3 layered billowing curtains with exact night/sky.js relative gains (1.45, 0.95, 1.15)
+	[unroll]
+	for (int k = 0; k < 3; ++k)
+	{
+		float kf = (float)k;
+		float Gain = (k == 0) ? 1.45f : ((k == 1) ? 0.95f : 1.15f);
+		float FootElev = (k == 0) ? 0.17f : ((k == 1) ? 0.14f : 0.21f);
+		float CurtainHeight = (k == 0) ? 0.42f : ((k == 1) ? 0.34f : 0.46f);
+
+		// Undulating curtain fold coordinate projected onto upper hemisphere
+		float Fold = 0.055f * sin(Az * (3.2f + kf * 1.1f) - Time * (0.06f - kf * 0.01f) + kf * 2.1f)
+			+ 0.022f * sin(Az * (9.5f + kf * 2.5f) + Time * (0.28f + kf * 0.06f));
+		float Foot = FootElev + Fold;
+		float S = (Elev - Foot) / CurtainHeight;
+
+		if (S > 0.0f && S < 1.0f)
+		{
+			float U = frac(Az / KOMOREBI_TAU + 0.5f + kf * 0.23f);
+			float Edge = smoothstep(2.4f, 0.65f, abs(Az - (kf - 1.0f) * 0.35f));
+
+			// Multi-scale silky vertical magnetic-field striations streaming along the curtain
+			float Macro = KomorebiValueNoise(float2(U * 14.0f + Time * 0.08f + kf * 3.1f, 2.2f + kf * 1.7f), 5.0f + kf);
+			float Rays1 = KomorebiValueNoise(float2(U * 38.0f - Time * 0.22f + kf * 1.9f, S * 1.8f + 4.1f), 11.0f + kf);
+			float Rays2 = KomorebiValueNoise(float2(U * 88.0f + Time * 0.45f, S * 2.4f - Time * 0.30f), 19.0f + kf);
+			float Fine  = KomorebiValueNoise(float2(U * 168.0f - Time * 0.65f, S * 1.2f + 7.3f), 29.0f + kf);
+
+			float St = (frac(U - Time * 0.032f + kf * 0.37f) - 0.5f) / 0.11f;
+			float Surge = exp(-St * St);
+
+			float RayStrength = (0.35f + 0.65f * smoothstep(0.24f, 0.80f, Macro))
+				* (0.32f + 0.68f * smoothstep(0.22f, 0.78f, Rays1))
+				* (0.55f + 0.65f * Rays2)
+				* (0.72f + 0.45f * Fine);
+			RayStrength *= 1.0f + 0.85f * Surge;
+
+			// Sharp luminous lower boundary & silky exponential vertical decay upward
+			float LowerBorder = smoothstep(0.0f, 0.085f, S);
+			float UpperFade = exp(-S * (2.05f - 0.55f * Rays1 - 0.35f * Surge)) * (1.0f - smoothstep(0.82f, 1.0f, S));
+			float Density = LowerBorder * UpperFade * RayStrength * Edge;
+
+			float3 Col = lerp(Emerald, CyanTeal, smoothstep(0.14f, 0.42f, S));
+			Col = lerp(Col, Violet, smoothstep(0.34f, 0.68f, S));
+			Col = lerp(Col, Magenta, smoothstep(0.66f, 0.94f, S));
+
+			// Luminous emerald-white core right along the sharp lower foot + rare crimson-pink nitrogen fringe
+			float Ct = (S - 0.09f) / 0.06f;
+			Col = lerp(Col, float3(0.58f, 1.35f, 0.95f), exp(-Ct * Ct) * smoothstep(0.35f, 0.85f, RayStrength) * 0.75f);
+			Col = lerp(PinkFringe, Col, smoothstep(0.015f, 0.075f, S));
+
+			Accum += Col * Density * Gain;
+		}
+	}
+
+	// Soft wide atmospheric aurora horizon glow (auroraSoft from night/paint.js)
+	float Bt = (Elev - 0.30f - 0.05f * sin(Az * 3.0f + Time * 0.04f)) / 0.14f;
+	float Lt = (Elev - 0.17f) / 0.06f;
+	float SoftBand = exp(-Bt * Bt) + 0.65f * exp(-Lt * Lt);
+	float3 SoftCol = lerp(float3(0.04f, 0.68f, 0.44f), float3(0.42f, 0.14f, 0.78f), smoothstep(0.26f, 0.52f, Elev));
+	Accum += SoftCol * SoftBand * smoothstep(1.75f, 0.35f, abs(Az)) * 0.35f;
+
+	OutColor = Accum * smoothstep(0.015f, 0.10f, Elev);
+}
+
+// Complete polar sky dome shader for M_AuroraSky (sky gradient + stars + moon + aurora curtains)
+float3 EvaluateAuroraSkyDome(
+	float3 WorldDir,
+	float Time,
+	float NightFactor,
+	float TwilightFactor,
+	float AuroraIntensity,
+	float3 SunDir)
+{
+	float3 V = normalize(WorldDir);
+	float3 Sun = normalize(SunDir);
+	float Elev = saturate(V.z);
+	float Up = pow(max(Elev, 1e-4f), 0.52f);
+
+	// Polar night zenith/horizon gradient + subtle north aurora haze
+	float3 NightCol = lerp(float3(0.012f, 0.028f, 0.056f), float3(0.003f, 0.007f, 0.020f), Up);
+	float North = max(-V.y, 0.0f) / max(length(V.xy), 1e-4f);
+	float Ng = (V.z - 0.24f) / 0.32f;
+	NightCol += float3(0.008f, 0.068f, 0.052f) * North * North * exp(-Ng * Ng) * AuroraIntensity;
+
+	float MoonDot = max(dot(V, Sun), 1e-4f);
+	NightCol += float3(0.08f, 0.12f, 0.18f) * pow(MoonDot, 24.0f) + float3(0.32f, 0.42f, 0.55f) * pow(MoonDot, 220.0f);
+
+	// Alpine daylight / twilight sky
+	float3 DayCol = lerp(float3(0.56f, 0.72f, 0.90f), float3(0.12f, 0.34f, 0.76f), Up);
+	DayCol += float3(1.1f, 0.95f, 0.74f) * pow(MoonDot, 16.0f) * 0.28f + float3(4.5f, 4.2f, 3.6f) * smoothstep(0.9982f, 0.9993f, MoonDot);
+	DayCol += float3(1.1f, 0.48f, 0.20f) * TwilightFactor * pow(MoonDot, 3.0f) * (1.0f - smoothstep(0.0f, 0.45f, Elev)) * 0.65f;
+
+	float3 Col = lerp(DayCol, NightCol, NightFactor);
+	float NightVis = smoothstep(0.18f, 0.78f, NightFactor);
+
+	// Multi-layer crisp pinpoint twinkling starfield & cratered moon
+	if (NightVis > 0.01f && V.z > 0.04f)
+	{
+		float2 G1 = V.xy / (V.z + 0.20f) * 155.0f;
+		float2 Id1 = floor(G1);
+		float2 F1 = frac(G1) - 0.5f;
+		float4 R1 = KomorebiHash4(Id1, 13.7f);
+		if (R1.x > 0.978f)
+		{
+			float D = length(F1 - (R1.yz - 0.5f) * 0.55f);
+			float Pt = exp(-D * D * 56.0f);
+			float Tw = 0.68f + 0.32f * sin(Time * (2.2f + 5.0f * R1.w) + R1.x * 90.0f);
+			float3 Sc = lerp(float3(0.72f, 0.86f, 1.0f), float3(1.0f, 0.84f, 0.64f), R1.w);
+			Col += Sc * Pt * Tw * (0.55f + 1.35f * smoothstep(0.992f, 0.999f, R1.x)) * smoothstep(0.04f, 0.24f, V.z) * NightVis;
+		}
+
+		float2 G2 = V.xy / (V.z + 0.25f) * 72.0f;
+		float2 Id2 = floor(G2);
+		float2 F2 = frac(G2) - 0.5f;
+		float4 R2 = KomorebiHash4(Id2, 57.3f);
+		if (R2.x > 0.991f)
+		{
+			float D = length(F2 - (R2.yz - 0.5f) * 0.50f);
+			float Pt = exp(-D * D * 42.0f);
+			float3 Sc = lerp(float3(0.80f, 0.92f, 1.0f), float3(1.0f, 0.90f, 0.72f), R2.w);
+			Col += Sc * Pt * 1.9f * smoothstep(0.08f, 0.30f, V.z) * NightVis;
+		}
+	}
+
+	float MoonEdge = smoothstep(0.9985f, 0.9991f, dot(V, Sun)) * NightFactor;
+	if (MoonEdge > 0.001f)
+	{
+		float3 SafeUp = abs(Sun.z) > 0.95f ? float3(1.0f, 0.0f, 0.0f) : float3(0.0f, 0.0f, 1.0f);
+		float3 MR = normalize(cross(SafeUp, Sun));
+		float3 MU = cross(Sun, MR);
+		float2 MUv = float2(dot(V, MR), dot(V, MU)) * 16.0f;
+		float Maria = 0.68f + 0.32f * KomorebiValueNoise(MUv * 2.4f + 5.0f, 3.1f);
+		Col = lerp(Col, float3(2.2f, 2.35f, 2.55f) * Maria, MoonEdge);
+	}
+
+	float AuroraVis = smoothstep(0.06f, 0.52f, NightFactor) * AuroraIntensity;
+	if (AuroraVis > 0.005f)
+	{
+		float3 AuroraCol;
+		EvaluateAuroraRibbon(V, Time, AuroraCol);
+		Col += AuroraCol * AuroraVis;
+	}
+
+	return Col;
+}
+
+// -----------------------------------------------------------------------------
+// 5. Post-Process Depth-Edge Comic Ink Outline, Canvas Impasto & Filmic Finish
+//    Ported from legacy-web/src/oilpaint/finish.js (lines 183-281) for PP_KomorebiFinish
+//    Depth inputs (CenterDepth, NeighborDepths, InkFar) are in meters (UE SceneDepth * 0.01).
+//    Returns float4(InkColor, InkBlendAlpha).
+// -----------------------------------------------------------------------------
+
+float4 EvaluateKomorebiInkEdge(
+	float CenterDepth,
+	float4 NeighborDepths,
+	float InkStrength,
+	float InkFar,
+	float3 InkColor)
+{
+	if (InkStrength <= 0.001f || CenterDepth >= InkFar)
+	{
+		return float4(InkColor, 0.0f);
+	}
+
+	float MaxNeighbor = max(max(NeighborDepths.x, NeighborDepths.y), max(NeighborDepths.z, NeighborDepths.w));
+	float RelJump = (MaxNeighbor - CenterDepth) / max(CenterDepth, 0.5f);
+	float Edge = smoothstep(0.05f, 0.14f, RelJump);
+	float Fade = 1.0f - smoothstep(InkFar * 0.45f, InkFar, CenterDepth);
+	float Alpha = saturate(Edge * Fade * InkStrength);
+	return float4(InkColor, Alpha);
+}
+
+// Narkowicz fitted ACES Filmic tone mapping (matching finish.js lines 184-187)
+float3 KomorebiAcesFilm(float3 X)
+{
+	const float A = 2.51f;
+	const float B = 0.03f;
+	const float C = 2.43f;
+	const float D = 0.59f;
+	const float E = 0.14f;
+	return saturate((X * (A * X + B)) / (X * (C * X + D) + E));
+}
+
+// Composite finish helper for PP_KomorebiFinish (ink edge + canvas impasto + vignette + dither)
+float3 ApplyKomorebiFinishPostProcess(
+	float3 SceneColor,
+	float2 UV,
+	float2 ViewportSize,
+	float CenterDepthMeters,
+	float4 NeighborDepthsMeters,
+	float Time,
+	float Exposure,
+	float InkStrength,
+	float InkFarMeters,
+	float3 InkColor,
+	float ImpastoStrength,
+	float VignetteStrength)
+{
+	float3 Col = max(SceneColor, float3(0.0f, 0.0f, 0.0f));
+
+	// 1. Optional depth-edge comic ink outline (off by default when InkStrength == 0)
+	float4 Ink = EvaluateKomorebiInkEdge(CenterDepthMeters, NeighborDepthsMeters, InkStrength, InkFarMeters, InkColor);
+	Col = lerp(Col, Ink.rgb, Ink.a);
+
+	// 2. Optional subtle canvas weave / painterly impasto modulation
+	if (ImpastoStrength > 0.001f)
+	{
+		float2 PixelCoord = UV * max(ViewportSize, float2(1.0f, 1.0f));
+		float WeaveX = sin(PixelCoord.x * 1.35f) * 0.5f + 0.5f;
+		float WeaveY = sin(PixelCoord.y * 1.35f) * 0.5f + 0.5f;
+		float Grain = KomorebiValueNoise(PixelCoord * 0.14f, 41.2f);
+		float CanvasMod = ((WeaveX * 0.35f + WeaveY * 0.35f + Grain * 0.30f) - 0.5f) * 0.16f * ImpastoStrength;
+		Col *= (1.0f + CanvasMod);
+	}
+
+	// 3. Filmic exposure adjustment + subtle photographic S-curve
+	Col *= max(Exposure, 0.05f);
+	float3 SCurve = Col * Col * (3.0f - 2.0f * saturate(Col));
+	Col = lerp(Col, SCurve, 0.10f * step(max(max(Col.r, Col.g), Col.b), 1.0f));
+
+	// 4. Soft natural optical vignette (finish.js lines 273-276)
+	if (VignetteStrength > 0.001f)
+	{
+		float Aspect = ViewportSize.x / max(ViewportSize.y, 1.0f);
+		float2 V = (UV - 0.5f) * float2(Aspect, 1.0f);
+		Col *= 1.0f - VignetteStrength * smoothstep(0.32f, 1.12f, length(V));
+	}
+
+	// 5. Anti-banding micro-dither (eliminates 8-bit gradient banding in dark night skies & mist)
+	float2 FragCoord = UV * max(ViewportSize, float2(1.0f, 1.0f));
+	float Dither = frac(sin(dot(FragCoord + float2(Time * 17.0f, 0.0f), float2(12.9898f, 78.233f))) * 43758.5453f) - 0.5f;
+	Col += Dither * (1.6f / 255.0f);
+
+	return max(Col, float3(0.0f, 0.0f, 0.0f));
+}
+
+// -----------------------------------------------------------------------------
+// 6. Neo-Kyoto Urban Terrain Shader Helper (M_TerrainNeoKyoto)
+//    Ported from legacy-web/src/world/land.js (paving slabs, wet asphalt puddles,
+//    thermoplastic lane dashes/crosswalks, park grass & woodland loam)
+// -----------------------------------------------------------------------------
+
+void EvaluateNeoKyotoTerrain(
+	float3 WorldPos,
+	float4 LandMask,
+	float Time,
+	float NightFactor,
+	float3 ChapterGrass,
+	float3 ChapterPath,
+	float3 ChapterNeon,
+	out float3 OutBaseColor,
+	out float OutRoughness,
+	out float OutClearCoat,
+	out float3 OutEmissive)
+{
+	float3 PosM = WorldPos * 0.01f;
+	float2 XY = PosM.xy;
+	float2 AA = clamp(fwidth(XY) * 0.5f, float2(0.014f, 0.014f), float2(0.64f, 0.64f));
+
+	float NMacro = KomorebiValueNoise(XY / 18.0f, 1.1f);
+	float NMed   = KomorebiValueNoise(XY / 5.5f, 3.7f);
+	float DetFine = KomorebiValueNoise(XY * 2.2f, 7.3f);
+	float DetCoarse = KomorebiValueNoise(XY * 0.45f, 13.1f);
+
+	// 1. Concrete / Granite Sidewalk Paving Slabs
+	float SlabMask = 1.0f - smoothstep(0.15f, 0.65f, LandMask.a);
+	float2 Slab = abs(frac(XY / 3.2f) - 0.5f);
+	float2 FineSlab = abs(frac(XY / 1.6f) - 0.5f);
+	float2 Seam = smoothstep(float2(0.478f, 0.478f) - AA / 3.2f, float2(0.478f, 0.478f) + AA / 3.2f, Slab);
+	float2 Hairline = smoothstep(float2(0.486f, 0.486f) - AA / 1.6f, float2(0.486f, 0.486f) + AA / 1.6f, FineSlab);
+	float Joint = max(max(Seam.x, Seam.y), 0.45f * max(Hairline.x, Hairline.y)) * SlabMask;
+	float TileVar = 0.88f + 0.22f * KomorebiHash12(floor(XY / 1.6f) + 3.1f);
+
+	float3 PaveTint = lerp(float3(0.24f, 0.25f, 0.27f), ChapterGrass, 0.35f);
+	float3 PaveBase = lerp(PaveTint * 0.85f, PaveTint * 1.15f, NMacro) * TileVar * (0.84f + 0.26f * DetCoarse) * (1.0f - 0.42f * Joint);
+	float3 Albedo = PaveBase;
+	float Rough = lerp(0.76f, 0.58f, NMed * 0.6f) + Joint * 0.16f;
+
+	// 2. Wet Crushed-Aggregate Asphalt Roads & Rainwater Puddles (40 m city grid, ROAD = 3.6 m)
+	const float GridMin = -200.0f;
+	const float GridSpacing = 40.0f;
+	const float RoadHalf = 3.6f;
+	float Dx = abs(frac((XY.x - GridMin) / GridSpacing + 0.5f) - 0.5f) * GridSpacing;
+	float Dy = abs(frac((XY.y - GridMin) / GridSpacing + 0.5f) - 0.5f) * GridSpacing;
+	float GDist = min(Dx, Dy);
+	float Road = smoothstep(0.14f, 0.85f, LandMask.r);
+	float FlatCity = step(abs(XY.x), 282.0f) * step(abs(XY.y), 282.0f) * (1.0f - smoothstep(0.3f, 1.2f, PosM.z));
+
+	float Gutter = smoothstep(RoadHalf - 0.44f, RoadHalf - 0.06f, GDist) * (1.0f - smoothstep(RoadHalf - 0.02f, RoadHalf + 0.08f, GDist));
+	float WetRaw = NMacro * 0.58f + NMed * 0.42f + Gutter * 0.28f;
+	float Puddle = smoothstep(lerp(0.72f, 0.50f, NightFactor), lerp(0.88f, 0.72f, NightFactor), WetRaw) * FlatCity;
+	float Damp = smoothstep(lerp(0.45f, 0.22f, NightFactor), lerp(0.78f, 0.58f, NightFactor), WetRaw) * FlatCity;
+
+	float3 AsphaltBase = lerp(float3(0.022f, 0.024f, 0.029f), ChapterPath * 0.14f, 0.4f) * (0.86f + 0.24f * DetFine);
+	AsphaltBase *= 1.0f - 0.35f * Gutter * FlatCity;
+	AsphaltBase *= lerp(1.0f, 0.54f, max(Puddle * 0.9f, Damp * 0.45f * NightFactor));
+	float AsphaltRough = lerp(lerp(0.84f, 0.46f, Damp * (0.35f + 0.65f * NightFactor)), 0.045f, Puddle);
+
+	// Lane dashes & intersection crosswalks
+	float Lane = 0.0f;
+	if (Dx < RoadHalf && Dy > RoadHalf + 5.1f)
+	{
+		Lane = KomorebiStripe(Dx, 1.08f, 1.22f, AA.x) * KomorebiStripe(frac(XY.y * 0.16f), 0.55f, 0.98f, AA.y * 0.16f);
+	}
+	else if (Dy < RoadHalf && Dx > RoadHalf + 5.1f)
+	{
+		Lane = KomorebiStripe(Dy, 1.08f, 1.22f, AA.y) * KomorebiStripe(frac(XY.x * 0.16f), 0.55f, 0.98f, AA.x * 0.16f);
+	}
+	float PaintMask = saturate(Lane) * FlatCity * Road;
+	float PaintWear = smoothstep(0.18f, 0.46f, DetFine) * (0.78f + 0.22f * NMed);
+	AsphaltBase = lerp(AsphaltBase, float3(0.66f, 0.63f, 0.56f) * lerp(0.65f, 1.0f, PaintWear), PaintMask * (0.75f + 0.25f * PaintWear));
+	AsphaltRough = lerp(AsphaltRough, lerp(0.62f, 0.24f, Puddle), PaintMask);
+
+	Albedo = lerp(Albedo, AsphaltBase, Road);
+	Rough = lerp(Rough, AsphaltRough, Road);
+	float Coat = lerp(Damp * 0.18f * NightFactor * SlabMask, max(Puddle * 0.95f, Damp * 0.35f * NightFactor), Road) * (1.0f - PaintMask * 0.6f);
+
+	// 3. Park Grass & Woodland Loam
+	float Nature = smoothstep(0.16f, 0.64f, LandMask.a) * (1.0f - smoothstep(0.2f, 0.7f, LandMask.r));
+	if (Nature > 0.001f)
+	{
+		float3 GrassAlb = lerp(float3(0.055f, 0.135f, 0.036f), float3(0.115f, 0.225f, 0.052f), smoothstep(0.22f, 0.78f, NMacro * 0.65f + DetFine * 0.35f));
+		GrassAlb = lerp(GrassAlb, float3(0.095f, 0.072f, 0.048f), smoothstep(0.64f, 0.90f, LandMask.b) * 0.72f);
+		Albedo = lerp(Albedo, GrassAlb * (0.78f + 0.38f * DetFine), Nature);
+		Rough = lerp(Rough, 0.82f, Nature);
+		Coat *= (1.0f - Nature);
+	}
+
+	// Soft neon edge wash reflecting in wet night puddles along avenues
+	float KerbGlow = smoothstep(RoadHalf + 0.4f, RoadHalf - 0.1f, GDist) * Road * Puddle * NightFactor;
+	OutBaseColor = Albedo;
+	OutRoughness = saturate(Rough);
+	OutClearCoat = saturate(Coat);
+	OutEmissive = ChapterNeon * KerbGlow * 0.22f;
+}
+
+// -----------------------------------------------------------------------------
+// 7. Snowbound Alpine Terrain Shader Helper (M_TerrainSnowbound)
+//    Ported from legacy-web/src/night/land.js (wind-carved snow, icy crusts,
+//    triplanar basalt cliff rock, aurora mint bounce, snow crystal glints)
+// -----------------------------------------------------------------------------
+
+void EvaluateSnowboundTerrain(
+	float3 WorldPos,
+	float3 WorldNormal,
+	float3 ViewDir,
+	float4 LandMask,
+	float Time,
+	float NightFactor,
+	float AuroraIntensity,
+	float3 SunDir,
+	float4 LampPosStrength,
+	float3 LampColor,
+	out float3 OutBaseColor,
+	out float OutRoughness,
+	out float OutClearCoat,
+	out float3 OutEmissive)
+{
+	float3 PosM = WorldPos * 0.01f;
+	float3 N = normalize(WorldNormal);
+	float3 V = normalize(ViewDir);
+	float3 Sun = normalize(SunDir);
+
+	float NMed = KomorebiValueNoise(PosM.xy / 14.0f, 5.2f);
+	float Det = KomorebiValueNoise(PosM.xy * 0.42f, 9.7f);
+	float Fine = KomorebiValueNoise(PosM.xy * 2.1f, 17.3f);
+
+	// Triplanar rock breakup so sheer alpine horn walls never stretch
+	float3 TriW = pow(max(abs(N), float3(1e-4f, 1e-4f, 1e-4f)), float3(4.0f, 4.0f, 4.0f));
+	TriW /= max(TriW.x + TriW.y + TriW.z, 1e-4f);
+	float RockTri = KomorebiValueNoise(PosM.yz * 0.22f, 21.0f) * TriW.x
+		+ KomorebiValueNoise(PosM.xz * 0.22f, 21.0f) * TriW.y
+		+ KomorebiValueNoise(PosM.xy * 0.22f, 21.0f) * TriW.z;
+
+	float RockMask = smoothstep(0.36f, 0.64f, LandMask.r + (NMed - 0.5f) * 0.24f - smoothstep(0.62f, 0.85f, N.z) * 0.18f);
+	float Ice = smoothstep(0.66f, 0.88f, NMed);
+
+	float3 SnowAlb = lerp(float3(0.76f, 0.81f, 0.88f), float3(0.56f, 0.72f, 0.86f), Ice) * (0.90f + 0.16f * Det);
+	float3 RockAlb = lerp(float3(0.036f, 0.044f, 0.062f), float3(0.095f, 0.105f, 0.125f), RockTri) * (0.68f + 0.45f * Det);
+	float LedgeSnow = smoothstep(0.50f, 0.76f, N.z) * smoothstep(0.35f, 0.72f, RockTri) * RockMask * 0.65f;
+
+	float3 Albedo = lerp(SnowAlb, lerp(RockAlb, SnowAlb * 0.82f, LedgeSnow), RockMask);
+	float Rough = lerp(lerp(0.46f, 0.22f, Ice), 0.80f, RockMask);
+	float Coat = lerp(0.16f + 0.24f * Ice, 0.0f, RockMask);
+
+	// Ethereal green-teal aurora bounce light washing across open snow slopes
+	float AurPatch = KomorebiValueNoise(PosM.xy / 90.0f + float2(Time * 0.009f, -Time * 0.0055f), 31.4f);
+	float Aur = saturate(AuroraIntensity * smoothstep(0.18f, 0.76f, AurPatch) * max(N.z, 0.0f)) * NightFactor;
+	float3 Emissive = Albedo * float3(0.04f, 0.26f, 0.20f) * Aur * (1.0f - RockMask * 0.65f) * 0.65f;
+
+	// Dynamic lantern / warm hearth spill
+	float LampStrength = LampPosStrength.w;
+	float LampTerm = 0.0f;
+	if (LampStrength > 0.001f)
+	{
+		float3 ToLamp = (LampPosStrength.xyz - WorldPos) * 0.01f;
+		float D2 = dot(ToLamp, ToLamp);
+		LampTerm = LampStrength * saturate(dot(N, normalize(ToLamp + float3(0.0f, 0.0f, 1e-4f))) * 0.7f + 0.35f) / (0.45f + D2 * 0.22f);
+		Emissive += Albedo * LampColor * LampTerm * 1.45f;
+	}
+
+	// Micro-crystal snow glints catching moonlight & lantern firelight
+	float GlintHash = KomorebiHash12(floor(PosM.xy * 14.0f) + 7.1f);
+	float Spark = step(0.968f, GlintHash) * smoothstep(0.65f, 0.96f, Fine) * (1.0f - RockMask);
+	float ViewAng = pow(max(dot(reflect(-V, N), Sun), 0.0f), 12.0f) + LampTerm * 0.85f;
+	Emissive += lerp(float3(0.65f, 0.85f, 1.0f), float3(1.4f, 0.95f, 0.55f), saturate(LampTerm)) * Spark * ViewAng * 1.8f;
+
+	OutBaseColor = Albedo;
+	OutRoughness = saturate(Rough);
+	OutClearCoat = saturate(Coat);
+	OutEmissive = Emissive;
+}
+
+#endif // KOMOREBI_MATERIAL_FUNCTIONS_USH
